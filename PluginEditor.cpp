@@ -4,10 +4,11 @@
 #include <functional>
 #include <JuceHeader.h>
 #include <cmath>
+#include <limits>
 
-// 5 根竖直线在控制区域内的相对 X 位置（从左到右），供 paint / mouseDown / mouseDrag 共用
-static constexpr std::array<float, 5> kDotRelativePositions = {
-    0.167f, 0.333f, 0.500f, 0.667f, 0.833f
+// 5 根竖直线默认半音偏移（从左到右），用于初始化与恢复兜底
+static constexpr std::array<int, 5> kDefaultDotSemitoneOffsets = {
+    -24, -12, 0, +12, +24
 };
 
 // 主编辑器实现
@@ -63,7 +64,23 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
     
     const float halfW = controlArea.getWidth() * 0.5f;
     const float fullH = (float)controlArea.getHeight();
-    rayslopeK = -(fullH / halfW); // 红线默认斜率：负值，指向左上角
+    blueAngleDeg = 45.0f;  // 默认蓝线45°（左上方向）
+    // 计算对应的 rayslopeK
+    {
+        float redAngleDeg = 180.0f - blueAngleDeg;
+        float redAngleRad = redAngleDeg * (juce::MathConstants<float>::pi / 180.0f);
+        float verticalRad = 90.0f * (juce::MathConstants<float>::pi / 180.0f);
+        float angleDiff = redAngleRad - verticalRad;
+        constexpr float kMaxSlope = 1.0e4f;
+        if (std::abs(angleDiff) < 0.0001f)
+            rayslopeK = 0.0f;
+        else if (angleDiff > juce::MathConstants<float>::halfPi - 0.01f)
+            rayslopeK = -kMaxSlope;
+        else if (angleDiff < -juce::MathConstants<float>::halfPi + 0.01f)
+            rayslopeK = kMaxSlope;
+        else
+            rayslopeK = std::tan(angleDiff);
+    }
     isVerticalRay = false;
     
     // ===== 必须在第一次 push 之前先拉取存档！=====
@@ -75,25 +92,46 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
         const auto restored = processor.getEditorState();
         if (restored.hasValidValues)
         {
-            rayslopeK     = restored.rayslopeK;
-            isVerticalRay = restored.isVerticalRay;
-            sigma         = juce::jlimit(0.1f, 3.0f, restored.sigma);
-            dotOffsetT    = restored.dotOffsetT;
+            blueAngleDeg        = restored.blueAngleDeg;
+            rayslopeK           = restored.rayslopeK;  // 已经从 blueAngleDeg 计算好了
+            sigma               = juce::jlimit(0.1f, 3.0f, restored.sigma);
+            dotOffsetT          = restored.dotOffsetT;
+            dotSemitoneOffsets  = restored.dotSemitoneOffsets;
+        }
+        else
+        {
+            dotSemitoneOffsets = kDefaultDotSemitoneOffsets;
         }
     }
 
-    // 初始化完成后把当前的 gain/pan 推给音频线程（此时已经包含了恢复出的值，如果有的话）
+    // 初始化完成后先把当前的半音偏移推给音频线程（确保首帧音频就使用正确 st）
+    for (int i = 0; i < 5; ++i)
+        processor.setDotSemitoneOffset(i, dotSemitoneOffsets[(size_t)i]);
+
+    // 再把当前的 gain/pan 推给音频线程（此时已经包含了恢复出的值，如果有的话）
     pushDotParamsToProcessor();
 
     // ===== 从 APVTS 读取参数值（宿主自动化参数 / 加载工程时）=====
     // APVTS 参数优先级高于 EditorState（参数系统是现代方式）
     if (auto* rayslopeKParam = processor.getAPVTS().getRawParameterValue(ParameterIDs::rayslopeK))
     {
-        rayslopeK = rayslopeKParam->load();
-    }
-    if (auto* isVerticalRayParam = processor.getAPVTS().getRawParameterValue(ParameterIDs::isVerticalRay))
-    {
-        isVerticalRay = (isVerticalRayParam->load() > 0.5f);
+        float normalizedValue = rayslopeKParam->load();
+        blueAngleDeg = normalizedValue * 180.0f;
+        // 计算对应的 rayslopeK（红线斜率）
+        // 角度定义：0° = 向右，90° = 向上，180° = 向左
+        float redAngleDeg = 180.0f - blueAngleDeg;
+        float redAngleRad = redAngleDeg * (juce::MathConstants<float>::pi / 180.0f);
+        
+        constexpr float kMaxSlope = 1.0e4f;
+        // 处理边界情况：cos(angle) = 0 时 tan 无穷大
+        if (std::abs(std::cos(redAngleRad)) < 1e-6f)
+        {
+            rayslopeK = (std::sin(redAngleRad) >= 0) ? kMaxSlope : -kMaxSlope;
+        }
+        else
+        {
+            rayslopeK = std::tan(redAngleRad);
+        }
     }
     if (auto* sigmaParam = processor.getAPVTS().getRawParameterValue(ParameterIDs::sigma))
     {
@@ -117,7 +155,6 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
 
     // 添加参数监听器，响应宿主自动化
     processor.getAPVTS().addParameterListener(ParameterIDs::rayslopeK, this);
-    processor.getAPVTS().addParameterListener(ParameterIDs::isVerticalRay, this);
     processor.getAPVTS().addParameterListener(ParameterIDs::sigma, this);
     for (int i = 0; i < 5; ++i)
     {
@@ -136,7 +173,6 @@ PuponvstAudioProcessorEditor::~PuponvstAudioProcessorEditor()
     
     // 移除参数监听器
     processor.getAPVTS().removeParameterListener(ParameterIDs::rayslopeK, this);
-    processor.getAPVTS().removeParameterListener(ParameterIDs::isVerticalRay, this);
     processor.getAPVTS().removeParameterListener(ParameterIDs::sigma, this);
     for (int i = 0; i < 5; ++i)
     {
@@ -213,19 +249,6 @@ void PuponvstAudioProcessorEditor::paint(juce::Graphics& g)
     g.setColour(juce::Colour(0x33FFFFFF));
     g.drawLine(0, 60, (float)getWidth(), 60.0f, 1.0f);
     
-    // ===== 调试信息：显示当前活动的 band 数量 =====
-    // 当 gain=0 的 band 不处理时，这个信息可以验证优化是否生效
-    {
-        const int activeBands = processor.getActiveBandsCount();
-        juce::String debugText = "Active Bands: " + juce::String(activeBands) + " / 5";
-        
-        g.setColour(juce::Colours::white.withAlpha(0.7f));
-        g.setFont(16.0f); // 使用标准字体，避免调用 makeAtomicFont
-        // 显示在导航栏右侧
-        g.drawText(debugText, 
-                   navBar.getRight() - 200, navBar.getY(), 190, navBar.getHeight(),
-                   juce::Justification::centredRight, true);
-    }
     
     // 获取控制区域（统一移除导航栏高度，保持与交互判定一致）
     auto controlArea = getLocalBounds();
@@ -299,48 +322,24 @@ void PuponvstAudioProcessorEditor::paint(juce::Graphics& g)
         }
     }
     
-    // 绘制5根竖直线和交点（相对位置，随窗口等比缩放）
-    // 相对位置数组来自文件顶层的 kDotRelativePositions，供交互逻辑共享
+    // 绘制5根竖直线和交点（由每路 semitone 偏移决定水平位置，随窗口缩放）
     
-    // 辅助 lambda：根据射线(从 bottomCenter 出发，斜率 k，isVertical)与指定竖直线 x=vx 的交点，
-    // 返回屏幕 y 坐标。若射线方向不会击中该竖直线（平行 / 错向），返回 NaN。
-    auto rayHitVerticalY = [&](float k, bool vertical, float vx) -> float
+    // 统一声相映射（与 pushDotParamsToProcessor 保持一致）：
+    // 1) 角度决定最大偏移：angle=0/180 -> 1，angle=90 -> 0（线性）
+    // 2) 半音决定带内偏移：st=-36..+36 线性映射到 -1..+1
+    // 3) 90°两侧方向相反：0..90 使用原方向，90..180 方向翻转
+    const float angleClamped = juce::jlimit(0.0f, 180.0f, blueAngleDeg);
+    const float distanceNorm = juce::jlimit(0.0f, 1.0f, std::abs(angleClamped - 90.0f) / 90.0f);
+    // 角度到最大偏移曲线：
+    // d=0(90°)->0，d=1(0°/180°)->1，d=0.5(45°/135°)->0.55（对应 [1,0.45] / [0.45,1]）
+    const float panMaxByAngle = juce::jlimit(0.0f, 1.0f, distanceNorm * (1.2f - 0.2f * distanceNorm));
+    const float directionFlipByAngle = (angleClamped <= 90.0f) ? 1.0f : -1.0f;
+
+    auto panFromSemitone = [&](int semitone) -> float
     {
-        const float dx = vx - bottomCenter.x;
-        if (vertical)
-        {
-            // 垂直射线：只有当 vx == bottomCenter.x 时才能视为"相交"（同一条直线）
-            if (std::abs(dx) < 0.5f) return (float)controlArea.getY(); // 视为交点直达顶端（纯色）
-            return std::numeric_limits<float>::quiet_NaN();
-        }
-        // 水平退化
-        if (std::abs(k) < 1e-6f) return std::numeric_limits<float>::quiet_NaN();
-        // 要求射线方向正确：k>0 时只能击中 dx>0 的竖直线；k<0 时只能击中 dx<0
-        if ((k > 0.0f && dx <= 0.0f) || (k < 0.0f && dx >= 0.0f))
-            return std::numeric_limits<float>::quiet_NaN();
-        // 数学坐标系：dyUp = k * dx；屏幕 y = bottomCenter.y - dyUp
-        return bottomCenter.y - k * dx;
-    };
-    
-    // 辅助 lambda：根据交点屏幕 y 计算归一化高度进度 t ∈ [0,1]
-    //  t = 1 表示最高（顶部或更高，外部直接取 1）
-    //  t = 0 表示底部
-    //  返回负值表示交点在控制区下方，不应绘制染色
-    auto heightProgress = [&](float hitY) -> float
-    {
-        const float top    = (float)controlArea.getY();
-        const float bottom = (float)controlArea.getBottom();
-        if (std::isnan(hitY)) return -1.0f;
-        if (hitY <= top) return 1.0f;            // 超出屏幕上方 → 纯色
-        if (hitY >= bottom) return -1.0f;        // 在底部或更下方 → 视为无效
-        return (bottom - hitY) / (bottom - top); // 屏幕内线性插值
-    };
-    
-    // 辅助 lambda：根据进度 t 与基础纯色，混合出染色颜色（t=0 白色，t=1 纯红/纯蓝）
-    auto tintByProgress = [](float t, juce::Colour pureColour) -> juce::Colour
-    {
-        t = juce::jlimit(0.0f, 1.0f, t);
-        return juce::Colours::white.interpolatedWith(pureColour, t);
+        const int st = juce::jlimit(kMinSemitone, kMaxSemitone, semitone);
+        const float stNorm = juce::jlimit(-1.0f, 1.0f, (float)st / (float)kMaxSemitone);
+        return juce::jlimit(-1.0f, 1.0f, directionFlipByAngle * stNorm * panMaxByAngle);
     };
 
     // ===== 圆点本体的"延迟绘制"队列 =====
@@ -348,8 +347,11 @@ void PuponvstAudioProcessorEditor::paint(juce::Graphics& g)
     // 包装成 lambda 暂存到这个数组里，等所有激光绘制完毕后再统一执行。
     // 循环中其他元素（竖直引导线 / 波形 / 爬动光）依然按原顺序绘制，保留原有视觉层次。
     std::array<std::function<void()>, 5> dotBodyDraws {};
+
+    // 临时调试绘制队列：在每个珍珠上方显示 [L, R] 偏移数组
+    std::array<std::function<void()>, 5> dotDebugDraws {};
     
-    for (int i = 0; i < (int)kDotRelativePositions.size(); ++i)
+for (int i = 0; i < 5; ++i)
     {
         const float xPos = getDotColumnX(i, controlArea);
         
@@ -396,20 +398,36 @@ void PuponvstAudioProcessorEditor::paint(juce::Graphics& g)
             g.fillEllipse(xLight - coreR, yLight - coreR, coreR * 2.0f, coreR * 2.0f);
         }
         
-        // === 计算红/蓝射线与该竖直线的交点高度，得到染色 ===
-        const float redHitY  = rayHitVerticalY( rayslopeK, isVerticalRay, xPos);
-        const float blueHitY = rayHitVerticalY(-rayslopeK, isVerticalRay, xPos);
-        const float redT  = heightProgress(redHitY);
-        const float blueT = heightProgress(blueHitY);
-        
-        // 交点圆点（直径 25px）——使用左右水平渐变：左侧=红染色，右侧=蓝染色，无中间分界线
+        // ===== 按角度+半音直接计算当前 band 的左右声道偏移 [L, R] =====
+        const int stDbg = juce::jlimit(kMinSemitone, kMaxSemitone, dotSemitoneOffsets[(size_t)i]);
+        const float panDbg = panFromSemitone(stDbg);
+
+        // pan<0: 左偏；pan=0: 居中；pan>0: 右偏
+        const float leftOffsetDbg  = juce::jlimit(0.0f, 1.0f, 1.0f - panDbg);
+        const float rightOffsetDbg = juce::jlimit(0.0f, 1.0f, 1.0f + panDbg);
+
+        // 珍珠颜色映射：[纯左, 中间, 纯右] -> [纯红, 纯白, 纯蓝]
+        const float panAbsDbg = std::abs(panDbg);
+        const juce::Colour sideColour = (panDbg <= 0.0f) ? juce::Colours::red : juce::Colours::blue;
+        const juce::Colour mixedColour = juce::Colours::white.interpolatedWith(sideColour, panAbsDbg);
+
+        const juce::Colour leftColour = mixedColour;
+        const juce::Colour rightColour = mixedColour;
+
         const float r = 12.5f;
         const juce::Rectangle<float> dotRect(xPos - r, dotY - r, r * 2.0f, r * 2.0f);
-        
-        juce::Colour leftColour  = (redT  < 0.0f) ? juce::Colours::white
-                                                  : tintByProgress(redT,  juce::Colours::red);
-        juce::Colour rightColour = (blueT < 0.0f) ? juce::Colours::white
-                                                  : tintByProgress(blueT, juce::Colours::blue);
+
+        dotDebugDraws[(size_t) i] =
+            [this, &g, xPos, dotY, leftOffsetDbg, rightOffsetDbg]()
+        {
+            g.setColour(juce::Colours::white.withAlpha(0.90f));
+            g.setFont(11.0f);
+            const juce::String dbg = "[" + juce::String(leftOffsetDbg, 2) + ", "
+                                   + juce::String(rightOffsetDbg, 2) + "]";
+            g.drawText(dbg,
+                       (int)xPos - 42, (int)dotY - 68, 84, 14,
+                       juce::Justification::centred, false);
+        };
         
         // ============================================================
         //  高级光球绘制：halo 呼吸 + 双径向等离子球 + 旋转扫光 + 活跃光环
@@ -549,10 +567,12 @@ void PuponvstAudioProcessorEditor::paint(juce::Graphics& g)
         };
     }
     
-    // 绘制射线：以下边缘中点为原点(bottomCenter)，根据斜率计算边界交点
-    // 红线斜率 = rayslopeK，蓝线斜率 = -rayslopeK（左右对称）
-    juce::Point<float> redRayEnd  = calculateRayEndBySlope( rayslopeK, isVerticalRay, controlArea);
-    juce::Point<float> blueRayEnd = calculateRayEndBySlope(-rayslopeK, isVerticalRay, controlArea);
+    // 绘制射线：以下边缘中点为原点(bottomCenter)，根据角度计算边界交点
+    // 蓝线角度 = blueAngleDeg（0°=向左，90°=向上，180°=向右）
+    // 红线角度 = 180° - blueAngleDeg（左右对称）
+    float redAngleDeg = 180.0f - blueAngleDeg;
+    juce::Point<float> redRayEnd  = calculateRayEndByAngle(redAngleDeg, controlArea);
+    juce::Point<float> blueRayEnd = calculateRayEndByAngle(blueAngleDeg, controlArea);
     
     // ========================================================================
     //  激光射线：沿线方向渐变（根部粗+白→末端细+纯色）+ 能量光斑沿线游走 + 抖动
@@ -687,6 +707,46 @@ void PuponvstAudioProcessorEditor::paint(juce::Graphics& g)
     // 这里按顺序执行，使圆点视觉位于红/蓝/黄三道激光之上。
     for (auto& f : dotBodyDraws)
         if (f) f();
+
+    // ===== 临时调试信息：每个珍珠上方显示 [L, R] 偏移数组 =====
+    for (auto& f : dotDebugDraws)
+        if (f) f();
+
+    // ===== 下方半音刻度线（-36st ~ +36st）=====
+    {
+        const float axisY = (float)controlArea.getBottom() - 2.0f;
+        for (int st = kMinSemitone; st <= kMaxSemitone; ++st)
+        {
+            const float x = semitoneToX(st, controlArea);
+            const bool isMajor = (st % 12) == 0;
+            const float tickH = isMajor ? 14.0f : 8.0f;
+
+            g.setColour(juce::Colours::white.withAlpha(isMajor ? 0.65f : 0.30f));
+            g.drawLine(x, axisY, x, axisY - tickH, isMajor ? 1.4f : 1.0f);
+
+            if (isMajor)
+            {
+                g.setColour(juce::Colours::white.withAlpha(0.78f));
+                g.setFont(12.0f);
+                g.drawText(juce::String(st) + "st", (int)x - 22, (int)axisY - 30, 44, 14,
+                           juce::Justification::centred, false);
+            }
+        }
+
+        // 当前拖动竖线的 st 提示
+        if (draggingDotColumnIndex >= 0 && draggingDotColumnIndex < 5)
+        {
+            const int idx = draggingDotColumnIndex;
+            const float x = getDotColumnX(idx, controlArea);
+            const float y = getDotCenter(idx, controlArea).y;
+
+            g.setColour(juce::Colours::white.withAlpha(0.92f));
+            g.setFont(13.0f);
+            g.drawText(juce::String(dotSemitoneOffsets[(size_t)idx]) + "st",
+                       (int)x - 24, (int)y - 52, 48, 16,
+                       juce::Justification::centred, false);
+        }
+    }
 }
 
 void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
@@ -705,14 +765,16 @@ void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
     isDraggingBlueLine = false;
     isDraggingNormalCurve = false;
     draggingDotIndex = -1;
+    draggingDotColumnIndex = -1;
     
     // 统一的容差设置
     const float dotHitRadius = 14.0f;         // 圆点命中半径（圆点半径 12.5 + 余量）
+    const float columnHitHalfWidth = 8.0f;    // 竖线命中半宽
     const float normalCurveThreshold = 12.0f; // 正态曲线容差
     const float rayThreshold = 8.0f;          // 射线容差
     
     // ========== 优先级 1: 检测5个圆点（体积大，需优先于曲线/射线） ==========
-    for (int i = 0; i < (int)kDotRelativePositions.size(); ++i)
+    for (int i = 0; i < 5; ++i)
     {
         juce::Point<float> dotCenter = getDotCenter(i, controlArea);
         if (mousePos.getDistanceFrom(dotCenter) <= dotHitRadius)
@@ -722,7 +784,22 @@ void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
         }
     }
 
-    // ========== 优先级 2: 检测正态分布曲线 ==========
+    // ========== 优先级 2: 检测竖直线（允许水平拖动改变 st） ==========
+    for (int i = 0; i < 5; ++i)
+    {
+        const float xPos = getDotColumnX(i, controlArea);
+        const float yTop = getDotTrackTopY(i, controlArea) - 10.0f;
+        const float yBot = (float)controlArea.getBottom();
+
+        if (mousePos.x >= xPos - columnHitHalfWidth && mousePos.x <= xPos + columnHitHalfWidth
+            && mousePos.y >= yTop && mousePos.y <= yBot)
+        {
+            draggingDotColumnIndex = i;
+            return;
+        }
+    }
+
+    // ========== 优先级 3: 检测正态分布曲线 ==========
     float distToCurve = distanceToNormalCurve(mousePos, controlArea);
     
     if (distToCurve <= normalCurveThreshold)
@@ -733,7 +810,8 @@ void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
     
     // ========== 优先级 4: 检测红色射线 ==========
     juce::Point<float> rayStart = bottomCenter;
-    juce::Point<float> redActualEnd  = calculateRayEndBySlope( rayslopeK, isVerticalRay, controlArea);
+    float redAngleDeg = 180.0f - blueAngleDeg;  // 红线角度（左右对称）
+    juce::Point<float> redActualEnd  = calculateRayEndByAngle(redAngleDeg, controlArea);
     
     if (isPointNearLine(mousePos, rayStart, redActualEnd, rayThreshold))
     {
@@ -742,7 +820,7 @@ void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
     }
     
     // ========== 优先级 5: 检测蓝色射线 ==========
-    juce::Point<float> blueActualEnd = calculateRayEndBySlope(-rayslopeK, isVerticalRay, controlArea);
+    juce::Point<float> blueActualEnd = calculateRayEndByAngle(blueAngleDeg, controlArea);
     
     if (isPointNearLine(mousePos, rayStart, blueActualEnd, rayThreshold))
     {
@@ -760,7 +838,7 @@ void PuponvstAudioProcessorEditor::mouseDrag(const juce::MouseEvent& event)
     
     // 如果没有命中任何可拖动项，mouseDown中没有设置拖动状态，这里直接忽略
     if (!isDraggingNormalCurve && !isDraggingRedLine && !isDraggingBlueLine
-        && draggingDotIndex < 0)
+        && draggingDotIndex < 0 && draggingDotColumnIndex < 0)
         return;
     
     juce::Point<float> mousePos = event.position;
@@ -769,7 +847,22 @@ void PuponvstAudioProcessorEditor::mouseDrag(const juce::MouseEvent& event)
     mousePos.x = juce::jlimit<float>((float)controlArea.getX(), (float)controlArea.getRight(), mousePos.x);
     mousePos.y = juce::jlimit<float>((float)controlArea.getY(), (float)controlArea.getBottom(), mousePos.y);
     
-    // ========== 1. 处理正态曲线拖动 ==========
+    // ========== 1. 处理竖线水平拖动（半音整数吸附） ==========
+    if (draggingDotColumnIndex >= 0)
+    {
+        const int i = draggingDotColumnIndex;
+        const int st = xToSemitone(mousePos.x, controlArea);
+        dotSemitoneOffsets[(size_t)i] = st;
+
+        // 半音偏移实时同步给音频引擎
+        processor.setDotSemitoneOffset(i, st);
+
+        pushDotParamsToProcessor();
+        repaint();
+        return;
+    }
+
+    // ========== 2. 处理圆点竖向拖动 ==========
     if (draggingDotIndex >= 0)
     {
         const int i = draggingDotIndex;
@@ -785,39 +878,13 @@ void PuponvstAudioProcessorEditor::mouseDrag(const juce::MouseEvent& event)
             t = juce::jlimit(0.0f, 1.0f, t);
         }
         
-        // 分组联动：左组 {0,1}，中组 {2}，右组 {3,4}
-        // 注意：拖动时使用 setValueNotifyingHost() 配合 dontSendNotification 会导致编译错误
-        // 正确做法：直接设置 APVTS 的 raw parameter value，不触发宿主通知
-        if (i == 2)
-        {
-            dotOffsetT[2] = t;
-            // 同步更新 APVTS 参数（不通知宿主，避免死锁）
-            processor.getAPVTS().getParameter("dot2")->setValueNotifyingHost(t);
-            // 但我们需要不通知... 使用 copyValueToValueTree 或直接修改 ValueTree
-            auto param = processor.getAPVTS().getParameter("dot2");
-            if (param != nullptr)
-                param->setValue(t);  // AudioProcessorParameter::setValue 只需一个参数
-        }
-        else if (i == 0 || i == 1)
-        {
-            dotOffsetT[0] = t;
-            dotOffsetT[1] = t;
-            // 同步更新 APVTS 参数（不通知宿主，避免死锁）
-            auto param0 = processor.getAPVTS().getParameter("dot0");
-            auto param1 = processor.getAPVTS().getParameter("dot1");
-            if (param0 != nullptr) param0->setValue(t);
-            if (param1 != nullptr) param1->setValue(t);
-        }
-        else // i == 3 || i == 4
-        {
-            dotOffsetT[3] = t;
-            dotOffsetT[4] = t;
-            // 同步更新 APVTS 参数（不通知宿主，避免死锁）
-            auto param3 = processor.getAPVTS().getParameter("dot3");
-            auto param4 = processor.getAPVTS().getParameter("dot4");
-            if (param3 != nullptr) param3->setValue(t);
-            if (param4 != nullptr) param4->setValue(t);
-        }
+        // 圆点参数解耦：仅更新当前被拖动的一个 dot
+        dotOffsetT[(size_t)i] = t;
+
+        // 同步更新对应 APVTS 参数（拖动中不通知宿主，避免高频回调）
+        juce::String paramID = "dot" + juce::String(i);
+        if (auto* param = processor.getAPVTS().getParameter(paramID))
+            param->setValue(t);
         
         pushDotParamsToProcessor();
         repaint();
@@ -858,27 +925,61 @@ void PuponvstAudioProcessorEditor::mouseDrag(const juce::MouseEvent& event)
         pushDotParamsToProcessor();
         repaint();
     }
-    // ========== 2. 处理红/蓝色射线拖动（基于斜率） ==========
+    // ========== 2. 处理红/蓝色射线拖动（基于角度） ==========
     else if (isDraggingRedLine || isDraggingBlueLine)
     {
-        // 根据鼠标相对原点(bottomCenter)的位置计算斜率
-        // 保护策略：
-        //   - 禁止垂直（k = ∞）：当鼠标接近原点正上方时，将 |k| 饱和到 kMaxAbs（一个很大的有限值）
-        //   - 当鼠标拖到屏幕边界、被 clamp 到水平方向（dyUp 很小）时，k 归零 → 射线变为水平
-        float k = 0.0f;
-        computeSlopeFromMouse(mousePos, controlArea, k);
+        // 根据鼠标相对原点(bottomCenter)的位置计算角度
+        // 角度定义（与 atan2 一致）：0° = 水平向右，90° = 垂直向上，180° = 水平向左
+        // 蓝线角度 = blueAngleDeg，红线角度 = 180° - blueAngleDeg（对称）
         
-        // 若当前拖动的是蓝线，则鼠标位置对应的斜率 k 等于 -rayslopeK，需取反作为 rayslopeK
-        if (isDraggingBlueLine)
-            k = -k;
-        rayslopeK = k;
-        isVerticalRay = false; // 永不允许垂直射线
+        float dx = mousePos.x - bottomCenter.x;
+        float dy = bottomCenter.y - mousePos.y;  // 转换为数学坐标系（Y向上）
         
-        // 同步更新 APVTS 参数（不通知宿主，避免死锁）
+        // 计算角度（度数），atan2 返回范围 [-180°, 180°]
+        float angleRad = std::atan2(dy, dx);
+        float mouseAngleDeg = angleRad * (180.0f / juce::MathConstants<float>::pi);
+        
+        // 转换为 [0°, 360°) 范围
+        if (mouseAngleDeg < 0) mouseAngleDeg += 360.0f;
+        
+        // 限制到上半平面 [0°, 180°]（只允许 Y >= 0 的方向）
+        if (mouseAngleDeg > 180.0f) mouseAngleDeg = 360.0f - mouseAngleDeg;
+        mouseAngleDeg = juce::jlimit(0.0f, 180.0f, mouseAngleDeg);
+        
+        // 根据拖动的是红线还是蓝线，设置对应的角度
+        if (isDraggingRedLine)
+        {
+            // 拖动红线：鼠标位置对应红线角度
+            float redAngleDeg = mouseAngleDeg;
+            blueAngleDeg = 180.0f - redAngleDeg;  // 蓝线角度 = 180° - 红线角度（对称）
+        }
+        else
+        {
+            // 拖动蓝线：鼠标位置对应蓝线角度
+            blueAngleDeg = mouseAngleDeg;
+        }
+        
+        // 计算 rayslopeK（红线斜率 = tan(红线角度)）
+        float redAngleDeg = 180.0f - blueAngleDeg;
+        float redAngleRad = redAngleDeg * (juce::MathConstants<float>::pi / 180.0f);
+        
+        constexpr float kMaxSlope = 1.0e4f;
+        // 处理边界情况：cos(angle) = 0 时 tan 无穷大（垂直方向）
+        if (std::abs(std::cos(redAngleRad)) < 1e-6f)
+        {
+            // 红线垂直向上（90°）或垂直向下（270°）
+            rayslopeK = (std::sin(redAngleRad) >= 0) ? kMaxSlope : -kMaxSlope;
+        }
+        else
+        {
+            rayslopeK = std::tan(redAngleRad);
+        }
+        
+        isVerticalRay = false;
+        
+        // 同步更新 APVTS 参数：归一化值 = blueAngleDeg / 180.0f
         if (auto* param = processor.getAPVTS().getParameter(ParameterIDs::rayslopeK))
-            param->setValue(juce::jlimit(0.0f, 1.0f, (rayslopeK + 5.0f) / 10.0f));
-        if (auto* param = processor.getAPVTS().getParameter(ParameterIDs::isVerticalRay))
-            param->setValue(0.0f); // false
+            param->setValue(blueAngleDeg / 180.0f);
         
         // 射线斜率变了 → 每个圆点的染色进度变了 → pan 变了
         pushDotParamsToProcessor();
@@ -889,6 +990,7 @@ void PuponvstAudioProcessorEditor::mouseDrag(const juce::MouseEvent& event)
 void PuponvstAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
 {
     const bool wasDraggingDot = (draggingDotIndex >= 0);
+    const bool wasDraggingDotColumn = (draggingDotColumnIndex >= 0);
     const bool wasDraggingRay = (isDraggingRedLine || isDraggingBlueLine);
     const bool wasDraggingCurve = isDraggingNormalCurve;
     
@@ -896,6 +998,7 @@ void PuponvstAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
     isDraggingBlueLine = false;
     isDraggingNormalCurve = false;
     draggingDotIndex = -1;
+    draggingDotColumnIndex = -1;
     
     // 拖动结束后，才通知宿主参数变化（避免拖动时频繁触发宿主回调导致死锁）
     if (wasDraggingDot)
@@ -914,8 +1017,6 @@ void PuponvstAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
         // 通知宿主射线参数变化
         if (auto* param = processor.getAPVTS().getParameter(ParameterIDs::rayslopeK))
             param->setValueNotifyingHost(param->getValue());
-        if (auto* param = processor.getAPVTS().getParameter(ParameterIDs::isVerticalRay))
-            param->setValueNotifyingHost(param->getValue());
     }
     
     if (wasDraggingCurve)
@@ -925,8 +1026,8 @@ void PuponvstAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
             param->setValueNotifyingHost(param->getValue());
     }
     
-    if (wasDraggingDot)
-        repaint(); // 清除被拖动圆点的高亮描边
+    if (wasDraggingDot || wasDraggingDotColumn)
+        repaint(); // 清除被拖动圆点/竖线的高亮描边
 }
 
 // 辅助函数：检查点是否靠近线段（返回点到线段的距离是否小于阈值）
@@ -1105,6 +1206,94 @@ juce::Point<float> PuponvstAudioProcessorEditor::calculateRayEndBySlope(float k,
     }
 }
 
+juce::Point<float> PuponvstAudioProcessorEditor::calculateRayEndByAngle(float angleDeg,
+                                                                        const juce::Rectangle<int>& controlArea) const
+{
+    // angleDeg: 0° = 水平向右，90° = 垂直向上，180° = 水平向左
+    // 这是常规极坐标定义（与 atan2 返回值一致）
+    // 计算射线与控制区域边界的交点
+    
+    const float originX = (float)controlArea.getCentreX();
+    const float originY = (float)controlArea.getBottom();
+    const float left = (float)controlArea.getX();
+    const float right = (float)controlArea.getRight();
+    const float top = (float)controlArea.getY();
+    const float H = originY - top;            // 控制区域高度
+    const float halfW = (right - left) * 0.5f; // 半宽
+    
+    // 将角度转换为弧度，并计算方向向量
+    // 常规极坐标：0° = 向右（dirX=1, dirY=0），90° = 向上（dirX=0, dirY=1），180° = 向左（dirX=-1, dirY=0）
+    float angleRad = angleDeg * (juce::MathConstants<float>::pi / 180.0f);
+    
+    // 方向向量（数学坐标系，Y向上）
+    float dirX = std::cos(angleRad);  // 0° → +1(右), 90° → 0, 180° → -1(左)
+    float dirY = std::sin(angleRad);  // 0° → 0, 90° → 1(上), 180° → 0
+    
+    // 射线参数方程：origin + t * (dirX, dirY), t >= 0
+    // 需要找到最小的 t 使得射线击中边界
+    // 注意：这里使用数学坐标系（Y向上），原点为(0,0)，上边界为 y=H
+    
+    float t_min = std::numeric_limits<float>::max();
+    
+    // 与上边界相交：t * dirY = H => t = H / dirY
+    // 只有当 dirY > 0 时，射线才会向上击中上边界
+    if (dirY > 0.0f)
+    {
+        float t_top = H / dirY;  // H = originY - top（数学坐标系中的高度）
+        float hitX = originX + t_top * dirX;  // 屏幕坐标 X
+        // 检查交点是否在左/右边界内
+        if (hitX >= left && hitX <= right)
+            t_min = juce::jmin(t_min, t_top);
+    }
+    
+    // 与左边界相交：originX + t * dirX = left => t = (left - originX) / dirX
+    if (dirX < 0.0f)  // 只有向左的方向才可能与左边界相交
+    {
+        float t_left = (left - originX) / dirX;
+        if (t_left > 0)
+        {
+            // 对于水平射线（dirY=0），hitY = originY
+            float hitY = originY - t_left * dirY;  // 转换为屏幕坐标（Y向下）
+            if (hitY >= top && hitY <= originY)
+                t_min = juce::jmin(t_min, t_left);
+        }
+    }
+    
+    // 与右边界相交：originX + t * dirX = right => t = (right - originX) / dirX
+    if (dirX > 0.0f)  // 只有向右的方向才可能与右边界相交
+    {
+        float t_right = (right - originX) / dirX;
+        if (t_right > 0)
+        {
+            // 对于水平射线（dirY=0），hitY = originY
+            float hitY = originY - t_right * dirY;  // 转换为屏幕坐标（Y向下）
+            if (hitY >= top && hitY <= originY)
+                t_min = juce::jmin(t_min, t_right);
+        }
+    }
+    
+    // 计算终点
+    if (t_min < std::numeric_limits<float>::max())
+    {
+        float endX = originX + t_min * dirX;
+        float endY = originY - t_min * dirY;  // 转换回屏幕坐标（Y向下）
+        return juce::Point<float>(endX, endY);
+    }
+    
+    // 备用：不应该到达这里（处理水平射线等边界情况）
+    // 水平射线：dirY = 0, dirX = ±1
+    if (std::abs(dirY) < 1e-6f)
+    {
+        if (dirX < 0.0f)
+            return juce::Point<float>(left, originY);   // 向左：击中左边界
+        else
+            return juce::Point<float>(right, originY);  // 向右：击中右边界
+    }
+    
+    // 其他未知情况
+    return juce::Point<float>(originX, top);
+}
+
 // 根据鼠标屏幕坐标计算相对 bottomCenter 的斜率（数学坐标系，Y 向上）
 // 保护策略（严禁出现 k=∞ 的垂直射线）：
 //   - dyUp 很小（鼠标被 clamp 到下边界或低于原点）→ k=0（水平射线）
@@ -1149,11 +1338,29 @@ bool PuponvstAudioProcessorEditor::computeSlopeFromMouse(const juce::Point<float
     return true;
 }
 
+float PuponvstAudioProcessorEditor::semitoneToX(int semitone, const juce::Rectangle<int>& controlArea) const
+{
+    const int st = juce::jlimit(kMinSemitone, kMaxSemitone, semitone);
+    const float norm = (float)(st - kMinSemitone) / (float)(kMaxSemitone - kMinSemitone);
+    return (float)controlArea.getX() + norm * (float)controlArea.getWidth();
+}
+
+int PuponvstAudioProcessorEditor::xToSemitone(float x, const juce::Rectangle<int>& controlArea) const
+{
+    const float width = (float)controlArea.getWidth();
+    if (width <= 1.0f)
+        return 0;
+
+    const float norm = juce::jlimit(0.0f, 1.0f, (x - (float)controlArea.getX()) / width);
+    const float stF = (float)kMinSemitone + norm * (float)(kMaxSemitone - kMinSemitone);
+    return juce::jlimit(kMinSemitone, kMaxSemitone, (int)std::lround(stF));
+}
+
 // 返回第 i (0..4) 根竖直线的屏幕 X 坐标
 float PuponvstAudioProcessorEditor::getDotColumnX(int i, const juce::Rectangle<int>& controlArea) const
 {
-    i = juce::jlimit(0, (int)kDotRelativePositions.size() - 1, i);
-    return controlArea.getX() + kDotRelativePositions[(size_t)i] * controlArea.getWidth();
+    i = juce::jlimit(0, 4, i);
+    return semitoneToX(dotSemitoneOffsets[(size_t)i], controlArea);
 }
 
 // 返回第 i 根竖直线与正态曲线的交点 Y（= 圆点轨道的顶端，offsetT=1 时的位置）
@@ -1165,7 +1372,7 @@ float PuponvstAudioProcessorEditor::getDotTrackTopY(int i, const juce::Rectangle
 // 返回第 i 个圆点的当前屏幕中心坐标：在 [底部, 轨道顶端] 之间按 dotOffsetT[i] 插值
 juce::Point<float> PuponvstAudioProcessorEditor::getDotCenter(int i, const juce::Rectangle<int>& controlArea) const
 {
-    i = juce::jlimit(0, (int)kDotRelativePositions.size() - 1, i);
+    i = juce::jlimit(0, 4, i);
     const float xPos = getDotColumnX(i, controlArea);
     const float trackTopY = getDotTrackTopY(i, controlArea);
     const float bottomY = (float)controlArea.getBottom();
@@ -1177,11 +1384,10 @@ juce::Point<float> PuponvstAudioProcessorEditor::getDotCenter(int i, const juce:
 
 // 同步 5 个圆点的 gain / pan 到音频处理引擎
 // gain = dotOffsetT[i]（1.0 = 100%，与 UI 的高度百分比一致）
-// pan  = 根据红/蓝射线与该竖直线的交点高度推导：
-//   redT ∈ [0,1]（越红越偏左） → 贡献 -redT
-//   blueT ∈ [0,1]（越蓝越偏右）→ 贡献 +blueT
-//   两者至多一个非零（射线分左右对称），相加即 [-1, +1] 的 pan
-//   白色（射线方向不匹配 / 不在屏幕内）→ redT=blueT=0 → pan=0（不做声相处理）
+// pan  = 简化统一模型（与你给定映射一致）：
+//   1) 角度决定最大偏移：angle=0/180 -> 1，angle=90 -> 0（线性）
+//   2) 半音决定带内偏移：st=-36..+36 线性映射到 -1..+1
+//   3) 90°两侧方向相反：0..90 使用原方向，90..180 方向翻转
 void PuponvstAudioProcessorEditor::pushDotParamsToProcessor()
 {
     auto controlArea = getLocalBounds();
@@ -1189,23 +1395,20 @@ void PuponvstAudioProcessorEditor::pushDotParamsToProcessor()
     if (controlArea.getWidth() <= 0 || controlArea.getHeight() <= 0)
         return;
     
-    const float top    = (float)controlArea.getY();
     const float bottom = (float)controlArea.getBottom();
-    
-    auto rayHitVerticalY = [&](float k, float vx) -> float
+
+    const float angleClamped = juce::jlimit(0.0f, 180.0f, blueAngleDeg);
+    const float distanceNorm = juce::jlimit(0.0f, 1.0f, std::abs(angleClamped - 90.0f) / 90.0f);
+    // 角度到最大偏移曲线：
+    // d=0(90°)->0，d=1(0°/180°)->1，d=0.5(45°/135°)->0.55（对应 [1,0.45] / [0.45,1]）
+    const float panMaxByAngle = juce::jlimit(0.0f, 1.0f, distanceNorm * (1.2f - 0.2f * distanceNorm));
+    const float directionFlipByAngle = (angleClamped <= 90.0f) ? 1.0f : -1.0f;
+
+    auto panFromSemitone = [&](int semitone) -> float
     {
-        const float dx = vx - bottomCenter.x;
-        if (std::abs(k) < 1e-6f) return std::numeric_limits<float>::quiet_NaN();
-        if ((k > 0.0f && dx <= 0.0f) || (k < 0.0f && dx >= 0.0f))
-            return std::numeric_limits<float>::quiet_NaN();
-        return bottomCenter.y - k * dx;
-    };
-    auto progress = [&](float hitY) -> float
-    {
-        if (std::isnan(hitY)) return 0.0f;   // 未击中 → 白色
-        if (hitY <= top)      return 1.0f;   // 超出屏幕上方 → 纯色
-        if (hitY >= bottom)   return 0.0f;   // 下方 → 无效
-        return (bottom - hitY) / (bottom - top);
+        const int st = juce::jlimit(kMinSemitone, kMaxSemitone, semitone);
+        const float stNorm = juce::jlimit(-1.0f, 1.0f, (float)st / (float)kMaxSemitone);
+        return juce::jlimit(-1.0f, 1.0f, directionFlipByAngle * stNorm * panMaxByAngle);
     };
     
     // Gain 基准：以中间圆点(i=2)在 offsetT=1 时的轨道顶端高度作为 100%
@@ -1215,12 +1418,12 @@ void PuponvstAudioProcessorEditor::pushDotParamsToProcessor()
     const float centerTopY   = getDotTrackTopY(2, controlArea); // 中间圆点默认屏幕 Y（最高点）
     const float refHeightPx  = bottom - centerTopY;             // 100% 基准高度（像素）
     
-    for (int i = 0; i < (int)kDotRelativePositions.size(); ++i)
+for (int i = 0; i < 5; ++i)
     {
         const float xPos = getDotColumnX(i, controlArea);
-        const float redT  = progress(rayHitVerticalY( rayslopeK, xPos));
-        const float blueT = progress(rayHitVerticalY(-rayslopeK, xPos));
-        const float pan = juce::jlimit(-1.0f, 1.0f, blueT - redT);
+        
+        const int st = juce::jlimit(kMinSemitone, kMaxSemitone, dotSemitoneOffsets[(size_t)i]);
+        const float pan = panFromSemitone(st);
         
         // 圆点的当前屏幕中心 Y（受 dotOffsetT[i] 与当前 sigma 共同决定）
         const juce::Point<float> c = getDotCenter(i, controlArea);
@@ -1231,6 +1434,7 @@ void PuponvstAudioProcessorEditor::pushDotParamsToProcessor()
         
         processor.setDotGain(i, gain);
         processor.setDotPan (i, pan);
+        processor.setDotSemitoneOffset(i, dotSemitoneOffsets[(size_t)i]);
     }
 
     // ===== 把整套 UI 控制状态同步给 Processor（用于宿主存档/恢复） =====
@@ -1243,11 +1447,12 @@ void PuponvstAudioProcessorEditor::pushDotParamsToProcessor()
     if (initialised)
     {
         PuponvstAudioProcessor::EditorState s;
-        s.rayslopeK     = rayslopeK;
-        s.isVerticalRay = isVerticalRay;
-        s.sigma         = sigma;
-        s.dotOffsetT    = dotOffsetT;
-        s.hasValidValues= true;
+        s.rayslopeK           = rayslopeK;
+        s.isVerticalRay       = isVerticalRay;
+        s.sigma               = sigma;
+        s.dotOffsetT          = dotOffsetT;
+        s.dotSemitoneOffsets  = dotSemitoneOffsets;
+        s.hasValidValues      = true;
         processor.setEditorState(s);
     }
 }
@@ -1291,14 +1496,29 @@ void PuponvstAudioProcessorEditor::resized()
 // 注意：此函数在宿主回调上下文中调用，不能直接调用 repaint()，否则可能死锁
 void PuponvstAudioProcessorEditor::parameterChanged(const juce::String& parameterID, float newValue)
 {
+    // newValue 是归一化值 [0,1]，对应蓝线角度 [0°, 180°]
     if (parameterID == ParameterIDs::rayslopeK)
     {
-        rayslopeK = newValue;
-        needsRepaint = true;
-    }
-    else if (parameterID == ParameterIDs::isVerticalRay)
-    {
-        isVerticalRay = (newValue > 0.5f);
+        // 蓝线角度：0° = 向右，90° = 向上，180° = 向左
+        blueAngleDeg = newValue * 180.0f;
+        
+        // 计算对应的 rayslopeK（红线斜率）
+        // 角度定义：0° = 向右，90° = 向上，180° = 向左（与 calculateRayEndByAngle 一致）
+        float redAngleDeg = 180.0f - blueAngleDeg;
+        float redAngleRad = redAngleDeg * (juce::MathConstants<float>::pi / 180.0f);
+        
+        constexpr float kMaxSlope = 1.0e4f;
+        // 处理边界情况：cos(angle) = 0 时 tan 无穷大（垂直方向）
+        if (std::abs(std::cos(redAngleRad)) < 1e-6f)
+        {
+            // 红线垂直向上（90°）或垂直向下（270°）
+            rayslopeK = (std::sin(redAngleRad) >= 0) ? kMaxSlope : -kMaxSlope;
+        }
+        else
+        {
+            rayslopeK = std::tan(redAngleRad);
+        }
+        
         needsRepaint = true;
     }
     else if (parameterID == ParameterIDs::sigma)

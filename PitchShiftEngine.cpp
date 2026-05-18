@@ -12,6 +12,7 @@ PitchShiftEngine::PitchShiftEngine()
     {
         dotGains[(size_t)i].store(0.0f, std::memory_order_relaxed);
         dotPans [(size_t)i].store(0.0f, std::memory_order_relaxed);
+        dotSemitones[(size_t)i].store(kDefaultSemitones[(size_t)i], std::memory_order_relaxed);
         bandEnabled[(size_t)i].store(true, std::memory_order_relaxed);
     }
 }
@@ -40,7 +41,9 @@ void PitchShiftEngine::prepare(double newSampleRate, int maxBlockSize, int numCh
 
     for (int b = 0; b < kNumBands; ++b)
     {
-        const double ratio = std::pow(2.0, kSemitones[(size_t)b] / 12.0);
+        const int semitone = dotSemitones[(size_t)b].load(std::memory_order_relaxed);
+        appliedSemitones[(size_t)b] = semitone;
+        const double ratio = std::pow(2.0, (double) semitone / 12.0);
 
         for (int ch = 0; ch < 2; ++ch)
         {
@@ -124,6 +127,14 @@ void PitchShiftEngine::setDotPan(int index, float pan)
 {
     if (index < 0 || index >= kNumBands) return;
     dotPans[(size_t)index].store(juce::jlimit(-1.0f, 1.0f, pan), std::memory_order_relaxed);
+}
+
+void PitchShiftEngine::setDotSemitoneOffset(int index, int semitone)
+{
+    if (index < 0 || index >= kNumBands) return;
+
+    const int st = juce::jlimit(-36, +36, semitone);
+    dotSemitones[(size_t) index].store(st, std::memory_order_relaxed);
 }
 
 void PitchShiftEngine::setBandEnabled(int band, bool enabled)
@@ -224,6 +235,23 @@ int PitchShiftEngine::drainFromBand(int band, int ch, float* dst, int n)
 
 void PitchShiftEngine::process(juce::AudioBuffer<float>& buffer)
 {
+    // 在音频线程应用 UI 更新的半音偏移（避免 UI 线程直接触碰 shifter）
+    for (int b = 0; b < kNumBands; ++b)
+    {
+        const int st = dotSemitones[(size_t)b].load(std::memory_order_relaxed);
+        if (st != appliedSemitones[(size_t)b])
+        {
+            const double ratio = std::pow(2.0, (double)st / 12.0);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto& s = state[(size_t)b][(size_t)ch];
+                if (s.shifter)
+                    s.shifter->setPitchScale(ratio);
+            }
+            appliedSemitones[(size_t)b] = st;
+        }
+    }
+
     const int numSamples = buffer.getNumSamples();
     const int numCh      = juce::jlimit(1, 2, buffer.getNumChannels());
     if (numSamples <= 0) return;
@@ -283,11 +311,10 @@ void PitchShiftEngine::process(juce::AudioBuffer<float>& buffer)
         if (!shifterExists)
             continue;
 
-        // 这里不需要再检查 gain，因为前面输入处理阶段已经跳过 gain=0 的 band
-        // 能到达这里的 band 都是 gain > 0 的
+        // 理论上前面输入阶段已过滤 gain=0，这里保留一次防御性检查即可
         const float gain = dotGains[(size_t)b].load(std::memory_order_relaxed);
-        // 防御性检查：如果 gain 仍然是 0，跳过（理论上不会到达这里）
         if (gain <= 1.0e-6f) continue;
+
         const float pan  = juce::jlimit(-1.0f, 1.0f,
                                         dotPans[(size_t)b].load(std::memory_order_relaxed));
         drainFromBand(b, 0, tmpL.data(), numSamples);
@@ -295,8 +322,6 @@ void PitchShiftEngine::process(juce::AudioBuffer<float>& buffer)
             drainFromBand(b, 1, tmpR.data(), numSamples);
         else
             std::memcpy(tmpR.data(), tmpL.data(), (size_t)numSamples * sizeof(float));
-
-        if (gain <= 1.0e-6f) continue;
 
         // 声道间能量转移系数
         //   outL = aLL * L + aRL * R

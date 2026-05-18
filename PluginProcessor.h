@@ -65,13 +65,20 @@ public:
     //   - 新 Editor 构造时调用 getEditorState(...) 回填到自己的成员
     struct EditorState
     {
-        // 红线斜率（数学坐标系，Y 向上）；蓝线斜率为其相反数
+        // 蓝线角度（度）：0° = 水平向左，90° = 垂直向上，180° = 水平向右
+        // 红线角度 = 180° - blueAngleDeg（左右对称）
+        float blueAngleDeg = 90.0f;  // 默认垂直向上
+        
+        // 红线斜率（数学坐标系，Y 向上），由 blueAngleDeg 计算得出
+        // 保留用于音频处理中的 pan 计算
         float rayslopeK    = 0.0f;
         bool  isVerticalRay = false;
         // 正态曲线方差（标准差）
         float sigma        = 1.0f;
         // 5 个圆点在轨道上的归一化高度，1.0 = 顶端（默认最大），0.0 = 底部
         std::array<float, 5> dotOffsetT { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+        // 5 个圆点的半音偏移（单位 st，始终为整数）
+        std::array<int, 5> dotSemitoneOffsets { -24, -12, 0, +12, +24 };
         // 是否包含已保存的有效内容（Processor 刚被构造、尚未恢复时为 false）
         bool  hasValidValues = false;
     };
@@ -89,6 +96,7 @@ public:
     // index ∈ [0, 4]，gain ∈ [0, 1]，pan ∈ [-1, +1]
     void setDotGain(int index, float gain) { pitchEngine.setDotGain(index, gain); }
     void setDotPan (int index, float pan ) { pitchEngine.setDotPan (index, pan ); }
+    void setDotSemitoneOffset(int index, int semitone) { pitchEngine.setDotSemitoneOffset(index, semitone); }
 
     // 视觉同步：UI 通过此 getter 获取相关状态
 

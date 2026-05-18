@@ -43,8 +43,8 @@ class PitchShiftEngine
 {
 public:
     static constexpr int kNumBands = 5;
-    // 5 路对应的半音偏移（从左到右）
-    static constexpr std::array<int, kNumBands> kSemitones { -24, -12, 0, +12, +24 };
+    // 5 路默认半音偏移（从左到右）
+    static constexpr std::array<int, kNumBands> kDefaultSemitones { -24, -12, 0, +12, +24 };
 
     PitchShiftEngine();
     ~PitchShiftEngine();
@@ -56,6 +56,7 @@ public:
     // === UI → Audio 参数更新（lock-free） ===
     void setDotGain(int index, float gain);
     void setDotPan (int index, float pan);
+    void setDotSemitoneOffset(int index, int semitone);
 
     // 启用/禁用每个band
     void setBandEnabled(int band, bool enabled);
@@ -98,6 +99,10 @@ private:
     // UI 参数
     std::array<std::atomic<float>, kNumBands> dotGains;
     std::array<std::atomic<float>, kNumBands> dotPans;
+    std::array<std::atomic<int>,   kNumBands> dotSemitones;
+
+    // 仅在音频线程读写：记录每个 band 已应用到 shifter 的半音值
+    std::array<int, kNumBands> appliedSemitones { -24, -12, 0, +12, +24 };
 
     // 启用/禁用每个band
     std::array<std::atomic<bool>, kNumBands> bandEnabled;

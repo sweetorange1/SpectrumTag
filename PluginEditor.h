@@ -46,10 +46,11 @@ private:
     
     // ===== 射线斜率模型 =====
     // 坐标系定义：以控制区域下边缘中点(bottomCenter)为原点，X轴水平向右，Y轴向上（数学坐标系）
-    // 红线斜率记为 rayslopeK，蓝线斜率为 -rayslopeK（左右对称）
-    // 射线总是向上发射（Y分量 > 0）
-    // 默认：红线指向左上角 (k<0)，蓝线指向右上角 (k>0)
-    float rayslopeK = 0.0f;       // 红线斜率（数学坐标系下）
+    // 蓝线角度：0° = 水平向左，90° = 垂直向上，180° = 水平向右
+    // 红线角度 = 180° - 蓝线角度（左右对称）
+    // rayslopeK = tan(红线角度 - 90°) 用于兼容现有计算
+    float blueAngleDeg = 90.0f;  // 蓝线角度（度），默认垂直向上
+    float rayslopeK = 0.0f;       // 红线斜率（数学坐标系下），由 blueAngleDeg 计算得出
     bool  isVerticalRay = false;  // 是否为垂直射线（k为无穷大时两线重合向正上方）
     
     // 射线交互状态
@@ -62,7 +63,10 @@ private:
     // offsetT[i] 表示圆点在"轨道"上的位置：1.0 = 默认位置（竖直线与正态曲线的交点，最高），
     //                                     0.0 = 控制区域底部（最低）
     std::array<float, 5> dotOffsetT { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+    // 每个珍珠竖线对应的半音偏移（单位：st，始终为整数）
+    std::array<int, 5> dotSemitoneOffsets { -24, -12, 0, +12, +24 };
     int draggingDotIndex = -1; // -1 表示没有拖动圆点；否则为 0..4
+    int draggingDotColumnIndex = -1; // -1 表示没有拖动竖线X；否则为 0..4
 
     // 控制区域下边缘中点（射线发射原点，屏幕坐标）
     juce::Point<float> bottomCenter;
@@ -85,6 +89,12 @@ private:
     juce::Point<float> calculateRayEndBySlope(float k, bool isVertical,
                                                const juce::Rectangle<int>& controlArea) const;
     
+    // 根据角度计算射线终点（角度版本，更直观）
+    // angleDeg: 0° = 水平向左，90° = 垂直向上，180° = 水平向右
+    // 返回射线与控制区域边界的交点(屏幕坐标)
+    juce::Point<float> calculateRayEndByAngle(float angleDeg,
+                                               const juce::Rectangle<int>& controlArea) const;
+    
     // 根据鼠标屏幕坐标计算相对于原点的斜率（数学坐标系，Y轴向上）
     // 保护策略：dyUp 过小（鼠标贴下边）→ k=0（水平）；|dx| 过小（鼠标几乎正上方）→ 斜率饱和到一个大的有限值
     // 始终返回 true；不会再产生垂直射线状态
@@ -93,6 +103,12 @@ private:
                                 float& outK) const;
 
     // ===== 圆点几何辅助 =====
+    // 半音偏移范围映射（下方面板最左 -36st，最右 +36st）
+    static constexpr int kMinSemitone = -36;
+    static constexpr int kMaxSemitone = +36;
+    float semitoneToX(int semitone, const juce::Rectangle<int>& controlArea) const;
+    int xToSemitone(float x, const juce::Rectangle<int>& controlArea) const;
+
     // 返回第 i (0..4) 根竖直线的屏幕 X
     float getDotColumnX(int i, const juce::Rectangle<int>& controlArea) const;
     // 返回第 i 根竖直线与正态曲线的交点 Y（即圆点轨道的顶端，t=1 时的位置）
