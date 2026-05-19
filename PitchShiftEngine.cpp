@@ -19,6 +19,128 @@ PitchShiftEngine::PitchShiftEngine()
 
 PitchShiftEngine::~PitchShiftEngine() = default;
 
+void PitchShiftEngine::setFilterCenterOffsetSemitones(int centerOffsetSt)
+{
+    filterCenterOffsetSt.store(juce::jlimit(-48, +48, centerOffsetSt), std::memory_order_relaxed);
+}
+
+void PitchShiftEngine::setFilterWidthSemitones(int widthSt)
+{
+    filterWidthSt.store(juce::jlimit(10, 72, widthSt), std::memory_order_relaxed);
+}
+
+void PitchShiftEngine::setPitchQualityMode(int qualityMode)
+{
+    pitchQualityMode.store(juce::jlimit(0, 2, qualityMode), std::memory_order_relaxed);
+}
+
+void PitchShiftEngine::setFormantMode(int mode)
+{
+    formantMode.store(juce::jlimit(0, 1, mode), std::memory_order_relaxed);
+}
+
+int PitchShiftEngine::makeRubberBandOptions(int qualityMode, int formantMode) const
+{
+    // 质量模式映射到 LiveShifter 可用选项（窗口大小/声道策略）
+    int opts = 0;
+    switch (juce::jlimit(0, 2, qualityMode))
+    {
+        case 0: // Fastest
+            opts |= RubberBandLiveShifter::OptionResamplerFastest;
+            opts |= RubberBandLiveShifter::OptionWindowShort;
+            opts |= RubberBandLiveShifter::OptionChannelsTogether;
+            break;
+        case 2: // Best
+            opts |= RubberBandLiveShifter::OptionResamplerBest;
+            opts |= RubberBandLiveShifter::OptionWindowMedium;
+            opts |= RubberBandLiveShifter::OptionChannelsApart;
+            break;
+        case 1: // FastestTolerable
+        default:
+            opts |= RubberBandLiveShifter::OptionResamplerFastestTolerable;
+            opts |= RubberBandLiveShifter::OptionWindowShort;
+            opts |= RubberBandLiveShifter::OptionChannelsApart;
+            break;
+    }
+
+    opts |= (juce::jlimit(0, 1, formantMode) == 1)
+        ? RubberBandLiveShifter::OptionFormantPreserved
+        : RubberBandLiveShifter::OptionFormantShifted;
+
+    return opts;
+}
+
+std::pair<float, float> PitchShiftEngine::computeBandCutoffsHz(int semitone, int centerOffset, int widthSt) const
+{
+    // 规则基线：
+    // -36st -> [C1, C3], 0st -> [C4, C6], +36st -> [C7, C9]
+    // 等价中心表示：center(0st)=C5，随后按 semitone 线性平移。
+    const int st = juce::jlimit(-36, +36, semitone);
+    const int width = juce::jlimit(10, 72, widthSt);
+    const float halfWidth = 0.5f * (float) width;
+
+    const float centerMidi = 72.0f + (float) st + (float) centerOffset; // C5 + st + 全局偏移
+    float lowMidi  = centerMidi - halfWidth;
+    float highMidi = centerMidi + halfWidth;
+
+    auto midiToHz = [](float midi) -> float
+    {
+        return 440.0f * std::pow(2.0f, (midi - 69.0f) / 12.0f);
+    };
+
+    float lowHz  = midiToHz(lowMidi);
+    float highHz = midiToHz(highMidi);
+
+    const float nyquistSafe = juce::jmax(200.0f, (float)sampleRate * 0.49f);
+    lowHz  = juce::jlimit(10.0f, nyquistSafe * 0.95f, lowHz);
+    highHz = juce::jlimit(lowHz + 10.0f, nyquistSafe, highHz);
+
+    return { lowHz, highHz };
+}
+
+void PitchShiftEngine::updateBandFilters(int band, int ch, int semitone, int centerOffset, int widthSt)
+{
+    auto& bc = state[(size_t)band][(size_t)ch];
+    if (!bc.shifter)
+        return;
+
+    const auto cutoffs = computeBandCutoffsHz(semitone, centerOffset, widthSt);
+    const float lowCutHz  = cutoffs.first;
+    const float highCutHz = cutoffs.second;
+
+    if (std::abs(bc.appliedLowCutHz - lowCutHz) < 0.01f
+        && std::abs(bc.appliedHighCutHz - highCutHz) < 0.01f)
+    {
+        return;
+    }
+
+    const auto hp = juce::IIRCoefficients::makeHighPass(sampleRate, lowCutHz);
+    const auto lp = juce::IIRCoefficients::makeLowPass(sampleRate, highCutHz);
+
+    for (auto& f : bc.highPassFilters)
+        f.setCoefficients(hp);
+    for (auto& f : bc.lowPassFilters)
+        f.setCoefficients(lp);
+
+    bc.appliedLowCutHz = lowCutHz;
+    bc.appliedHighCutHz = highCutHz;
+}
+
+void PitchShiftEngine::processBandFilters(int band, int ch, float* samples, int n)
+{
+    if (samples == nullptr || n <= 0)
+        return;
+
+    auto& bc = state[(size_t)band][(size_t)ch];
+    if (!bc.shifter)
+        return;
+
+    for (auto& hp : bc.highPassFilters)
+        hp.processSamples(samples, n);
+    for (auto& lp : bc.lowPassFilters)
+        lp.processSamples(samples, n);
+}
+
 void PitchShiftEngine::prepare(double newSampleRate, int maxBlockSize, int numChannels)
 {
     sampleRate           = newSampleRate;
@@ -32,10 +154,12 @@ void PitchShiftEngine::prepare(double newSampleRate, int maxBlockSize, int numCh
     //                                口型可以改为 OptionFormantPreserved）
     //   OptionChannelsApart       —— 多声道独立处理（我们这里每个 shifter 只有 1 ch，
     //                                此选项对单声道无实际影响）
-    const int rbOptions =
-          RubberBandLiveShifter::OptionWindowShort
-        | RubberBandLiveShifter::OptionFormantShifted
-        | RubberBandLiveShifter::OptionChannelsApart;
+    const int quality = pitchQualityMode.load(std::memory_order_relaxed);
+    const int formant = formantMode.load(std::memory_order_relaxed);
+    const int rbOptions = makeRubberBandOptions(quality, formant);
+
+    const int centerOffset = filterCenterOffsetSt.load(std::memory_order_relaxed);
+    const int width = filterWidthSt.load(std::memory_order_relaxed);
 
     reportedLatency = 0;
 
@@ -71,6 +195,12 @@ void PitchShiftEngine::prepare(double newSampleRate, int maxBlockSize, int numCh
                 s.outHead = 0;
                 s.outTail = 0;
 
+                for (auto& f : s.highPassFilters) f.reset();
+                for (auto& f : s.lowPassFilters)  f.reset();
+                s.appliedLowCutHz = -1.0f;
+                s.appliedHighCutHz = -1.0f;
+                updateBandFilters(b, ch, semitone, centerOffset, width);
+
                 // 记录延迟（五路相同，取任一即可；保守起见取最大）
                 // 注意：总延迟 = RubberBand内部延迟 + 输入缓冲延迟(rbBlockSize)
                 // 输入需要累积 rbBlockSize 个样本才能调用 shift()，这部分延迟必须报告给宿主
@@ -89,9 +219,18 @@ void PitchShiftEngine::prepare(double newSampleRate, int maxBlockSize, int numCh
                 s.outRing.clear();
                 s.outHead = 0;
                 s.outTail = 0;
+                for (auto& f : s.highPassFilters) f.reset();
+                for (auto& f : s.lowPassFilters)  f.reset();
+                s.appliedLowCutHz = -1.0f;
+                s.appliedHighCutHz = -1.0f;
             }
         }
     }
+
+    appliedFilterCenterOffsetSt = centerOffset;
+    appliedFilterWidthSt = width;
+    appliedPitchQualityMode = quality;
+    appliedFormantMode = formant;
 }
 
 void PitchShiftEngine::reset()
@@ -113,6 +252,9 @@ void PitchShiftEngine::reset()
             std::fill(s.outRing.begin(), s.outRing.end(), 0.0f);
             s.outHead = 0;
             s.outTail = 0;
+
+            for (auto& f : s.highPassFilters) f.reset();
+            for (auto& f : s.lowPassFilters)  f.reset();
         }
     }
 }
@@ -235,11 +377,24 @@ int PitchShiftEngine::drainFromBand(int band, int ch, float* dst, int n)
 
 void PitchShiftEngine::process(juce::AudioBuffer<float>& buffer)
 {
+    const int centerOffset = filterCenterOffsetSt.load(std::memory_order_relaxed);
+    const int width = filterWidthSt.load(std::memory_order_relaxed);
+    const bool filterConfigChanged = (centerOffset != appliedFilterCenterOffsetSt)
+                                  || (width != appliedFilterWidthSt);
+
+    if (filterConfigChanged)
+    {
+        appliedFilterCenterOffsetSt = centerOffset;
+        appliedFilterWidthSt = width;
+    }
+
     // 在音频线程应用 UI 更新的半音偏移（避免 UI 线程直接触碰 shifter）
     for (int b = 0; b < kNumBands; ++b)
     {
         const int st = dotSemitones[(size_t)b].load(std::memory_order_relaxed);
-        if (st != appliedSemitones[(size_t)b])
+        const bool semitoneChanged = (st != appliedSemitones[(size_t)b]);
+
+        if (semitoneChanged)
         {
             const double ratio = std::pow(2.0, (double)st / 12.0);
             for (int ch = 0; ch < 2; ++ch)
@@ -249,6 +404,12 @@ void PitchShiftEngine::process(juce::AudioBuffer<float>& buffer)
                     s.shifter->setPitchScale(ratio);
             }
             appliedSemitones[(size_t)b] = st;
+        }
+
+        if (semitoneChanged || filterConfigChanged)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                updateBandFilters(b, ch, st, centerOffset, width);
         }
     }
 
@@ -319,9 +480,16 @@ void PitchShiftEngine::process(juce::AudioBuffer<float>& buffer)
                                         dotPans[(size_t)b].load(std::memory_order_relaxed));
         drainFromBand(b, 0, tmpL.data(), numSamples);
         if (numCh >= 2)
+        {
             drainFromBand(b, 1, tmpR.data(), numSamples);
+            processBandFilters(b, 0, tmpL.data(), numSamples);
+            processBandFilters(b, 1, tmpR.data(), numSamples);
+        }
         else
+        {
+            processBandFilters(b, 0, tmpL.data(), numSamples);
             std::memcpy(tmpR.data(), tmpL.data(), (size_t)numSamples * sizeof(float));
+        }
 
         // 声道间能量转移系数
         //   outL = aLL * L + aRL * R

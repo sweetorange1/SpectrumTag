@@ -4,6 +4,8 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <limits>
+#include <utility>
 #include <vector>
 
 // 前向声明，避免在头文件里引入 Rubber Band 头（保持编译隔离）
@@ -58,6 +60,18 @@ public:
     void setDotPan (int index, float pan);
     void setDotSemitoneOffset(int index, int semitone);
 
+    // 频段窗口控制（供后续 UI 扩展）：
+    // centerOffsetSt: 全局中心平移（单位 st）
+    // widthSt: 频段宽度（单位 st，默认 72，当前有效范围 10..72）
+    void setFilterCenterOffsetSemitones(int centerOffsetSt);
+    void setFilterWidthSemitones(int widthSt);
+
+    // Rubber Band 运行模式：
+    // qualityMode: 0=Fastest, 1=FastestTolerable(默认), 2=Best
+    // formantMode: 0=Complex(Shifted, 默认), 1=Vocal(Preserved)
+    void setPitchQualityMode(int qualityMode);
+    void setFormantMode(int formantMode);
+
     // 启用/禁用每个band
     void setBandEnabled(int band, bool enabled);
     bool getBandEnabled(int band) const;
@@ -92,6 +106,12 @@ private:
         std::vector<float> outRing;
         int                outHead = 0; // 待读起点
         int                outTail = 0; // 已写末端（exclusive），outTail >= outHead
+
+        // 36dB/oct: 3 x 二阶高切 + 3 x 二阶低切（每声道独立状态）
+        std::array<juce::IIRFilter, 3> highPassFilters;
+        std::array<juce::IIRFilter, 3> lowPassFilters;
+        float appliedLowCutHz  = -1.0f;
+        float appliedHighCutHz = -1.0f;
     };
 
     std::array<std::array<BandChannel, 2>, kNumBands> state;
@@ -101,8 +121,18 @@ private:
     std::array<std::atomic<float>, kNumBands> dotPans;
     std::array<std::atomic<int>,   kNumBands> dotSemitones;
 
+    // 频段窗口参数（未来由前端控制器驱动）
+    std::atomic<int> filterCenterOffsetSt { 0 };
+    std::atomic<int> filterWidthSt        { 72 };
+    std::atomic<int> pitchQualityMode     { 1 };
+    std::atomic<int> formantMode          { 0 };
+
     // 仅在音频线程读写：记录每个 band 已应用到 shifter 的半音值
     std::array<int, kNumBands> appliedSemitones { -24, -12, 0, +12, +24 };
+    int appliedFilterCenterOffsetSt = std::numeric_limits<int>::min();
+    int appliedFilterWidthSt        = std::numeric_limits<int>::min();
+    int appliedPitchQualityMode     = std::numeric_limits<int>::min();
+    int appliedFormantMode          = std::numeric_limits<int>::min();
 
     // 启用/禁用每个band
     std::array<std::atomic<bool>, kNumBands> bandEnabled;
@@ -119,4 +149,12 @@ private:
     int  drainFromBand(int band, int ch, float* dst, int n);
     // outRing 空间管理：保证能再写入 extra 个样本，必要时向前 shift
     void ensureOutRingSpace(BandChannel& b, int extra);
+
+    // 计算某 band 的低切/高切频率（Hz）
+    std::pair<float, float> computeBandCutoffsHz(int semitone, int centerOffset, int widthSt) const;
+    // 根据目标频点更新某 band/ch 的滤波器系数
+    void updateBandFilters(int band, int ch, int semitone, int centerOffset, int widthSt);
+    // 对单声道样本应用该 band/ch 的滤波器
+    void processBandFilters(int band, int ch, float* samples, int n);
+    int  makeRubberBandOptions(int qualityMode, int formantMode) const;
 };

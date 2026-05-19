@@ -17,6 +17,10 @@ PuponvstAudioProcessor::PuponvstAudioProcessor()
     // 添加参数变化监听
     apvts.addParameterListener(ParameterIDs::rayslopeK, this);
     apvts.addParameterListener(ParameterIDs::sigma, this);
+    apvts.addParameterListener(ParameterIDs::filterCenterSt, this);
+    apvts.addParameterListener(ParameterIDs::filterWidthSt, this);
+    apvts.addParameterListener(ParameterIDs::rbPitchQuality, this);
+    apvts.addParameterListener(ParameterIDs::rbFormantMode, this);
     apvts.addParameterListener(ParameterIDs::dot0, this);
     apvts.addParameterListener(ParameterIDs::dot1, this);
     apvts.addParameterListener(ParameterIDs::dot2, this);
@@ -65,6 +69,8 @@ void PuponvstAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
 
     // 初始化音频处理引擎
     const int numCh = juce::jmax(getTotalNumInputChannels(), getTotalNumOutputChannels());
+    preparedSampleRate = sampleRate;
+    preparedBlockSize = samplesPerBlock;
     pitchEngine.prepare(sampleRate, samplesPerBlock, numCh);
 
     // 状态复位
@@ -72,6 +78,16 @@ void PuponvstAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
 
     // 把 Rubber Band LiveShifter 的启动延迟上报给宿主 DAW，便于延迟补偿
     setLatencySamples(pitchEngine.getLatencySamples());
+
+    // 同步滤波器参数到引擎（避免某些宿主在恢复状态后未触发回调时出现不同步）
+    if (auto* centerParam = apvts.getRawParameterValue(ParameterIDs::filterCenterSt))
+        pitchEngine.setFilterCenterOffsetSemitones((int) std::lround(centerParam->load()));
+    if (auto* widthParam = apvts.getRawParameterValue(ParameterIDs::filterWidthSt))
+        pitchEngine.setFilterWidthSemitones((int) std::lround(widthParam->load()));
+    if (auto* qualityParam = apvts.getRawParameterValue(ParameterIDs::rbPitchQuality))
+        pitchEngine.setPitchQualityMode((int) std::lround(qualityParam->load()));
+    if (auto* formantParam = apvts.getRawParameterValue(ParameterIDs::rbFormantMode))
+        pitchEngine.setFormantMode((int) std::lround(formantParam->load()));
 }
 
 void PuponvstAudioProcessor::releaseResources()
@@ -113,6 +129,14 @@ void PuponvstAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
     const auto totalNumInputChannels  = getTotalNumInputChannels();
     const auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+    // 质量/共振峰模式变化后，在块边界重建 shifter（并更新延迟上报）
+    if (pitchEngineOptionsDirty.exchange(false, std::memory_order_acq_rel))
+    {
+        const int numCh = juce::jmax((int) totalNumInputChannels, (int) totalNumOutputChannels);
+        pitchEngine.prepare(preparedSampleRate, preparedBlockSize, numCh);
+        setLatencySamples(pitchEngine.getLatencySamples());
+    }
 
     // 清理多余输出通道（例如输入是mono而输出是stereo等情况）
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
@@ -305,17 +329,55 @@ juce::AudioProcessorValueTreeState::ParameterLayout PuponvstAudioProcessor::crea
             })
     ));
 
-    // 正态分布标准差 - 范围 [0.1, 3.0]，默认 1.0
+    // 正态分布标准差 - 范围 [0.24, 8.0]，默认 1.0
+    // 注意：interval 必须设为 0，否则归一化值会被量化
+    // 当 sigma 接近下限 0.24 时，归一化值接近 0，会被 interval=0.01 量化到 0，导致跳变
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         ParameterIDs::sigma,
         "Gaussian Sigma",
-        juce::NormalisableRange<float>(0.1f, 3.0f, 0.01f),
-        1.0f,
+        juce::NormalisableRange<float>(0.24f, 8.0f, 0.0f),  // interval=0 禁用量化
+        2.70f,
         juce::AudioParameterFloatAttributes()
             .withLabel("sigma")
             .withStringFromValueFunction([](float value, int) {
                 return juce::String(value, 2);
             })
+    ));
+
+    // 每路滤波器频段中心偏移（st）
+    layout.add(std::make_unique<juce::AudioParameterInt>(
+        ParameterIDs::filterCenterSt,
+        "Filter Center",
+        -36,
+        +36,
+        0,
+        juce::AudioParameterIntAttributes()
+            .withLabel("st")
+    ));
+
+    // 每路滤波器频段宽度（st），用于控制抛物线与底部刻度线的两个交点距离
+    layout.add(std::make_unique<juce::AudioParameterInt>(
+        ParameterIDs::filterWidthSt,
+        "Filter Width",
+        10,
+        72,
+        72,
+        juce::AudioParameterIntAttributes()
+            .withLabel("st")
+    ));
+
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        ParameterIDs::rbPitchQuality,
+        "Pitch Quality",
+        juce::StringArray{ "Fastest", "FastestTolerable", "Best" },
+        1
+    ));
+
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        ParameterIDs::rbFormantMode,
+        "Formant Mode",
+        juce::StringArray{ "Complex", "Vocal" },
+        0
     ));
 
     // 5个珍珠圆点位置（归一化高度）- 范围 [0.0, 1.0]，默认 1.0（顶端）
@@ -376,8 +438,34 @@ void PuponvstAudioProcessor::parameterChanged(const juce::String& parameterID, f
     }
     else if (parameterID == ParameterIDs::sigma)
     {
-        s.sigma = juce::jlimit(0.1f, 3.0f, newValue);
+        // 重要：对于 AudioParameterFloat，parameterChanged 的 newValue 
+        // 是去归一化后的实际值，即 [0.24, 8.0] 范围内的值
+        // 这不是归一化值 [0,1]！
+        float actualSigma = newValue;
+        
+        float newSigma = juce::jlimit(0.24f, 8.0f, actualSigma);
+        s.sigma = newSigma;
         stateChanged = true;
+    }
+    else if (parameterID == ParameterIDs::filterCenterSt)
+    {
+        const int centerSt = juce::jlimit(-36, +36, (int) std::lround(newValue));
+        pitchEngine.setFilterCenterOffsetSemitones(centerSt);
+    }
+    else if (parameterID == ParameterIDs::filterWidthSt)
+    {
+        const int widthSt = juce::jlimit(10, 72, (int) std::lround(newValue));
+        pitchEngine.setFilterWidthSemitones(widthSt);
+    }
+    else if (parameterID == ParameterIDs::rbPitchQuality)
+    {
+        pitchEngine.setPitchQualityMode((int) std::lround(newValue));
+        pitchEngineOptionsDirty.store(true, std::memory_order_release);
+    }
+    else if (parameterID == ParameterIDs::rbFormantMode)
+    {
+        pitchEngine.setFormantMode((int) std::lround(newValue));
+        pitchEngineOptionsDirty.store(true, std::memory_order_release);
     }
     else if (parameterID.startsWith("dot"))
     {

@@ -46,7 +46,35 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
 
     addAndMakeVisible(titleLabel);
     addAndMakeVisible(versionLabel);
-    
+    addAndMakeVisible(qualityCombo);
+    addAndMakeVisible(formantCombo);
+
+    qualityCombo.addItem("Fastest", 1);
+    qualityCombo.addItem("FastestTolerable", 2);
+    qualityCombo.addItem("Best", 3);
+    qualityCombo.setTooltip("Pitch quality (higher quality uses more CPU)");
+    qualityCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF0F0F12));
+    qualityCombo.setColour(juce::ComboBox::outlineColourId, juce::Colour(0x55FFFFFF));
+    qualityCombo.setColour(juce::ComboBox::textColourId, juce::Colours::white.withAlpha(0.92f));
+    qualityCombo.setColour(juce::ComboBox::arrowColourId, juce::Colours::white.withAlpha(0.80f));
+
+    formantCombo.addItem("Complex", 1);
+    formantCombo.addItem("Vocal", 2);
+    formantCombo.setTooltip("Formant mode");
+    formantCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF0F0F12));
+    formantCombo.setColour(juce::ComboBox::outlineColourId, juce::Colour(0x55FFFFFF));
+    formantCombo.setColour(juce::ComboBox::textColourId, juce::Colours::white.withAlpha(0.92f));
+    formantCombo.setColour(juce::ComboBox::arrowColourId, juce::Colours::white.withAlpha(0.80f));
+
+    auto& lf = getLookAndFeel();
+    lf.setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xFF101014));
+    lf.setColour(juce::PopupMenu::textColourId, juce::Colours::white.withAlpha(0.92f));
+    lf.setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(0xFF1B1B22));
+    lf.setColour(juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
+
+    qualityAttachment = std::make_unique<ComboAttachment>(processor.getAPVTS(), ParameterIDs::rbPitchQuality, qualityCombo);
+    formantAttachment = std::make_unique<ComboAttachment>(processor.getAPVTS(), ParameterIDs::rbFormantMode, formantCombo);
+
     // 设置等比放大约束器
     resizeConstrainer.setFixedAspectRatio(1.5f); // 宽高比为 1.5:1 (900:600)
     resizeConstrainer.setMinimumSize(600, 400);
@@ -94,7 +122,7 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
         {
             blueAngleDeg        = restored.blueAngleDeg;
             rayslopeK           = restored.rayslopeK;  // 已经从 blueAngleDeg 计算好了
-            sigma               = juce::jlimit(0.1f, 3.0f, restored.sigma);
+            sigma               = juce::jlimit(0.24f, 8.0f, restored.sigma);
             dotOffsetT          = restored.dotOffsetT;
             dotSemitoneOffsets  = restored.dotSemitoneOffsets;
         }
@@ -135,7 +163,15 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
     }
     if (auto* sigmaParam = processor.getAPVTS().getRawParameterValue(ParameterIDs::sigma))
     {
-        sigma = juce::jlimit(0.1f, 3.0f, sigmaParam->load());
+        sigma = juce::jlimit(0.24f, 8.0f, sigmaParam->load());
+    }
+    if (auto* centerParam = processor.getAPVTS().getRawParameterValue(ParameterIDs::filterCenterSt))
+    {
+        filterCenterSt = juce::jlimit(kMinSemitone, kMaxSemitone, (int) std::lround(centerParam->load()));
+    }
+    if (auto* widthParam = processor.getAPVTS().getRawParameterValue(ParameterIDs::filterWidthSt))
+    {
+        filterWidthSt = juce::jlimit(10, 72, (int) std::lround(widthParam->load()));
     }
     for (int i = 0; i < 5; ++i)
     {
@@ -156,6 +192,8 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
     // 添加参数监听器，响应宿主自动化
     processor.getAPVTS().addParameterListener(ParameterIDs::rayslopeK, this);
     processor.getAPVTS().addParameterListener(ParameterIDs::sigma, this);
+    processor.getAPVTS().addParameterListener(ParameterIDs::filterCenterSt, this);
+    processor.getAPVTS().addParameterListener(ParameterIDs::filterWidthSt, this);
     for (int i = 0; i < 5; ++i)
     {
         juce::String paramID = "dot" + juce::String(i);
@@ -174,6 +212,8 @@ PuponvstAudioProcessorEditor::~PuponvstAudioProcessorEditor()
     // 移除参数监听器
     processor.getAPVTS().removeParameterListener(ParameterIDs::rayslopeK, this);
     processor.getAPVTS().removeParameterListener(ParameterIDs::sigma, this);
+    processor.getAPVTS().removeParameterListener(ParameterIDs::filterCenterSt, this);
+    processor.getAPVTS().removeParameterListener(ParameterIDs::filterWidthSt, this);
     for (int i = 0; i < 5; ++i)
     {
         juce::String paramID = "dot" + juce::String(i);
@@ -260,11 +300,22 @@ void PuponvstAudioProcessorEditor::paint(juce::Graphics& g)
         const float cx = caF.getCentreX();
         const float cy = caF.getCentreY();
         const float radius = std::sqrt(caF.getWidth() * caF.getWidth()
-                                      + caF.getHeight() * caF.getHeight()) * 0.55f;
-        juce::ColourGradient vignette(juce::Colour(0x18FFFFFF), cx, cy,
+                                      + caF.getHeight() * caF.getHeight()) * 0.78f;
+        juce::ColourGradient vignette(juce::Colour(0x14FFFFFF), cx, cy,
                                       juce::Colour(0x00000000), cx + radius, cy, true);
-        vignette.addColour(0.55, juce::Colour(0x08FFFFFF));
+        vignette.addColour(0.20, juce::Colour(0x12FFFFFF));
+        vignette.addColour(0.45, juce::Colour(0x0CFFFFFF));
+        vignette.addColour(0.70, juce::Colour(0x05FFFFFF));
+        vignette.addColour(0.90, juce::Colour(0x01000000));
         g.setGradientFill(vignette);
+        g.fillRect(caF);
+
+        // 叠加一层纵向柔和渐变，打散同心圈感
+        juce::ColourGradient verticalSoft(juce::Colour(0x08000000), cx, caF.getY(),
+                                          juce::Colour(0x12000000), cx, caF.getBottom(), false);
+        verticalSoft.addColour(0.35, juce::Colour(0x04000000));
+        verticalSoft.addColour(0.65, juce::Colour(0x0A000000));
+        g.setGradientFill(verticalSoft);
         g.fillRect(caF);
     }
     
@@ -321,7 +372,74 @@ void PuponvstAudioProcessorEditor::paint(juce::Graphics& g)
                                               juce::PathStrokeType::rounded));
         }
     }
-    
+
+    // ===== 滤波器控制器：淡黄中轴 + 淡白发光抛物线（开口向下） =====
+    {
+        const float axisY = (float)controlArea.getBottom() - 2.0f;
+        const float apexY = (float)controlArea.getCentreY();
+        const float axisX = getFilterAxisX(controlArea);
+
+        const float stToPx = (float)controlArea.getWidth() / (float)(kMaxSemitone - kMinSemitone);
+        const float halfWidthPx = juce::jmax(4.0f, 0.5f * (float)filterWidthSt * stToPx);
+        const float leftX  = juce::jlimit((float)controlArea.getX(), (float)controlArea.getRight(), axisX - halfWidthPx);
+        const float rightX = juce::jlimit((float)controlArea.getX(), (float)controlArea.getRight(), axisX + halfWidthPx);
+
+        juce::Path parabolaPath;
+        bool started = false;
+        for (float x = leftX; x <= rightX; x += 1.0f)
+        {
+            const float y = getFilterParabolaY(x, controlArea);
+            if (!started)
+            {
+                parabolaPath.startNewSubPath(x, y);
+                started = true;
+            }
+            else
+            {
+                parabolaPath.lineTo(x, y);
+            }
+        }
+
+        // 抛物线向下的白色光幕（从曲线垂落到刻度线）
+        {
+            juce::Path curtainPath = parabolaPath;
+            curtainPath.lineTo(rightX, axisY);
+            curtainPath.lineTo(leftX, axisY);
+            curtainPath.closeSubPath();
+
+            const float curtainStrength = juce::jlimit(0.0f, 1.0f, 0.25f + 0.55f * audioLevel + 0.35f * audioPeak);
+            juce::ColourGradient curtainGrad(
+                juce::Colours::white.withAlpha(0.14f * curtainStrength), axisX, apexY,
+                juce::Colours::white.withAlpha(0.0f), axisX, axisY, false);
+            curtainGrad.addColour(0.35, juce::Colours::white.withAlpha(0.10f * curtainStrength));
+            curtainGrad.addColour(0.70, juce::Colours::white.withAlpha(0.03f * curtainStrength));
+            g.setGradientFill(curtainGrad);
+            g.fillPath(curtainPath);
+        }
+
+        // 抛物线比正态曲线更淡更细
+        g.setColour(juce::Colours::white.withAlpha(0.10f));
+        g.strokePath(parabolaPath, juce::PathStrokeType(3.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour(juce::Colours::white.withAlpha(0.32f));
+        g.strokePath(parabolaPath, juce::PathStrokeType(1.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        const float axisPulse = juce::jlimit(0.0f, 1.0f, 0.35f + 0.65f * audioLevel + 0.45f * audioPeak);
+        const juce::Colour axisColour = juce::Colour(0xFFFFE9A8).withAlpha(0.88f);
+        g.setColour(axisColour.withAlpha(juce::jlimit(0.0f, 1.0f,
+            (isDraggingFilterAxis ? 0.58f : 0.28f) + 0.35f * axisPulse)));
+        g.drawLine(axisX, apexY, axisX, axisY, (isDraggingFilterAxis ? 3.2f : 2.2f) + 1.0f * axisPulse);
+        g.setColour(axisColour.withAlpha(juce::jlimit(0.0f, 1.0f,
+            (isDraggingFilterAxis ? 1.0f : 0.72f) + 0.18f * axisPulse)));
+        g.drawLine(axisX, apexY, axisX, axisY, (isDraggingFilterAxis ? 2.2f : 1.6f) + 0.35f * axisPulse);
+
+        // 顶点仅保留轻提示点（无发光、无炫光）
+        g.setColour(juce::Colours::white.withAlpha(isDraggingFilterParabola ? 0.72f : 0.36f));
+        g.fillEllipse(axisX - 2.8f, apexY - 2.8f, 5.6f, 5.6f);
+
+        g.setColour(axisColour.withAlpha(isDraggingFilterAxis ? 0.95f : 0.6f));
+        g.fillEllipse(axisX - 3.0f, axisY - 3.0f, 6.0f, 6.0f);
+    }
+
     // 绘制5根竖直线和交点（由每路 semitone 偏移决定水平位置，随窗口缩放）
     
     // 统一声相映射（与 pushDotParamsToProcessor 保持一致）：
@@ -350,7 +468,11 @@ void PuponvstAudioProcessorEditor::paint(juce::Graphics& g)
 
     // 临时调试绘制队列：在每个珍珠上方显示 [L, R] 偏移数组
     std::array<std::function<void()>, 5> dotDebugDraws {};
-    
+
+    // 与音频侧一致的 gain 基准：用于将珍珠发光强度绑定到 band 强度
+    const float centerTopY = getDotTrackTopY(2, controlArea);
+    const float refHeightPx = baseY - centerTopY;
+
 for (int i = 0; i < 5; ++i)
     {
         const float xPos = getDotColumnX(i, controlArea);
@@ -363,7 +485,11 @@ for (int i = 0; i < 5; ++i)
         // 圆点实际中心 Y：按 offsetT 在 [底, 轨道顶端] 之间插值
         const juce::Point<float> dotCenter = getDotCenter(i, controlArea);
         const float dotY = dotCenter.y;
-        
+        const float curHeightPx = baseY - dotY;
+        const float bandGainVisual = (refHeightPx > 1.0f)
+            ? juce::jlimit(0.0f, 1.0f, curHeightPx / refHeightPx)
+            : 0.0f;
+
         // 绘制竖直引导线：始终绘制为直线
         const float yTop = trackTopY - 10.0f;
         const float yBot = baseY;
@@ -437,28 +563,32 @@ for (int i = 0; i < 5; ++i)
         // 每个圆点自己的相位偏移，让 5 个球的呼吸不同步（更"活")
         const float dotPhase = animPhase + (float)i * 0.37f;
         // 基于音频电平 + 自发呼吸的脉动系数（用于 halo 扩张 / 内高光强度）
-        const float pulse = 1.0f
+        const float pulse = (0.65f + 0.55f * bandGainVisual)
+            * (1.0f
             + 0.35f * audioLevel
             + 0.18f * audioPeak
-            + 0.08f * std::sin(dotPhase * 2.1f);
+            + 0.08f * std::sin(dotPhase * 2.1f));
 
         dotBodyDraws[(size_t) i] =
-            [this, &g, i, xPos, dotY, dotRect, leftColour, rightColour, dotPhase, pulse, r]()
+            [this, &g, i, xPos, dotY, dotRect, leftColour, rightColour, dotPhase, pulse, r, bandGainVisual]()
         {
             // ---- (a) 外层大 halo：随脉动呼吸的超软光晕，像弥散在空气里的发光气体 ----
             {
                 juce::Colour haloTint = leftColour.interpolatedWith(rightColour, 0.5f)
                                                   .interpolatedWith(juce::Colours::white, 0.3f);
                 const float haloRadius = r * 2.8f * pulse; // 呼吸
-                const float alphaScale = juce::jlimit(0.35f, 1.2f, 0.7f + 0.6f * audioLevel);
+                const float alphaScale = bandGainVisual * juce::jlimit(0.0f, 1.2f, 0.7f + 0.6f * audioLevel);
                 juce::ColourGradient halo(haloTint.withAlpha(0.55f * alphaScale), xPos, dotY,
                                           haloTint.withAlpha(0.00f),
                                           xPos + haloRadius, dotY, true);
                 halo.addColour(0.25, haloTint.withAlpha(0.35f * alphaScale));
                 halo.addColour(0.55, haloTint.withAlpha(0.12f * alphaScale));
                 g.setGradientFill(halo);
-                g.fillEllipse(xPos - haloRadius, dotY - haloRadius,
-                              haloRadius * 2.0f, haloRadius * 2.0f);
+                if (alphaScale > 1.0e-3f)
+                {
+                    g.fillEllipse(xPos - haloRadius, dotY - haloRadius,
+                                  haloRadius * 2.0f, haloRadius * 2.0f);
+                }
             }
 
             // ---- (b) 外壳暗色勾边：在 halo 与球体之间加一圈极细的暗晕，形成"琉璃球"边界感 ----
@@ -494,7 +624,7 @@ for (int i = 0; i < 5; ++i)
 
             //    c-3 中心径向辉光（球心亮，边缘暗），把球体做成"发光核"
             {
-                juce::ColourGradient core(juce::Colours::white.withAlpha(0.75f + 0.2f * audioLevel),
+                juce::ColourGradient core(juce::Colours::white.withAlpha(bandGainVisual * (0.75f + 0.2f * audioLevel)),
                                           xPos, dotY,
                                           juce::Colour(0x00000000),
                                           xPos + r, dotY, true);
@@ -554,6 +684,7 @@ for (int i = 0; i < 5; ++i)
                 float ringAlpha = isActive ? 1.0f
                                             : juce::jlimit(0.0f, 1.0f, audioLevel * 1.2f);
                 ringAlpha *= (0.75f + 0.25f * std::sin(dotPhase * 2.6f));
+                ringAlpha *= bandGainVisual;
                 if (ringAlpha > 0.02f)
                 {
                     // 外圈大柔晕
@@ -764,12 +895,16 @@ void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
     isDraggingRedLine = false;
     isDraggingBlueLine = false;
     isDraggingNormalCurve = false;
+    isDraggingFilterAxis = false;
+    isDraggingFilterParabola = false;
     draggingDotIndex = -1;
     draggingDotColumnIndex = -1;
     
     // 统一的容差设置
     const float dotHitRadius = 14.0f;         // 圆点命中半径（圆点半径 12.5 + 余量）
     const float columnHitHalfWidth = 8.0f;    // 竖线命中半宽
+    const float filterAxisHitHalfWidth = 9.0f;
+    const float filterParabolaThreshold = 10.0f;
     const float normalCurveThreshold = 12.0f; // 正态曲线容差
     const float rayThreshold = 8.0f;          // 射线容差
     
@@ -784,7 +919,20 @@ void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
         }
     }
 
-    // ========== 优先级 2: 检测竖直线（允许水平拖动改变 st） ==========
+    // ========== 优先级 2: 检测滤波器中轴（低于珍珠 gain 控件，避免抢占圆点拖动） ==========
+    {
+        const float axisX = getFilterAxisX(controlArea);
+        const float axisY = (float)controlArea.getBottom() - 2.0f;
+        const float apexY = (float)controlArea.getCentreY();
+        if (mousePos.x >= axisX - filterAxisHitHalfWidth && mousePos.x <= axisX + filterAxisHitHalfWidth
+            && mousePos.y >= apexY && mousePos.y <= axisY)
+        {
+            isDraggingFilterAxis = true;
+            return;
+        }
+    }
+
+    // ========== 优先级 3: 检测竖直线（允许水平拖动改变 st） ==========
     for (int i = 0; i < 5; ++i)
     {
         const float xPos = getDotColumnX(i, controlArea);
@@ -799,7 +947,14 @@ void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
         }
     }
 
-    // ========== 优先级 3: 检测正态分布曲线 ==========
+    // ========== 优先级 4: 检测滤波器抛物线（拖动改变宽度） ==========
+    if (distanceToFilterParabola(mousePos, controlArea) <= filterParabolaThreshold)
+    {
+        isDraggingFilterParabola = true;
+        return;
+    }
+
+    // ========== 优先级 5: 检测正态分布曲线 ==========
     float distToCurve = distanceToNormalCurve(mousePos, controlArea);
     
     if (distToCurve <= normalCurveThreshold)
@@ -808,7 +963,7 @@ void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
         return;
     }
     
-    // ========== 优先级 4: 检测红色射线 ==========
+    // ========== 优先级 6: 检测红色射线 ==========
     juce::Point<float> rayStart = bottomCenter;
     float redAngleDeg = 180.0f - blueAngleDeg;  // 红线角度（左右对称）
     juce::Point<float> redActualEnd  = calculateRayEndByAngle(redAngleDeg, controlArea);
@@ -819,7 +974,7 @@ void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
         return;
     }
     
-    // ========== 优先级 5: 检测蓝色射线 ==========
+    // ========== 优先级 7: 检测蓝色射线 ==========
     juce::Point<float> blueActualEnd = calculateRayEndByAngle(blueAngleDeg, controlArea);
     
     if (isPointNearLine(mousePos, rayStart, blueActualEnd, rayThreshold))
@@ -838,6 +993,7 @@ void PuponvstAudioProcessorEditor::mouseDrag(const juce::MouseEvent& event)
     
     // 如果没有命中任何可拖动项，mouseDown中没有设置拖动状态，这里直接忽略
     if (!isDraggingNormalCurve && !isDraggingRedLine && !isDraggingBlueLine
+        && !isDraggingFilterAxis && !isDraggingFilterParabola
         && draggingDotIndex < 0 && draggingDotColumnIndex < 0)
         return;
     
@@ -890,7 +1046,55 @@ void PuponvstAudioProcessorEditor::mouseDrag(const juce::MouseEvent& event)
         repaint();
         return;
     }
-    
+
+    // ========== 3. 处理滤波器中轴拖动（中心偏移 st） ==========
+    if (isDraggingFilterAxis)
+    {
+        filterCenterSt = xToSemitone(mousePos.x, controlArea);
+
+        // 直接下发到引擎，保证拖动时实时听到变化
+        processor.setFilterCenterOffsetSemitones(filterCenterSt);
+
+        if (auto* param = processor.getAPVTS().getParameter(ParameterIDs::filterCenterSt))
+        {
+            const float norm = ((float)filterCenterSt - (float)kMinSemitone)
+                             / (float)(kMaxSemitone - kMinSemitone);
+            param->setValue(juce::jlimit(0.0f, 1.0f, norm));
+        }
+
+        repaint();
+        return;
+    }
+
+    // ========== 4. 处理滤波器抛物线拖动（宽度 st） ==========
+    if (isDraggingFilterParabola)
+    {
+        const float axisX = getFilterAxisX(controlArea);
+        const float axisY = (float)controlArea.getBottom() - 2.0f;
+        const float apexY = (float)controlArea.getCentreY();
+
+        const float yOnCurve = juce::jlimit(apexY + 1.0f, axisY, mousePos.y);
+        const float h = juce::jmax(1.0f, axisY - apexY);
+        const float dx = std::abs(mousePos.x - axisX);
+        const float halfWidthPx = juce::jmax(2.0f, dx * std::sqrt(h / juce::jmax(1.0f, yOnCurve - apexY)));
+
+        const float pxToSt = (float)(kMaxSemitone - kMinSemitone) / juce::jmax(1.0f, (float)controlArea.getWidth());
+        const int widthStFromMouse = (int)std::lround(2.0f * halfWidthPx * pxToSt);
+        filterWidthSt = juce::jlimit(10, 72, widthStFromMouse);
+
+        // 直接下发到引擎，保证拖动时实时听到变化
+        processor.setFilterWidthSemitones(filterWidthSt);
+
+        if (auto* param = processor.getAPVTS().getParameter(ParameterIDs::filterWidthSt))
+        {
+            const float norm = ((float)filterWidthSt - 10.0f) / 62.0f;
+            param->setValue(juce::jlimit(0.0f, 1.0f, norm));
+        }
+
+        repaint();
+        return;
+    }
+
     // ========== 1. 处理正态曲线拖动 ==========
     if (isDraggingNormalCurve)
     {
@@ -911,11 +1115,17 @@ void PuponvstAudioProcessorEditor::mouseDrag(const juce::MouseEvent& event)
             float logValue = -2.0f * std::log(yRatio);
             if (logValue > 1e-6f)
             {
-                float newSigma = std::abs(normalizedX) / std::sqrt(logValue);
-                sigma = juce::jlimit(0.1f, 3.0f, newSigma);
+            float newSigma = std::abs(normalizedX) / std::sqrt(logValue);
+                sigma = juce::jlimit(0.24f, 8.0f, newSigma);
+                
                 // 同步更新 APVTS 参数（不通知宿主，避免死锁）
+                // 归一化公式：将 [0.24, 8.0] 映射到 [0.0, 1.0]
                 if (auto* param = processor.getAPVTS().getParameter(ParameterIDs::sigma))
-                    param->setValue(juce::jlimit(0.0f, 1.0f, (sigma - 0.1f) / (3.0f - 0.1f)));
+                {
+                    float normalizedValue = (sigma - 0.24f) / (8.0f - 0.24f);
+                    normalizedValue = juce::jlimit(0.0f, 1.0f, normalizedValue);
+                    param->setValue(normalizedValue);
+                }
             }
         }
         
@@ -993,10 +1203,14 @@ void PuponvstAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
     const bool wasDraggingDotColumn = (draggingDotColumnIndex >= 0);
     const bool wasDraggingRay = (isDraggingRedLine || isDraggingBlueLine);
     const bool wasDraggingCurve = isDraggingNormalCurve;
-    
+    const bool wasDraggingFilterAxis = isDraggingFilterAxis;
+    const bool wasDraggingFilterParabola = isDraggingFilterParabola;
+
     isDraggingRedLine = false;
     isDraggingBlueLine = false;
     isDraggingNormalCurve = false;
+    isDraggingFilterAxis = false;
+    isDraggingFilterParabola = false;
     draggingDotIndex = -1;
     draggingDotColumnIndex = -1;
     
@@ -1022,11 +1236,34 @@ void PuponvstAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
     if (wasDraggingCurve)
     {
         // 通知宿主 sigma 参数变化
+        // 注意：mouseDrag 中已经通过 param->setValue() 设置了归一化值
+        // 这里只需要触发通知，让宿主知道参数发生了变化
         if (auto* param = processor.getAPVTS().getParameter(ParameterIDs::sigma))
+        {
+            // 获取当前参数的归一化值
+            float currentNormalized = param->getValue();
+            
+            // 使用 setValueNotifyingHost 触发通知
+            // 注意：parameterChanged 回调接收的是去归一化后的实际值
+            param->beginChangeGesture();
+            param->setValueNotifyingHost(currentNormalized);
+            param->endChangeGesture();
+        }
+    }
+
+    if (wasDraggingFilterAxis)
+    {
+        if (auto* param = processor.getAPVTS().getParameter(ParameterIDs::filterCenterSt))
             param->setValueNotifyingHost(param->getValue());
     }
-    
-    if (wasDraggingDot || wasDraggingDotColumn)
+
+    if (wasDraggingFilterParabola)
+    {
+        if (auto* param = processor.getAPVTS().getParameter(ParameterIDs::filterWidthSt))
+            param->setValueNotifyingHost(param->getValue());
+    }
+
+    if (wasDraggingDot || wasDraggingDotColumn || wasDraggingFilterAxis || wasDraggingFilterParabola)
         repaint(); // 清除被拖动圆点/竖线的高亮描边
 }
 
@@ -1102,6 +1339,61 @@ float PuponvstAudioProcessorEditor::distanceToNormalCurve(const juce::Point<floa
         prev = curr;
     }
     
+    return minDist;
+}
+
+float PuponvstAudioProcessorEditor::getFilterAxisX(const juce::Rectangle<int>& controlArea) const
+{
+    return semitoneToX(juce::jlimit(kMinSemitone, kMaxSemitone, filterCenterSt), controlArea);
+}
+
+float PuponvstAudioProcessorEditor::getFilterParabolaY(float x, const juce::Rectangle<int>& controlArea) const
+{
+    const float axisX = getFilterAxisX(controlArea);
+    const float axisY = (float)controlArea.getBottom() - 2.0f;
+    const float apexY = (float)controlArea.getCentreY();
+
+    const float h = juce::jmax(1.0f, axisY - apexY);
+    const float stToPx = (float)controlArea.getWidth() / (float)(kMaxSemitone - kMinSemitone);
+    const float halfWidthPx = juce::jmax(2.0f, 0.5f * (float)juce::jlimit(10, 72, filterWidthSt) * stToPx);
+    const float t = (x - axisX) / halfWidthPx;
+    return juce::jlimit((float)controlArea.getY(), axisY, apexY + h * t * t);
+}
+
+float PuponvstAudioProcessorEditor::distanceToFilterParabola(const juce::Point<float>& point,
+                                                             const juce::Rectangle<int>& controlArea) const
+{
+    const float axisY = (float)controlArea.getBottom() - 2.0f;
+    const float stToPx = (float)controlArea.getWidth() / (float)(kMaxSemitone - kMinSemitone);
+    const float halfWidthPx = juce::jmax(2.0f, 0.5f * (float)juce::jlimit(10, 72, filterWidthSt) * stToPx);
+    const float axisX = getFilterAxisX(controlArea);
+
+    const float minX = juce::jmax((float)controlArea.getX(), axisX - halfWidthPx - 16.0f);
+    const float maxX = juce::jmin((float)controlArea.getRight(), axisX + halfWidthPx + 16.0f);
+
+    float minDist = std::numeric_limits<float>::max();
+    juce::Point<float> prev(minX, getFilterParabolaY(minX, controlArea));
+
+    for (float x = minX + 2.0f; x <= maxX; x += 2.0f)
+    {
+        juce::Point<float> curr(x, getFilterParabolaY(x, controlArea));
+        const float segLen = prev.getDistanceFrom(curr);
+        if (segLen > 1.0e-4f)
+        {
+            const float t = juce::jlimit(0.0f, 1.0f,
+                ((point.x - prev.x) * (curr.x - prev.x)
+               + (point.y - prev.y) * (curr.y - prev.y)) / (segLen * segLen));
+            juce::Point<float> proj(prev.x + t * (curr.x - prev.x),
+                                    prev.y + t * (curr.y - prev.y));
+            minDist = juce::jmin(minDist, point.getDistanceFrom(proj));
+        }
+        prev = curr;
+    }
+
+    // 点击刻度线附近也允许开始拖宽度（更符合"拖到交点"手感）
+    if (std::abs(point.y - axisY) <= 8.0f && point.x >= minX && point.x <= maxX)
+        minDist = juce::jmin(minDist, std::abs(point.y - axisY));
+
     return minDist;
 }
 
@@ -1473,10 +1765,21 @@ void PuponvstAudioProcessorEditor::resized()
     const int  titleWidth = juce::jmax(measuredW, fallbackW, 120); // 至少 120px
     constexpr int kTitleVersionGap = 6;   // 大标题与副标题之间的固定间距（像素）
 
+    const int rightW = juce::jlimit(220, 360, navInner.getWidth() / 2);
+    auto rightControls = navInner.removeFromRight(rightW);
     auto titleArea   = navInner.removeFromLeft(titleWidth + kTitleVersionGap);
     auto versionArea = navInner; // 紧贴大标题右侧
     titleLabel.setBounds(titleArea);
     versionLabel.setBounds(versionArea);
+
+    auto rightInner = rightControls.reduced(0, 16);
+    const int comboGap = 8;
+    const int comboW = juce::jmax(80, (rightInner.getWidth() - comboGap) / 2);
+    auto qualityArea = rightInner.removeFromLeft(comboW);
+    rightInner.removeFromLeft(comboGap);
+    auto formantArea = rightInner.removeFromLeft(comboW);
+    qualityCombo.setBounds(qualityArea.withHeight(26).withY(navBar.getY() + (navBar.getHeight() - 26) / 2));
+    formantCombo.setBounds(formantArea.withHeight(26).withY(navBar.getY() + (navBar.getHeight() - 26) / 2));
 
     // 更新控制区域和下边界中心点（射线原点）
     auto controlArea = getLocalBounds();
@@ -1523,7 +1826,21 @@ void PuponvstAudioProcessorEditor::parameterChanged(const juce::String& paramete
     }
     else if (parameterID == ParameterIDs::sigma)
     {
-        sigma = juce::jlimit(0.1f, 3.0f, newValue);
+        // 重要：对于 AudioParameterFloat，parameterChanged 的 newValue 
+        // 是去归一化后的实际值，即 [0.24, 8.0] 范围内的值
+        float actualSigma = newValue;
+        
+        sigma = juce::jlimit(0.24f, 8.0f, actualSigma);
+        needsRepaint = true;
+    }
+    else if (parameterID == ParameterIDs::filterCenterSt)
+    {
+        filterCenterSt = juce::jlimit(kMinSemitone, kMaxSemitone, (int) std::lround(newValue));
+        needsRepaint = true;
+    }
+    else if (parameterID == ParameterIDs::filterWidthSt)
+    {
+        filterWidthSt = juce::jlimit(10, 72, (int) std::lround(newValue));
         needsRepaint = true;
     }
     else if (parameterID.startsWith("dot"))

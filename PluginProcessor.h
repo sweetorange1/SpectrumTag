@@ -10,6 +10,10 @@ namespace ParameterIDs
     static const juce::String rayslopeK     = "rayslopeK";
     static const juce::String isVerticalRay = "isVerticalRay";
     static const juce::String sigma          = "sigma";
+    static const juce::String filterCenterSt = "filterCenterSt";
+    static const juce::String filterWidthSt  = "filterWidthSt";
+    static const juce::String rbPitchQuality = "rbPitchQuality";
+    static const juce::String rbFormantMode  = "rbFormantMode";
     static const juce::String dot0          = "dot0";
     static const juce::String dot1          = "dot1";
     static const juce::String dot2          = "dot2";
@@ -74,7 +78,7 @@ public:
         float rayslopeK    = 0.0f;
         bool  isVerticalRay = false;
         // 正态曲线方差（标准差）
-        float sigma        = 1.0f;
+        float sigma        = 2.70f;
         // 5 个圆点在轨道上的归一化高度，1.0 = 顶端（默认最大），0.0 = 底部
         std::array<float, 5> dotOffsetT { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
         // 5 个圆点的半音偏移（单位 st，始终为整数）
@@ -97,6 +101,10 @@ public:
     void setDotGain(int index, float gain) { pitchEngine.setDotGain(index, gain); }
     void setDotPan (int index, float pan ) { pitchEngine.setDotPan (index, pan ); }
     void setDotSemitoneOffset(int index, int semitone) { pitchEngine.setDotSemitoneOffset(index, semitone); }
+    void setFilterCenterOffsetSemitones(int centerOffsetSt) { pitchEngine.setFilterCenterOffsetSemitones(centerOffsetSt); }
+    void setFilterWidthSemitones(int widthSt) { pitchEngine.setFilterWidthSemitones(widthSt); }
+    void setPitchQualityMode(int mode) { pitchEngine.setPitchQualityMode(mode); }
+    void setFormantMode(int mode) { pitchEngine.setFormantMode(mode); }
 
     // 视觉同步：UI 通过此 getter 获取相关状态
 
@@ -117,6 +125,11 @@ private:
 
     // 缓存上次读到的"一小节秒数"，用于相关处理（默认 120 BPM 4/4 = 2s）
     double lastBarSeconds = 2.0;
+
+    // 记录 prepareToPlay 环境，供运行中重建 shifter 选项
+    double preparedSampleRate = 44100.0;
+    int preparedBlockSize = 512;
+    std::atomic<bool> pitchEngineOptionsDirty { false };
 
     // ===== 持久化的 UI 状态镜像（GUI 关闭时此处保留最新值，宿主存档读取于此）=====
     // 由 Editor 在每次交互后通过 setEditorState() 推送；Editor 重新打开时通过 getEditorState() 拉取。

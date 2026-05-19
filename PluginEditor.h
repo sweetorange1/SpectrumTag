@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <array>
+#include <memory>
 #include "PluginProcessor.h"
 
 class PuponvstAudioProcessorEditor : public juce::AudioProcessorEditor,
@@ -34,6 +35,12 @@ private:
     // GUI组件
     juce::Label titleLabel;       // 大标题 "Pupon"，字号 32
     juce::Label versionLabel;     // 副标题 "v0.1.0 iisaacbeats.cn"，字号 20
+    juce::ComboBox qualityCombo;
+    juce::ComboBox formantCombo;
+
+    using ComboAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    std::unique_ptr<ComboAttachment> qualityAttachment;
+    std::unique_ptr<ComboAttachment> formantAttachment;
 
     // 自定义字体（AtomicMarker.otf，二进制资源加载）
     juce::Typeface::Ptr atomicMarkerTypeface;
@@ -42,8 +49,8 @@ private:
     juce::ComponentBoundsConstrainer resizeConstrainer;
     
     // 正态分布参数
-    float sigma = 1.0f;
-    
+    float sigma = 2.70f;
+
     // ===== 射线斜率模型 =====
     // 坐标系定义：以控制区域下边缘中点(bottomCenter)为原点，X轴水平向右，Y轴向上（数学坐标系）
     // 蓝线角度：0° = 水平向左，90° = 垂直向上，180° = 水平向右
@@ -57,7 +64,14 @@ private:
     bool isDraggingRedLine = false;
     bool isDraggingBlueLine = false;
     bool isDraggingNormalCurve = false;
-    
+    bool isDraggingFilterAxis = false;
+    bool isDraggingFilterParabola = false;
+
+    // 滤波器控制器（单位 st）：
+    // centerSt 控制抛物线对称轴相对 0st 的偏移，widthSt 控制底部交点间距
+    int filterCenterSt = 0;
+    int filterWidthSt  = 72;
+
     // ===== 5个圆点的拖动状态 =====
     // 圆点按从左到右索引 0..4；分组：组L = {0,1}，组C = {2}，组R = {3,4}
     // offsetT[i] 表示圆点在"轨道"上的位置：1.0 = 默认位置（竖直线与正态曲线的交点，最高），
@@ -83,7 +97,13 @@ private:
     // 计算点到正态曲线的最短距离
     float distanceToNormalCurve(const juce::Point<float>& point, 
                                  const juce::Rectangle<int>& controlArea) const;
-    
+
+    // 过滤器抛物线几何辅助
+    float getFilterAxisX(const juce::Rectangle<int>& controlArea) const;
+    float getFilterParabolaY(float x, const juce::Rectangle<int>& controlArea) const;
+    float distanceToFilterParabola(const juce::Point<float>& point,
+                                   const juce::Rectangle<int>& controlArea) const;
+
     // 根据斜率 k (数学坐标系, Y轴向上)，从原点(controlArea下边缘中点)出发计算射线与控制区域边界的交点(屏幕坐标)
     // isVertical = true 时表示垂直向上射线
     juce::Point<float> calculateRayEndBySlope(float k, bool isVertical,

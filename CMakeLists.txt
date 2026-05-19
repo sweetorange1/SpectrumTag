@@ -75,19 +75,18 @@ target_sources(Puponvst PRIVATE
 # 污染 std::min / std::max）以及 _USE_MATH_DEFINES（Rubber Band 用了 M_PI 等）。
 # 只作用于该源文件，不影响 JUCE 及本插件其它代码。
 # 
-# 【CPU优化】通过 RUBBERBAND_USE_FASTEST_RESAMPLER 宏将重采样器质量强制设为 Fastest
-# 这会修改 BQResampler::QualityParams 的行为，使 FastestTolerable 也使用 Fastest 的参数
+# 保留 Rubber Band 默认质量逻辑，运行时由插件参数控制质量
 if(MSVC)
     set_source_files_properties(
         ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp
         PROPERTIES
-        COMPILE_DEFINITIONS "NOMINMAX;_USE_MATH_DEFINES;_CRT_SECURE_NO_WARNINGS;RUBBERBAND_USE_FASTEST_RESAMPLER"
+        COMPILE_DEFINITIONS "NOMINMAX;_USE_MATH_DEFINES;_CRT_SECURE_NO_WARNINGS"
     )
 else()
     set_source_files_properties(
         ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp
         PROPERTIES
-        COMPILE_DEFINITIONS "_USE_MATH_DEFINES;RUBBERBAND_USE_FASTEST_RESAMPLER"
+        COMPILE_DEFINITIONS "_USE_MATH_DEFINES"
     )
 endif()
 
