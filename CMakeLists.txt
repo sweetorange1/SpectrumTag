@@ -27,6 +27,43 @@ if(NOT rubberband_POPULATED)
     FetchContent_Populate(rubberband)
 endif()
 
+# Apply local Rubber Band patch (v4.0.0) in a reproducible way.
+set(RUBBERBAND_PATCH_FILE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/rubberband-v4.0.0-resampler-quality.patch")
+if(EXISTS "${RUBBERBAND_PATCH_FILE}")
+    find_package(Git REQUIRED)
+
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${rubberband_SOURCE_DIR}" apply --check "${RUBBERBAND_PATCH_FILE}"
+        RESULT_VARIABLE RB_PATCH_CAN_APPLY
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+
+    if(RB_PATCH_CAN_APPLY EQUAL 0)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${rubberband_SOURCE_DIR}" apply "${RUBBERBAND_PATCH_FILE}"
+            RESULT_VARIABLE RB_PATCH_APPLY_RESULT
+            OUTPUT_QUIET
+            ERROR_VARIABLE RB_PATCH_APPLY_ERROR
+        )
+        if(NOT RB_PATCH_APPLY_RESULT EQUAL 0)
+            message(FATAL_ERROR "Failed to apply Rubber Band patch: ${RB_PATCH_APPLY_ERROR}")
+        endif()
+    else()
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${rubberband_SOURCE_DIR}" apply --reverse --check "${RUBBERBAND_PATCH_FILE}"
+            RESULT_VARIABLE RB_PATCH_ALREADY_APPLIED
+            OUTPUT_QUIET
+            ERROR_QUIET
+        )
+        if(NOT RB_PATCH_ALREADY_APPLIED EQUAL 0)
+            message(FATAL_ERROR "Rubber Band source does not match expected v4.0.0 baseline for patch ${RUBBERBAND_PATCH_FILE}")
+        endif()
+    endif()
+else()
+    message(FATAL_ERROR "Missing required Rubber Band patch file: ${RUBBERBAND_PATCH_FILE}")
+endif()
+
 juce_add_plugin(
         Puponvst
         PRODUCT_NAME "Pupon"
