@@ -67,7 +67,7 @@ endif()
 juce_add_plugin(
         Puponvst
         PRODUCT_NAME "Pupon"
-        VERSION 0.9.8
+        VERSION 1.0.0
         COMPANY_NAME "iisaacbeas.cn"
         BUNDLE_ID "cn.iisaacbeas.Pupon"
         PLUGIN_MANUFACTURER_CODE Pupo
@@ -85,10 +85,10 @@ juce_add_plugin(
 
 juce_generate_juce_header(Puponvst)
 
-# ===== 字体资源：AtomicMarker.otf 嵌入到 BinaryData =====
+# ===== 字体资源：仅打包标题 "PUPON" 所需的子集字体 =====
 juce_add_binary_data(PuponvstBinaryData
   SOURCES
-    otf/AtomicMarker.otf
+    otf/AtomicMarker-PUPON-subset.otf
 )
 
 target_compile_definitions(Puponvst

@@ -19,8 +19,101 @@ public:
     void mouseDown(const juce::MouseEvent& event) override;
     void mouseDrag(const juce::MouseEvent& event) override;
     void mouseUp(const juce::MouseEvent& event) override;
+    void mouseMove(const juce::MouseEvent& event) override;
+    void mouseExit(const juce::MouseEvent& event) override;
 
 private:
+    class HeaderComboBox : public juce::ComboBox
+    {
+    public:
+        using juce::ComboBox::ComboBox;
+
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            // Match outside-click behavior: if a popup is already open, second click closes it.
+            if (juce::PopupMenu::dismissAllActiveMenus())
+                return;
+
+            juce::ComboBox::mouseDown(event);
+        }
+    };
+
+    class HeaderComboLookAndFeel : public juce::LookAndFeel_V4
+    {
+    public:
+        void drawComboBox(juce::Graphics& g,
+                          int width,
+                          int height,
+                          bool isButtonDown,
+                          int buttonX,
+                          int buttonY,
+                          int buttonW,
+                          int buttonH,
+                          juce::ComboBox& box) override;
+
+        void positionComboBoxText(juce::ComboBox& box, juce::Label& label) override;
+
+        void drawComboBoxTextWhenNothingSelected(juce::Graphics& g,
+                                                 juce::ComboBox& box,
+                                                 juce::Label& label) override;
+
+        juce::PopupMenu::Options getOptionsForComboBoxPopupMenu(juce::ComboBox& box, juce::Label& label) override
+        {
+            juce::ignoreUnused(label);
+            popupMenuWidth = box.getWidth();
+            const auto screenBounds = box.getScreenBounds();
+            const auto belowBox = juce::Rectangle<int>(screenBounds.getX(), screenBounds.getBottom(), screenBounds.getWidth(), 1);
+
+            return juce::PopupMenu::Options()
+                .withTargetScreenArea(belowBox)
+                .withPreferredPopupDirection(juce::PopupMenu::Options::PopupDirection::downwards)
+                .withMinimumWidth(box.getWidth())
+                .withMaximumNumColumns(1)
+                .withStandardItemHeight(22);
+        }
+
+        void getIdealPopupMenuItemSize(const juce::String& text,
+                                       const bool isSeparator,
+                                       const int standardMenuItemHeight,
+                                       int& idealWidth,
+                                       int& idealHeight) override
+        {
+            juce::LookAndFeel_V4::getIdealPopupMenuItemSize(text, isSeparator, standardMenuItemHeight,
+                                                            idealWidth, idealHeight);
+            if (!isSeparator && popupMenuWidth > 0)
+                idealWidth = popupMenuWidth;
+        }
+
+    private:
+        int popupMenuWidth = 0;
+    };
+
+    class PresetArrowButton : public juce::TextButton
+    {
+    public:
+        using juce::TextButton::TextButton;
+
+        void paintButton(juce::Graphics& g, bool isMouseOverButton, bool isButtonDown) override
+        {
+            auto r = getLocalBounds().toFloat();
+            const float scale = isButtonDown ? 0.92f : 1.0f;
+            auto iconBounds = r.withSizeKeepingCentre(r.getWidth() * scale, r.getHeight() * scale);
+
+            if (isMouseOverButton)
+            {
+                juce::ColourGradient glow(juce::Colour(0x55BFD4FF), iconBounds.getCentreX(), iconBounds.getCentreY(),
+                                          juce::Colour(0x00BFD4FF), iconBounds.getRight(), iconBounds.getCentreY(), true);
+                g.setGradientFill(glow);
+                g.fillEllipse(iconBounds.reduced(2.0f));
+            }
+
+            g.setColour(findColour(isButtonDown ? juce::TextButton::textColourOnId
+                                                : juce::TextButton::textColourOffId));
+            g.setFont(juce::Font(13.5f, juce::Font::bold));
+            g.drawFittedText(getButtonText(), iconBounds.toNearestInt(), juce::Justification::centred, 1);
+        }
+    };
+
     // ===== 动效驱动 =====
     // Timer 回调：每帧从 processor 拉取一小段样本，更新音频电平；推进时间相位；然后 repaint()
     void timerCallback() override;
@@ -34,13 +127,30 @@ private:
     PuponvstAudioProcessor& processor;
     // GUI组件
     juce::Label titleLabel;       // 大标题 "Pupon"，字号 32
-    juce::Label versionLabel;     // 副标题 "v0.9.8 iisaacbeats.cn"，字号 20
-    juce::ComboBox qualityCombo;
-    juce::ComboBox formantCombo;
+    juce::Label versionLabel;     // 副标题 "v1.0.0"，小号普通无衬线字体
+    bool isTitleHovered = false;
+    PresetArrowButton presetPrevButton { "<" };
+    HeaderComboBox presetCombo;
+    PresetArrowButton presetNextButton { ">" };
+    HeaderComboBox qualityCombo;
+    HeaderComboBox formantCombo;
+    HeaderComboLookAndFeel headerComboLookAndFeel;
 
     using ComboAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     std::unique_ptr<ComboAttachment> qualityAttachment;
     std::unique_ptr<ComboAttachment> formantAttachment;
+    std::unique_ptr<juce::FileChooser> presetFileChooser;
+    juce::File presetFolder;
+    juce::Array<juce::File> presetFiles;
+    int currentPresetIndex = -1;
+    juce::String currentPresetName { "Presets" };
+    bool currentPresetDirty = false;
+    bool suppressPresetDirtyMark = false;
+    bool isUpdatingPresetCombo = false;
+
+    static constexpr int kPresetActionSaveId = 1;
+    static constexpr int kPresetActionChangeFolderId = 2;
+    static constexpr int kPresetItemBaseId = 1000;
 
     // 自定义字体（AtomicMarker.otf，二进制资源加载）
     juce::Typeface::Ptr atomicMarkerTypeface;
@@ -144,9 +254,21 @@ private:
     void getPanBoundsFromBlueAngle(float& outPanMin, float& outPanMax) const;
     float getPanFromBlueAngleAndSemitone(int semitone) const;
 
+    // 返回标题文本在编辑器坐标中的实际可点击区域（按字体宽高裁切）。
+    juce::Rectangle<int> getTitleTextBounds() const;
+
     // ===== 参数同步：把 5 个圆点的 gain / pan 推送给 Processor（音频线程会读取）=====
     // 调用时机：初始化、拖动圆点 / 射线 / 正态曲线之后、窗口 resize 之后
     void pushDotParamsToProcessor();
+
+    void refreshPresetList();
+    void rebuildPresetComboItems();
+    void handlePresetComboChange();
+    void updatePresetComboDisplayText();
+    void switchPresetByStep(int step);
+    void savePresetToFile();
+    void choosePresetFolder();
+    void loadPresetFromFile(const juce::File& file);
 
     // AudioProcessorValueTreeState::Listener 回调 - 响应参数自动化
     void parameterChanged(const juce::String& parameterID, float newValue) override;

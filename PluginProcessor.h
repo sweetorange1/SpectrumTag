@@ -19,6 +19,11 @@ namespace ParameterIDs
     static const juce::String dot2          = "dot2";
     static const juce::String dot3          = "dot3";
     static const juce::String dot4          = "dot4";
+    static const juce::String dot0Semitone  = "dot0Semitone";
+    static const juce::String dot1Semitone  = "dot1Semitone";
+    static const juce::String dot2Semitone  = "dot2Semitone";
+    static const juce::String dot3Semitone  = "dot3Semitone";
+    static const juce::String dot4Semitone  = "dot4Semitone";
 }
 
 class PuponvstAudioProcessor : public juce::AudioProcessor,

@@ -26,6 +26,11 @@ PuponvstAudioProcessor::PuponvstAudioProcessor()
     apvts.addParameterListener(ParameterIDs::dot2, this);
     apvts.addParameterListener(ParameterIDs::dot3, this);
     apvts.addParameterListener(ParameterIDs::dot4, this);
+    apvts.addParameterListener(ParameterIDs::dot0Semitone, this);
+    apvts.addParameterListener(ParameterIDs::dot1Semitone, this);
+    apvts.addParameterListener(ParameterIDs::dot2Semitone, this);
+    apvts.addParameterListener(ParameterIDs::dot3Semitone, this);
+    apvts.addParameterListener(ParameterIDs::dot4Semitone, this);
 }
 
 PuponvstAudioProcessor::~PuponvstAudioProcessor() 
@@ -88,6 +93,16 @@ void PuponvstAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
         pitchEngine.setPitchQualityMode((int) std::lround(qualityParam->load()));
     if (auto* formantParam = apvts.getRawParameterValue(ParameterIDs::rbFormantMode))
         pitchEngine.setFormantMode((int) std::lround(formantParam->load()));
+    if (auto* st0 = apvts.getRawParameterValue(ParameterIDs::dot0Semitone))
+        pitchEngine.setDotSemitoneOffset(0, (int) std::lround(st0->load()));
+    if (auto* st1 = apvts.getRawParameterValue(ParameterIDs::dot1Semitone))
+        pitchEngine.setDotSemitoneOffset(1, (int) std::lround(st1->load()));
+    if (auto* st2 = apvts.getRawParameterValue(ParameterIDs::dot2Semitone))
+        pitchEngine.setDotSemitoneOffset(2, (int) std::lround(st2->load()));
+    if (auto* st3 = apvts.getRawParameterValue(ParameterIDs::dot3Semitone))
+        pitchEngine.setDotSemitoneOffset(3, (int) std::lround(st3->load()));
+    if (auto* st4 = apvts.getRawParameterValue(ParameterIDs::dot4Semitone))
+        pitchEngine.setDotSemitoneOffset(4, (int) std::lround(st4->load()));
 }
 
 void PuponvstAudioProcessor::releaseResources()
@@ -355,7 +370,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout PuponvstAudioProcessor::crea
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         ParameterIDs::rbPitchQuality,
         "Pitch Quality",
-        juce::StringArray{ "Fastest", "FastestTolerable", "Best" },
+        juce::StringArray{ "Fastest", "Mid", "Best" },
         1
     ));
 
@@ -382,6 +397,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout PuponvstAudioProcessor::crea
                 .withStringFromValueFunction([](float value, int) {
                     return juce::String(int(value * 100.0f)) + "%";
                 })
+        ));
+    }
+
+    // 5 路每路独立半音偏移（可被宿主自动化）
+    const int kDefaultSemitone[5] = { -24, -12, 0, +12, +24 };
+    const juce::String semitoneIDs[5] = {
+        ParameterIDs::dot0Semitone,
+        ParameterIDs::dot1Semitone,
+        ParameterIDs::dot2Semitone,
+        ParameterIDs::dot3Semitone,
+        ParameterIDs::dot4Semitone
+    };
+
+    for (int i = 0; i < 5; ++i)
+    {
+        layout.add(std::make_unique<juce::AudioParameterInt>(
+            semitoneIDs[i],
+            "Pearl Dot " + juce::String(i + 1) + " Semitone",
+            -36,
+            +36,
+            kDefaultSemitone[i],
+            juce::AudioParameterIntAttributes().withLabel("st")
         ));
     }
 
@@ -435,7 +472,11 @@ void PuponvstAudioProcessor::parameterChanged(const juce::String& parameterID, f
         pitchEngine.setFormantMode((int) std::lround(newValue));
         pitchEngineOptionsDirty.store(true, std::memory_order_release);
     }
-    else if (parameterID.startsWith("dot"))
+    else if (parameterID == ParameterIDs::dot0
+          || parameterID == ParameterIDs::dot1
+          || parameterID == ParameterIDs::dot2
+          || parameterID == ParameterIDs::dot3
+          || parameterID == ParameterIDs::dot4)
     {
         int dotIndex = parameterID.substring(3).getIntValue();
         if (dotIndex >= 0 && dotIndex < 5)
@@ -443,6 +484,41 @@ void PuponvstAudioProcessor::parameterChanged(const juce::String& parameterID, f
             s.dotOffsetT[dotIndex] = juce::jlimit(0.0f, 1.0f, newValue);
             stateChanged = true;
         }
+    }
+    else if (parameterID == ParameterIDs::dot0Semitone)
+    {
+        const int st = juce::jlimit(-36, +36, (int) std::lround(newValue));
+        s.dotSemitoneOffsets[0] = st;
+        pitchEngine.setDotSemitoneOffset(0, st);
+        stateChanged = true;
+    }
+    else if (parameterID == ParameterIDs::dot1Semitone)
+    {
+        const int st = juce::jlimit(-36, +36, (int) std::lround(newValue));
+        s.dotSemitoneOffsets[1] = st;
+        pitchEngine.setDotSemitoneOffset(1, st);
+        stateChanged = true;
+    }
+    else if (parameterID == ParameterIDs::dot2Semitone)
+    {
+        const int st = juce::jlimit(-36, +36, (int) std::lround(newValue));
+        s.dotSemitoneOffsets[2] = st;
+        pitchEngine.setDotSemitoneOffset(2, st);
+        stateChanged = true;
+    }
+    else if (parameterID == ParameterIDs::dot3Semitone)
+    {
+        const int st = juce::jlimit(-36, +36, (int) std::lround(newValue));
+        s.dotSemitoneOffsets[3] = st;
+        pitchEngine.setDotSemitoneOffset(3, st);
+        stateChanged = true;
+    }
+    else if (parameterID == ParameterIDs::dot4Semitone)
+    {
+        const int st = juce::jlimit(-36, +36, (int) std::lround(newValue));
+        s.dotSemitoneOffsets[4] = st;
+        pitchEngine.setDotSemitoneOffset(4, st);
+        stateChanged = true;
     }
 
     if (stateChanged)

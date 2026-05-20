@@ -11,15 +11,71 @@ static constexpr std::array<int, 5> kDefaultDotSemitoneOffsets = {
     -24, -12, 0, +12, +24
 };
 
+void PuponvstAudioProcessorEditor::HeaderComboLookAndFeel::drawComboBox(juce::Graphics& g,
+                                                                         int width,
+                                                                         int height,
+                                                                         bool isButtonDown,
+                                                                         int buttonX,
+                                                                         int buttonY,
+                                                                         int buttonW,
+                                                                         int buttonH,
+                                                                         juce::ComboBox& box)
+{
+    juce::ignoreUnused(buttonX, buttonY, buttonW, buttonH);
+
+    auto bounds = juce::Rectangle<float>(0.0f, 0.0f, (float)width, (float)height).reduced(0.5f);
+    const float corner = 8.0f;
+
+    const auto bgTop = juce::Colour(0xFF26262C);
+    const auto bgBottom = juce::Colour(0xFF18181D);
+    juce::ColourGradient bg(bgTop, 0.0f, 0.0f, bgBottom, 0.0f, (float)height, false);
+    g.setGradientFill(bg);
+    g.fillRoundedRectangle(bounds, corner);
+
+    // Soft outer glow to match the plugin's luminous style.
+    g.setColour(juce::Colour(0x22BFD4FF));
+    g.drawRoundedRectangle(bounds.expanded(0.4f), corner + 0.6f, 1.0f);
+
+    auto stroke = juce::Colour(0x70B8BAC3);
+    const bool hoverActive = box.isMouseOver(true) || box.isMouseButtonDown();
+    if (box.hasKeyboardFocus(true) || isButtonDown || hoverActive)
+        stroke = juce::Colour(0xA0DDE6FF);
+    g.setColour(stroke);
+    g.drawRoundedRectangle(bounds, corner, 1.0f);
+
+    // Keep header combos clean: no dropdown triangle glyph.
+}
+
+void PuponvstAudioProcessorEditor::HeaderComboLookAndFeel::positionComboBoxText(juce::ComboBox& box, juce::Label& label)
+{
+    label.setBounds(box.getLocalBounds().reduced(8, 2));
+    label.setFont(juce::Font(12.5f, juce::Font::plain));
+    label.setJustificationType(juce::Justification::centred);
+}
+
+void PuponvstAudioProcessorEditor::HeaderComboLookAndFeel::drawComboBoxTextWhenNothingSelected(juce::Graphics& g,
+                                                                                                 juce::ComboBox& box,
+                                                                                                 juce::Label& label)
+{
+    juce::ignoreUnused(label);
+    g.setColour(box.findColour(juce::ComboBox::textColourId).withAlpha(box.isEnabled() ? 1.0f : 0.45f));
+    g.setFont(juce::Font(12.5f, juce::Font::plain));
+    g.drawFittedText(box.getTextWhenNothingSelected(),
+                     box.getLocalBounds().reduced(8, 2),
+                     juce::Justification::centred,
+                     1);
+}
+
 // 主编辑器实现
 PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcessor& p)
     : juce::AudioProcessorEditor(&p), processor(p)
 {
     setSize(900, 600);
 
-    // ===== 加载自定义字体 AtomicMarker.otf =====
+    // ===== 加载子集字体 AtomicMarker-PUPON-subset.otf =====
     atomicMarkerTypeface = juce::Typeface::createSystemTypefaceFor(
-        BinaryData::AtomicMarker_otf, BinaryData::AtomicMarker_otfSize);
+        BinaryData::AtomicMarkerPUPONsubset_otf,
+        BinaryData::AtomicMarkerPUPONsubset_otfSize);
 
     auto makeAtomicFont = [this](float size) -> juce::Font
     {
@@ -33,46 +89,89 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
     };
 
     // 大标题：Pupon（字号 32，不加粗不斜体）
-    titleLabel.setText("Pupon", juce::dontSendNotification);
+    titleLabel.setText("PUPON", juce::dontSendNotification);
     titleLabel.setColour(juce::Label::textColourId, juce::Colours::white);
     titleLabel.setJustificationType(juce::Justification::centredLeft);
     titleLabel.setFont(makeAtomicFont(48.0f));
     titleLabel.setInterceptsMouseClicks(false, false);  // 允许鼠标事件穿透，以便编辑器统一处理点击
 
-    // 副标题：版本 + 网址（字号 20，不加粗不斜体）
-    versionLabel.setText("v0.9.8 iisaacbeats.cn", juce::dontSendNotification);
-    versionLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.85f));
+    // 副标题：仅显示版本号（普通无衬线字体，字号更小）
+    versionLabel.setText("v1.0.0", juce::dontSendNotification);
+    versionLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.48f));
     versionLabel.setJustificationType(juce::Justification::centredLeft);
-    versionLabel.setFont(makeAtomicFont(30.0f));
+    {
+        juce::Font subtitleFont(16.0f, juce::Font::plain);
+        subtitleFont.setTypefaceName("Microsoft YaHei UI");
+        versionLabel.setFont(subtitleFont);
+    }
     versionLabel.setInterceptsMouseClicks(false, false);  // 允许鼠标事件穿透，以便编辑器统一处理点击
 
     addAndMakeVisible(titleLabel);
     addAndMakeVisible(versionLabel);
+    addAndMakeVisible(presetPrevButton);
+    addAndMakeVisible(presetCombo);
+    addAndMakeVisible(presetNextButton);
     addAndMakeVisible(qualityCombo);
     addAndMakeVisible(formantCombo);
 
+    presetCombo.setLookAndFeel(&headerComboLookAndFeel);
+    qualityCombo.setLookAndFeel(&headerComboLookAndFeel);
+    formantCombo.setLookAndFeel(&headerComboLookAndFeel);
+
+    presetCombo.setTextWhenNothingSelected(currentPresetName);
+    presetCombo.setTooltip("Preset actions and preset list from default folder");
+    presetCombo.setJustificationType(juce::Justification::centred);
+    presetCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF1A1A1D));
+    presetCombo.setColour(juce::ComboBox::outlineColourId, juce::Colour(0x66A4A4A8));
+    presetCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xFFE0E0E4));
+    presetCombo.setColour(juce::ComboBox::arrowColourId, juce::Colour(0xFFBFC0C6));
+    presetCombo.setColour(juce::ComboBox::focusedOutlineColourId, juce::Colour(0xFFBFD4FF));
+    presetCombo.setColour(juce::Label::textWhenEditingColourId, juce::Colour(0xFFE0E0E4));
+    presetCombo.onChange = [this] { handlePresetComboChange(); };
+
+    for (auto* c : { &qualityCombo, &formantCombo })
+    {
+        c->setColour(juce::ComboBox::focusedOutlineColourId, juce::Colour(0xFFBFD4FF));
+        c->setJustificationType(juce::Justification::centred);
+    }
+
+    for (auto* b : { &presetPrevButton, &presetNextButton })
+    {
+        b->setTooltip("Quick preset switch");
+        b->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        b->setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
+        b->setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFE0E3EA));
+        b->setColour(juce::TextButton::textColourOnId, juce::Colour(0xFFF4F7FF));
+        b->setTriggeredOnMouseDown(true);
+    }
+    presetPrevButton.onClick = [this] { switchPresetByStep(-1); };
+    presetNextButton.onClick = [this] { switchPresetByStep(+1); };
+
     qualityCombo.addItem("Fastest", 1);
-    qualityCombo.addItem("FastestTolerable", 2);
+    qualityCombo.addItem("Mid", 2);
     qualityCombo.addItem("Best", 3);
     qualityCombo.setTooltip("Pitch quality (higher quality uses more CPU)");
-    qualityCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF0F0F12));
-    qualityCombo.setColour(juce::ComboBox::outlineColourId, juce::Colour(0x55FFFFFF));
-    qualityCombo.setColour(juce::ComboBox::textColourId, juce::Colours::white.withAlpha(0.92f));
-    qualityCombo.setColour(juce::ComboBox::arrowColourId, juce::Colours::white.withAlpha(0.80f));
+    qualityCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF1A1A1D));
+    qualityCombo.setColour(juce::ComboBox::outlineColourId, juce::Colour(0x66A4A4A8));
+    qualityCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xFFE0E0E4));
+    qualityCombo.setColour(juce::ComboBox::arrowColourId, juce::Colour(0xFFBFC0C6));
 
     formantCombo.addItem("Complex", 1);
     formantCombo.addItem("Vocal", 2);
     formantCombo.setTooltip("Formant mode");
-    formantCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF0F0F12));
-    formantCombo.setColour(juce::ComboBox::outlineColourId, juce::Colour(0x55FFFFFF));
-    formantCombo.setColour(juce::ComboBox::textColourId, juce::Colours::white.withAlpha(0.92f));
-    formantCombo.setColour(juce::ComboBox::arrowColourId, juce::Colours::white.withAlpha(0.80f));
+    formantCombo.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF1A1A1D));
+    formantCombo.setColour(juce::ComboBox::outlineColourId, juce::Colour(0x66A4A4A8));
+    formantCombo.setColour(juce::ComboBox::textColourId, juce::Colour(0xFFE0E0E4));
+    formantCombo.setColour(juce::ComboBox::arrowColourId, juce::Colour(0xFFBFC0C6));
 
-    auto& lf = getLookAndFeel();
-    lf.setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xFF101014));
-    lf.setColour(juce::PopupMenu::textColourId, juce::Colours::white.withAlpha(0.92f));
-    lf.setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(0xFF1B1B22));
-    lf.setColour(juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
+    headerComboLookAndFeel.setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xFF1A1A1D));
+    headerComboLookAndFeel.setColour(juce::PopupMenu::textColourId, juce::Colour(0xFFE0E0E4));
+    headerComboLookAndFeel.setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(0xFF2B2B30));
+    headerComboLookAndFeel.setColour(juce::PopupMenu::highlightedTextColourId, juce::Colour(0xFFF4F4F7));
+
+    presetFolder = juce::File(R"(C:\Users\echotcxu\Documents\puponpresent)");
+    refreshPresetList();
+    updatePresetComboDisplayText();
 
     qualityAttachment = std::make_unique<ComboAttachment>(processor.getAPVTS(), ParameterIDs::rbPitchQuality, qualityCombo);
     formantAttachment = std::make_unique<ComboAttachment>(processor.getAPVTS(), ParameterIDs::rbFormantMode, formantCombo);
@@ -151,6 +250,19 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
         }
     }
 
+    const juce::String semitoneParamIDs[5] = {
+        ParameterIDs::dot0Semitone,
+        ParameterIDs::dot1Semitone,
+        ParameterIDs::dot2Semitone,
+        ParameterIDs::dot3Semitone,
+        ParameterIDs::dot4Semitone
+    };
+    for (int i = 0; i < 5; ++i)
+    {
+        if (auto* stParam = processor.getAPVTS().getRawParameterValue(semitoneParamIDs[i]))
+            dotSemitoneOffsets[(size_t)i] = juce::jlimit(kMinSemitone, kMaxSemitone, (int) std::lround(stParam->load()));
+    }
+
     // ===== 标记初始化完成，从此 push 操作可以正式镜像状态到 Processor =====
     // 之前 setSize() 同步触发的 resized() 会调用 pushDotParamsToProcessor()，但因 initialised=false
     // 所以那次 push 没有覆盖 editorState（保留了 setStateInformation 恢复出的真存档）。
@@ -167,6 +279,7 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
     {
         juce::String paramID = "dot" + juce::String(i);
         processor.getAPVTS().addParameterListener(paramID, this);
+        processor.getAPVTS().addParameterListener(semitoneParamIDs[i], this);
     }
 
     // 启动动效计时器：约 40 FPS，既能保证丝滑，又不浪费 CPU
@@ -177,7 +290,11 @@ PuponvstAudioProcessorEditor::~PuponvstAudioProcessorEditor()
 {
     stopTimer();
     cancelPendingUpdate(); // 取消挂起的异步更新，防止析构后回调
-    
+
+    presetCombo.setLookAndFeel(nullptr);
+    qualityCombo.setLookAndFeel(nullptr);
+    formantCombo.setLookAndFeel(nullptr);
+
     // 移除参数监听器
     processor.getAPVTS().removeParameterListener(ParameterIDs::redRayClockwiseAngle, this);
     processor.getAPVTS().removeParameterListener(ParameterIDs::sigma, this);
@@ -187,6 +304,14 @@ PuponvstAudioProcessorEditor::~PuponvstAudioProcessorEditor()
     {
         juce::String paramID = "dot" + juce::String(i);
         processor.getAPVTS().removeParameterListener(paramID, this);
+        const juce::String semitoneParamIDs[5] = {
+            ParameterIDs::dot0Semitone,
+            ParameterIDs::dot1Semitone,
+            ParameterIDs::dot2Semitone,
+            ParameterIDs::dot3Semitone,
+            ParameterIDs::dot4Semitone
+        };
+        processor.getAPVTS().removeParameterListener(semitoneParamIDs[i], this);
     }
 }
 
@@ -257,7 +382,32 @@ void PuponvstAudioProcessorEditor::paint(juce::Graphics& g)
     // 导航栏边框（极细亮线，像一条微发光 hairline）
     g.setColour(juce::Colour(0x33FFFFFF));
     g.drawLine(0, 60, (float)getWidth(), 60.0f, 1.0f);
-    
+
+    // 标题悬停时改为轻微色散：左右出现红/蓝字形边缘。
+    if (isTitleHovered)
+    {
+        const auto titleTextBounds = getTitleTextBounds().toFloat();
+        if (!titleTextBounds.isEmpty())
+        {
+            juce::GlyphArrangement glyphs;
+            const auto titleFont = titleLabel.getFont();
+            const float baselineY = titleTextBounds.getY() + titleFont.getAscent();
+            glyphs.addLineOfText(titleFont, titleLabel.getText(), titleTextBounds.getX(), baselineY);
+
+            juce::Path titlePath;
+            glyphs.createPath(titlePath);
+
+            constexpr float kRedDispersionX = 1.0f;
+            constexpr float kBlueDispersionX = 10.0f;
+
+            g.setColour(juce::Colour(0x90FF4A5E)); // left red fringe
+            g.fillPath(titlePath, juce::AffineTransform::translation(-kRedDispersionX, 0.0f));
+
+            g.setColour(juce::Colour(0x905FAFFF)); // right blue fringe
+            g.fillPath(titlePath, juce::AffineTransform::translation(+kBlueDispersionX, 0.0f));
+        }
+    }
+
     
     // 获取控制区域（统一移除导航栏高度，保持与交互判定一致）
     auto controlArea = getLocalBounds();
@@ -827,70 +977,14 @@ void PuponvstAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
     auto controlArea = getLocalBounds();
     controlArea.removeFromTop(60);
 
-    // ===== 检测标题和版本号点击，打开网页 =====
-    // 使用本地坐标进行检测
-    juce::Point<int> mousePosLocal = event.getPosition(); // 鼠标在编辑器中的本地坐标
-    
-    // 检查标题标签
+    // 仅大标题文字区域支持点击跳转官网。
+    const juce::Point<int> mousePosLocal = event.getPosition();
+    if (getTitleTextBounds().contains(mousePosLocal))
     {
-        auto labelBounds = titleLabel.getBounds();
-        if (labelBounds.contains(mousePosLocal))
-        {
-            // 计算文字实际显示区域
-            auto font = titleLabel.getFont();
-            auto text = titleLabel.getText();
-            int textWidth = font.getStringWidth(text);
-            int textHeight = (int)font.getHeight();
-            
-            // 文字区域受标签边界限制
-            int actualWidth = juce::jmin(textWidth, labelBounds.getWidth());
-            int actualHeight = juce::jmin(textHeight, labelBounds.getHeight());
-            
-            // 计算文字在标签中的位置（左对齐，垂直居中）
-            juce::Rectangle<int> textBounds;
-            textBounds.setSize(actualWidth, actualHeight);
-            textBounds.setPosition(labelBounds.getX(), 
-                                  labelBounds.getY() + (labelBounds.getHeight() - actualHeight) / 2);
-            
-            if (textBounds.contains(mousePosLocal))
-            {
-                juce::URL url("https://iisaacbeats.cn");
-                url.launchInDefaultBrowser();
-                return;
-            }
-        }
+        juce::URL("https://iisaacbeats.cn").launchInDefaultBrowser();
+        return;
     }
-    
-    // 检查版本号标签
-    {
-        auto labelBounds = versionLabel.getBounds();
-        if (labelBounds.contains(mousePosLocal))
-        {
-            // 计算文字实际显示区域
-            auto font = versionLabel.getFont();
-            auto text = versionLabel.getText();
-            int textWidth = font.getStringWidth(text);
-            int textHeight = (int)font.getHeight();
-            
-            // 文字区域受标签边界限制
-            int actualWidth = juce::jmin(textWidth, labelBounds.getWidth());
-            int actualHeight = juce::jmin(textHeight, labelBounds.getHeight());
-            
-            // 计算文字在标签中的位置（左对齐，垂直居中）
-            juce::Rectangle<int> textBounds;
-            textBounds.setSize(actualWidth, actualHeight);
-            textBounds.setPosition(labelBounds.getX(), 
-                                  labelBounds.getY() + (labelBounds.getHeight() - actualHeight) / 2);
-            
-            if (textBounds.contains(mousePosLocal))
-            {
-                juce::URL url("https://iisaacbeats.cn");
-                url.launchInDefaultBrowser();
-                return;
-            }
-        }
-    }
-    
+
     juce::Point<float> mousePos = event.position;
     
     // 鼠标必须在控制区域内才处理
@@ -1018,6 +1112,16 @@ void PuponvstAudioProcessorEditor::mouseDrag(const juce::MouseEvent& event)
 
         // 半音偏移实时同步给音频引擎
         processor.setDotSemitoneOffset(i, st);
+
+        const juce::String semitoneParamIDs[5] = {
+            ParameterIDs::dot0Semitone,
+            ParameterIDs::dot1Semitone,
+            ParameterIDs::dot2Semitone,
+            ParameterIDs::dot3Semitone,
+            ParameterIDs::dot4Semitone
+        };
+        if (auto* param = processor.getAPVTS().getParameter(semitoneParamIDs[i]))
+            param->setValue(param->convertTo0to1((float) st));
 
         pushDotParamsToProcessor();
         repaint();
@@ -1220,7 +1324,23 @@ void PuponvstAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
                 param->setValueNotifyingHost(param->getValue());
         }
     }
-    
+
+    if (wasDraggingDotColumn)
+    {
+        const juce::String semitoneParamIDs[5] = {
+            ParameterIDs::dot0Semitone,
+            ParameterIDs::dot1Semitone,
+            ParameterIDs::dot2Semitone,
+            ParameterIDs::dot3Semitone,
+            ParameterIDs::dot4Semitone
+        };
+        for (int i = 0; i < 5; ++i)
+        {
+            if (auto* param = processor.getAPVTS().getParameter(semitoneParamIDs[i]))
+                param->setValueNotifyingHost(param->getValue());
+        }
+    }
+
     if (wasDraggingRay)
     {
         // 通知宿主射线参数变化
@@ -1262,6 +1382,28 @@ void PuponvstAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
         repaint(); // 清除被拖动圆点/竖线的高亮描边
 }
 
+void PuponvstAudioProcessorEditor::mouseMove(const juce::MouseEvent& event)
+{
+    const bool shouldHover = getTitleTextBounds().contains(event.getPosition());
+    if (shouldHover != isTitleHovered)
+    {
+        isTitleHovered = shouldHover;
+        setMouseCursor(isTitleHovered ? juce::MouseCursor::PointingHandCursor
+                                      : juce::MouseCursor::NormalCursor);
+        repaint(titleLabel.getBounds().expanded(24, 14));
+    }
+}
+
+void PuponvstAudioProcessorEditor::mouseExit(const juce::MouseEvent&)
+{
+    if (isTitleHovered)
+    {
+        isTitleHovered = false;
+        setMouseCursor(juce::MouseCursor::NormalCursor);
+        repaint(titleLabel.getBounds().expanded(24, 14));
+    }
+}
+
 // 辅助函数：检查点是否靠近线段（返回点到线段的距离是否小于阈值）
 bool PuponvstAudioProcessorEditor::isPointNearLine(const juce::Point<float>& point, 
                     const juce::Point<float>& lineStart, 
@@ -1296,6 +1438,26 @@ float PuponvstAudioProcessorEditor::getNormalCurveY(float x, const juce::Rectang
     float normalizedX = (x - mean) / scale;
     float y = maxHeight * std::exp(-0.5f * normalizedX * normalizedX / (sigma * sigma));
     return baseY - y;
+}
+
+juce::Rectangle<int> PuponvstAudioProcessorEditor::getTitleTextBounds() const
+{
+    const auto labelBounds = titleLabel.getBounds();
+    if (labelBounds.isEmpty())
+        return {};
+
+    const auto font = titleLabel.getFont();
+    const auto text = titleLabel.getText();
+    const int textWidth = juce::jmax(0, font.getStringWidth(text));
+    const int textHeight = juce::jmax(0, (int)std::ceil(font.getHeight()));
+
+    const int actualWidth = juce::jmin(textWidth, labelBounds.getWidth());
+    const int actualHeight = juce::jmin(textHeight, labelBounds.getHeight());
+
+    return { labelBounds.getX(),
+             labelBounds.getY() + (labelBounds.getHeight() - actualHeight) / 2,
+             actualWidth,
+             actualHeight };
 }
 
 // 计算点到正态曲线的最短距离（使用采样法，遍历曲线段计算最短距离）
@@ -1502,12 +1664,11 @@ juce::Point<float> PuponvstAudioProcessorEditor::calculateRayEndByAngle(float an
     // 这是常规极坐标定义（与 atan2 返回值一致）
     // 计算射线与控制区域边界的交点
     
-    const auto safeArea = getInteractionSafeArea(controlArea);
-    const float originX = (float) safeArea.getCentreX();
-    const float originY = (float) safeArea.getBottom();
-    const float left = (float) safeArea.getX();
-    const float right = (float) safeArea.getRight();
-    const float top = (float) safeArea.getY();
+    const float originX = (float) controlArea.getCentreX();
+    const float originY = (float) controlArea.getBottom();
+    const float left = (float) controlArea.getX();
+    const float right = (float) controlArea.getRight();
+    const float top = (float) controlArea.getY();
     const float H = originY - top;            // 控制区域高度
     const float halfW = (right - left) * 0.5f; // 半宽
     
@@ -1789,21 +1950,47 @@ void PuponvstAudioProcessorEditor::resized()
     const int  measuredW  = titleFont.getStringWidth(titleText);
     const int  fallbackW  = (int) (titleFont.getHeight() * 0.6f * juce::jmax(1, titleText.length()));
     const int  titleWidth = juce::jmax(measuredW, fallbackW, 120); // 至少 120px
-    constexpr int kTitleVersionGap = 6;   // 大标题与副标题之间的固定间距（像素）
+    constexpr int kTitleVersionGap = 2;   // 大标题与副标题之间的固定间距（像素）
 
-    const int rightW = juce::jlimit(220, 360, navInner.getWidth() / 2);
+    const int rightW = juce::jlimit(150, 240, navInner.getWidth() / 2);
     auto rightControls = navInner.removeFromRight(rightW);
-    auto titleArea   = navInner.removeFromLeft(titleWidth + kTitleVersionGap);
-    auto versionArea = navInner; // 紧贴大标题右侧
+
+    auto titleArea = navInner.removeFromLeft(titleWidth + kTitleVersionGap);
+    const int versionTextW = versionLabel.getFont().getStringWidth(versionLabel.getText());
+    const int versionW = juce::jlimit(120, 220, versionTextW + 16);
+    auto versionArea = navInner.removeFromLeft(versionW).translated(-25, 0); // 版本号文本左移 25px
+
     titleLabel.setBounds(titleArea);
-    versionLabel.setBounds(versionArea);
+    versionLabel.setBounds(versionArea.translated(0, 7));
+
+    // 预设组优先按抬头整体中心定位，而不是依赖剩余空间，避免默认尺寸下被挤向右侧。
+    auto presetInner = navBar.reduced(30, 16);
+    const int btnW = 24;
+    const int btnGap = 6;
+    const int comboH = 26;
+    const int comboY = navBar.getY() + (navBar.getHeight() - comboH) / 2;
+    const int versionVisualRight = versionArea.getX() + juce::jmin(versionTextW, versionArea.getWidth());
+    const int leftLimit = juce::jmax(presetInner.getX(), versionVisualRight + 8);
+    const int rightLimit = juce::jmin(presetInner.getRight(), rightControls.getX() - 8);
+    const int fixedW = btnW * 2 + btnGap * 2;
+    const int availableW = juce::jmax(fixedW + 90, rightLimit - leftLimit);
+    const int presetComboW = juce::jlimit(90, 180, availableW - fixedW);
+    const int allW = fixedW + presetComboW;
+
+    int startX = navBar.getCentreX() - allW / 2;
+    const int maxStartX = juce::jmax(leftLimit, rightLimit - allW);
+    startX = juce::jlimit(leftLimit, maxStartX, startX);
+
+    presetPrevButton.setBounds(startX, comboY, btnW, comboH);
+    presetCombo.setBounds(startX + btnW + btnGap, comboY, presetComboW, comboH);
+    presetNextButton.setBounds(startX + btnW + btnGap + presetComboW + btnGap, comboY, btnW, comboH);
 
     auto rightInner = rightControls.reduced(0, 16);
-    const int comboGap = 8;
-    const int comboW = juce::jmax(80, (rightInner.getWidth() - comboGap) / 2);
-    auto qualityArea = rightInner.removeFromLeft(comboW);
+    const int comboGap = 6;
+    const int rightComboW = juce::jmax(62, (rightInner.getWidth() - comboGap) / 2);
+    auto qualityArea = rightInner.removeFromLeft(rightComboW);
     rightInner.removeFromLeft(comboGap);
-    auto formantArea = rightInner.removeFromLeft(comboW);
+    auto formantArea = rightInner.removeFromLeft(rightComboW);
     qualityCombo.setBounds(qualityArea.withHeight(26).withY(navBar.getY() + (navBar.getHeight() - 26) / 2));
     formantCombo.setBounds(formantArea.withHeight(26).withY(navBar.getY() + (navBar.getHeight() - 26) / 2));
 
@@ -1854,7 +2041,11 @@ void PuponvstAudioProcessorEditor::parameterChanged(const juce::String& paramete
         filterWidthSt = juce::jlimit(10, 72, (int) std::lround(newValue));
         needsRepaint = true;
     }
-    else if (parameterID.startsWith("dot"))
+    else if (parameterID == ParameterIDs::dot0
+          || parameterID == ParameterIDs::dot1
+          || parameterID == ParameterIDs::dot2
+          || parameterID == ParameterIDs::dot3
+          || parameterID == ParameterIDs::dot4)
     {
         int dotIndex = parameterID.substring(3).getIntValue();
         if (dotIndex >= 0 && dotIndex < 5)
@@ -1863,10 +2054,34 @@ void PuponvstAudioProcessorEditor::parameterChanged(const juce::String& paramete
             needsRepaint = true;
         }
     }
+    else if (parameterID == ParameterIDs::dot0Semitone
+          || parameterID == ParameterIDs::dot1Semitone
+          || parameterID == ParameterIDs::dot2Semitone
+          || parameterID == ParameterIDs::dot3Semitone
+          || parameterID == ParameterIDs::dot4Semitone)
+    {
+        int dotIndex = -1;
+        if (parameterID == ParameterIDs::dot0Semitone) dotIndex = 0;
+        else if (parameterID == ParameterIDs::dot1Semitone) dotIndex = 1;
+        else if (parameterID == ParameterIDs::dot2Semitone) dotIndex = 2;
+        else if (parameterID == ParameterIDs::dot3Semitone) dotIndex = 3;
+        else if (parameterID == ParameterIDs::dot4Semitone) dotIndex = 4;
+
+        if (dotIndex >= 0)
+        {
+            dotSemitoneOffsets[(size_t) dotIndex] = juce::jlimit(kMinSemitone, kMaxSemitone, (int) std::lround(newValue));
+            needsRepaint = true;
+        }
+    }
 
     // 异步触发 UI 更新，避免在宿主回调上下文中直接调用 repaint() 导致死锁
     if (needsRepaint)
     {
+        if (!suppressPresetDirtyMark && currentPresetIndex >= 0)
+        {
+            currentPresetDirty = true;
+            updatePresetComboDisplayText();
+        }
         pushDotParamsToProcessor();
         triggerAsyncUpdate();
     }
@@ -1881,4 +2096,206 @@ void PuponvstAudioProcessorEditor::handleAsyncUpdate()
         needsRepaint = false;
         repaint();
     }
+}
+
+void PuponvstAudioProcessorEditor::refreshPresetList()
+{
+    if (!presetFolder.exists())
+        presetFolder.createDirectory();
+
+    presetFiles.clear();
+    presetFolder.findChildFiles(presetFiles, juce::File::findFiles, false, "*.puponpreset");
+    rebuildPresetComboItems();
+}
+
+void PuponvstAudioProcessorEditor::rebuildPresetComboItems()
+{
+    isUpdatingPresetCombo = true;
+    presetCombo.clear(juce::dontSendNotification);
+
+    presetCombo.addItem("Save Preset", kPresetActionSaveId);
+    presetCombo.addItem("Change Default Folder", kPresetActionChangeFolderId);
+    presetCombo.addSeparator();
+
+    for (int i = 0; i < presetFiles.size(); ++i)
+    {
+        const auto name = presetFiles.getReference(i).getFileNameWithoutExtension();
+        presetCombo.addItem(name, kPresetItemBaseId + i);
+    }
+
+    if (presetFiles.isEmpty())
+    {
+        constexpr int kNoPresetId = 999;
+        presetCombo.addItem("(No presets in folder)", kNoPresetId);
+        presetCombo.setItemEnabled(kNoPresetId, false);
+    }
+
+    presetCombo.setSelectedId(0, juce::dontSendNotification);
+    presetCombo.setTooltip("Preset folder: " + presetFolder.getFullPathName());
+    presetPrevButton.setEnabled(!presetFiles.isEmpty());
+    presetNextButton.setEnabled(!presetFiles.isEmpty());
+
+    if (presetFiles.isEmpty())
+        currentPresetIndex = -1;
+    else
+        currentPresetIndex = juce::jlimit(0, presetFiles.size() - 1, currentPresetIndex < 0 ? 0 : currentPresetIndex);
+
+    updatePresetComboDisplayText();
+    isUpdatingPresetCombo = false;
+}
+
+void PuponvstAudioProcessorEditor::updatePresetComboDisplayText()
+{
+    juce::String text = currentPresetName;
+    if (currentPresetDirty && currentPresetIndex >= 0)
+        text << " (change)";
+
+    if (text.isEmpty())
+        text = "Presets";
+
+    presetCombo.setTextWhenNothingSelected(text);
+    presetCombo.setSelectedId(0, juce::dontSendNotification);
+}
+
+void PuponvstAudioProcessorEditor::handlePresetComboChange()
+{
+    if (isUpdatingPresetCombo)
+        return;
+
+    const int selectedId = presetCombo.getSelectedId();
+    if (selectedId == kPresetActionSaveId)
+    {
+        savePresetToFile();
+    }
+    else if (selectedId == kPresetActionChangeFolderId)
+    {
+        choosePresetFolder();
+    }
+    else if (selectedId >= kPresetItemBaseId)
+    {
+        const int index = selectedId - kPresetItemBaseId;
+        if (juce::isPositiveAndBelow(index, presetFiles.size()))
+        {
+            currentPresetIndex = index;
+            loadPresetFromFile(presetFiles.getReference(index));
+        }
+    }
+
+    presetCombo.setSelectedId(0, juce::dontSendNotification);
+}
+
+void PuponvstAudioProcessorEditor::switchPresetByStep(int step)
+{
+    if (presetFiles.isEmpty())
+        return;
+
+    if (currentPresetIndex < 0)
+        currentPresetIndex = 0;
+
+    const int count = presetFiles.size();
+    currentPresetIndex = (currentPresetIndex + step + count) % count;
+    loadPresetFromFile(presetFiles.getReference(currentPresetIndex));
+}
+
+void PuponvstAudioProcessorEditor::savePresetToFile()
+{
+    presetFileChooser = std::make_unique<juce::FileChooser>(
+        "Save Pupon preset",
+        presetFolder,
+        "*.puponpreset");
+
+    const int flags = juce::FileBrowserComponent::saveMode
+                    | juce::FileBrowserComponent::canSelectFiles
+                    | juce::FileBrowserComponent::warnAboutOverwriting;
+
+    presetFileChooser->launchAsync(flags, [this](const juce::FileChooser& chooser)
+    {
+        auto file = chooser.getResult();
+        if (file == juce::File())
+            return;
+
+        if (!file.hasFileExtension("puponpreset"))
+            file = file.withFileExtension(".puponpreset");
+
+        juce::MemoryBlock state;
+        processor.getStateInformation(state);
+
+        if (!file.replaceWithData(state.getData(), state.getSize()))
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                                   "Save preset failed",
+                                                   "Could not write preset file.");
+            return;
+        }
+
+        currentPresetName = file.getFileNameWithoutExtension();
+        currentPresetDirty = false;
+        refreshPresetList();
+        currentPresetIndex = presetFiles.indexOf(file);
+        updatePresetComboDisplayText();
+    });
+}
+
+void PuponvstAudioProcessorEditor::choosePresetFolder()
+{
+    presetFileChooser = std::make_unique<juce::FileChooser>(
+        "Choose default preset folder",
+        presetFolder,
+        "*");
+
+    const int flags = juce::FileBrowserComponent::openMode
+                    | juce::FileBrowserComponent::canSelectDirectories;
+
+    presetFileChooser->launchAsync(flags, [this](const juce::FileChooser& chooser)
+    {
+        const auto file = chooser.getResult();
+        if (file == juce::File() || !file.isDirectory())
+            return;
+
+        presetFolder = file;
+        currentPresetIndex = -1;
+        currentPresetDirty = false;
+        currentPresetName = "Presets";
+        refreshPresetList();
+    });
+}
+
+void PuponvstAudioProcessorEditor::loadPresetFromFile(const juce::File& file)
+{
+    juce::MemoryBlock data;
+    if (!file.loadFileAsData(data) || data.getSize() == 0)
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                               "Load preset failed",
+                                               "Preset file is empty or unreadable.");
+        return;
+    }
+
+    suppressPresetDirtyMark = true;
+    processor.setStateInformation(data.getData(), (int)data.getSize());
+    suppressPresetDirtyMark = false;
+
+    // Pull non-APVTS editor-state fields to ensure immediate visual sync.
+    const auto restored = processor.getEditorState();
+    if (restored.hasValidValues)
+    {
+        blueAngleDeg = restored.blueAngleDeg;
+        redRayClockwiseDeg = restored.redRayClockwiseDeg;
+        isVerticalRay = restored.isVerticalRay;
+        sigma = juce::jlimit(0.24f, 8.0f, restored.sigma);
+        dotOffsetT = restored.dotOffsetT;
+        dotSemitoneOffsets = restored.dotSemitoneOffsets;
+    }
+
+    for (int i = 0; i < 5; ++i)
+        processor.setDotSemitoneOffset(i, dotSemitoneOffsets[(size_t)i]);
+
+    currentPresetName = file.getFileNameWithoutExtension();
+    currentPresetDirty = false;
+    if (currentPresetIndex < 0)
+        currentPresetIndex = presetFiles.indexOf(file);
+    updatePresetComboDisplayText();
+
+    pushDotParamsToProcessor();
+    repaint();
 }
