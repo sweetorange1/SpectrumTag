@@ -169,7 +169,8 @@ PuponvstAudioProcessorEditor::PuponvstAudioProcessorEditor(PuponvstAudioProcesso
     headerComboLookAndFeel.setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(0xFF2B2B30));
     headerComboLookAndFeel.setColour(juce::PopupMenu::highlightedTextColourId, juce::Colour(0xFFF4F4F7));
 
-    presetFolder = juce::File(R"(C:\Users\echotcxu\Documents\puponpresent)");
+    // 动态获取用户文档目录下的puponpresent文件夹
+    presetFolder = juce::File(juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getFullPathName() + "/puponpresent");
     refreshPresetList();
     updatePresetComboDisplayText();
 
