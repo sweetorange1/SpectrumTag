@@ -98,8 +98,13 @@ private:
         int                inputPos = 0;    // 下一个写入位置
         int                accumCount = 0;  // 自上一帧以来累积的采样数
 
-        // 输出 OLA 累积环形缓冲（只写不读）
+        // 干声延迟线（用于与 STFT wet 路径按同一延迟对齐，避免 crossfade 错位）
+        std::vector<float> dryDelayRing;    // 长度 stftSize（延迟读取长度为 stftSize - stftHop）
+        int                dryDelayWritePos = 0;
+
+        // 输出 OLA 累积环形缓冲
         std::vector<float> outputRing;      // 长度 stftSize（accumulator）
+        std::vector<float> olaNormRing;     // 长度 stftSize（累积 w^2，用于逐样本归一化）
 
         // 输出 FIFO 环形缓冲（解耦 OLA 与输出读取）
         std::vector<float> outFifo;         // 长度 stftSize × 2（安全余量）
@@ -147,6 +152,13 @@ private:
     double             printColCursorD = 0.0;     // 当前列游标（小数，精确推进）
     double             printColPerSample = 0.0;
     int                printWarmupFramesRemaining = 0; // Print 启动预热帧数（预热期不消费 mask 列）
+
+    // ===== 干湿切换 crossfade 状态 =====
+    bool               prevPrintActive = false;
+    float              dryWetMix = 0.0f;            // 0=dry, 1=wet
+    float              dryWetTarget = 0.0f;
+    int                dryWetFadeSamplesRemaining = 0;
+    int                dryWetFadeTotalSamples = 0;
 
     // ===== STFT 参数 =====
     int  stftSize = 4096;

@@ -34,7 +34,7 @@ namespace
     // amplitudeRatio (0..1.5) -> 线性 gain，0.0 映射到 -80 dB（≈0.0001）
     inline float ratioToGain (float ratio)
     {
-        if (ratio <= 0.0f) return 0.0001f;       // -80 dB（比之前 -60dB 更深，增强对比度）
+        if (ratio <= 0.0f) return 0.0f;       // -80 dB（比之前 -60dB 更深，增强对比度）
         return ratio;                              // 1.0 = 0dB, 1.5 = +3.5dB
     }
 }
@@ -101,15 +101,18 @@ void SpectrumTagAudioProcessor::rebuildStft (double sampleRate, int numChannels)
         st.window        = hann;
         st.fftWork.assign ((size_t) (2 * N), 0.0f);
         st.inputRing.assign ((size_t) N, 0.0f);
+        st.dryDelayRing.assign ((size_t) N, 0.0f);
         st.outputRing.assign ((size_t) N, 0.0f);
+        st.olaNormRing.assign ((size_t) N, 0.0f);
         st.smoothedGains.assign ((size_t) numBins, 1.0f);
         st.outFifo.assign ((size_t) (N * 2), 0.0f);
-        st.inputPos      = 0;
-        st.accumCount    = 0;
-        st.frameCount    = 0;
-        st.outFifoWrite  = 0;
-        st.outFifoRead   = 0;
-        st.outFifoCount  = 0;
+        st.inputPos         = 0;
+        st.accumCount       = 0;
+        st.frameCount       = 0;
+        st.dryDelayWritePos = 0;
+        st.outFifoWrite     = 0;
+        st.outFifoRead      = 0;
+        st.outFifoCount     = 0;
     }
 }
 
@@ -178,10 +181,13 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
     // ---- 5) 加合成窗，OLA 叠加到 outputRing ----
     // IFFT 后时域样本位于 fftWork[0..N-1]
     // 叠加起始位置 = frameStart（对应输入帧起始位置）
+    // 同时累积 w^2 作为逐样本归一化权重（WOLA normalization）
     for (int n = 0; n < N; ++n)
     {
         const int outIdx = (frameStart + n) % N;
-        st.outputRing[(size_t) outIdx] += st.fftWork[(size_t) n] * st.window[(size_t) n];
+        const float w = st.window[(size_t) n];
+        st.outputRing[(size_t) outIdx] += st.fftWork[(size_t) n] * w;
+        st.olaNormRing[(size_t) outIdx] += w * w;
     }
 
     // ---- 6) 输出就绪 → 推送 hop 个全累积采样到 FIFO ----
@@ -194,11 +200,18 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
         // 当前帧 frameStart 是最新的写入起点，往前 3 帧（3*hop = N - hop）的起点最老。
         // 即：fifoStart = (frameStart + N - 3*hop) % N = (frameStart + hop) % N
         const int fifoStart = (frameStart + hop) % N;
+        constexpr float kNormEps = 1.0e-8f;
         for (int i = 0; i < hop; ++i)
         {
             const int pos = (fifoStart + i) % N;
-            st.outFifo[(size_t) st.outFifoWrite] = st.outputRing[(size_t) pos];
+            const float norm = st.olaNormRing[(size_t) pos];
+            const float y = (norm > kNormEps)
+                ? (st.outputRing[(size_t) pos] / norm)
+                : st.outputRing[(size_t) pos];
+
+            st.outFifo[(size_t) st.outFifoWrite] = y;
             st.outputRing[(size_t) pos] = 0.0f;
+            st.olaNormRing[(size_t) pos] = 0.0f;
             st.outFifoWrite = (st.outFifoWrite + 1) % (N * 2);
             ++st.outFifoCount;
         }
@@ -247,6 +260,12 @@ void SpectrumTagAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
 
     // STFT/OLA 延迟 = stftSize - stftHop = 3*stftSize/4
     setLatencySamples (stftSize - stftHop);
+
+    prevPrintActive = false;
+    dryWetMix = 0.0f;
+    dryWetTarget = 0.0f;
+    dryWetFadeSamplesRemaining = 0;
+    dryWetFadeTotalSamples = juce::jmax (1, (int) std::round (0.008 * sampleRate)); // 8ms
 }
 
 void SpectrumTagAudioProcessor::releaseResources() {}
@@ -304,6 +323,8 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         }
 
         setLatencySamples (desiredSize - desiredSize / 4);
+
+        dryWetFadeTotalSamples = juce::jmax (1, (int) std::round (0.008 * sr));
     }
 
     if (stftStates.empty()) return;
@@ -329,33 +350,59 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     const float ratioGain = ratioToGain (ratio);
 
     std::vector<float> targetBinGains ((size_t) numBins, 1.0f);
+    std::vector<float> delayedDrySamples ((size_t) juce::jmax (1, numCh), 0.0f);
+    std::vector<float> wetSamples ((size_t) juce::jmax (1, numCh), 0.0f);
+
+    // dry 与 wet 保持同一延迟基准（与插件 latency 一致），避免切换时相位/时序错位
+    const int dryDelaySamples = juce::jlimit (0, N - 1, N - hop);
 
     // ---- Sample-major 循环：每个采样点处理所有通道 ----
     for (int n = 0; n < numSamps; ++n)
     {
-        // ---- Step A) 写入 inputRing（所有通道同时写入）----
-        //           非 Print 时也写入，确保 inputRing 始终预填充最新音频
+        const bool requestedPrint = printRunning.load();
+        if (requestedPrint != prevPrintActive)
+        {
+            prevPrintActive = requestedPrint;
+            dryWetTarget = requestedPrint ? 1.0f : 0.0f;
+            dryWetFadeSamplesRemaining = juce::jmax (1, dryWetFadeTotalSamples);
+        }
+
+        const bool stftPathActive = requestedPrint
+            || (dryWetMix > 1.0e-4f)
+            || (dryWetFadeSamplesRemaining > 0);
+
+        // ---- Step A) 写入 inputRing + dryDelayRing（所有通道同时写入）----
         bool frameReady = false;
         for (int ch = 0; ch < numCh; ++ch)
         {
             auto& st = stftStates[(size_t) ch];
-            st.inputRing[(size_t) st.inputPos] = buffer.getReadPointer (ch)[n];
+            const float inSample = buffer.getReadPointer (ch)[n];
+
+            st.inputRing[(size_t) st.inputPos] = inSample;
             st.inputPos = (st.inputPos + 1) % N;
+
+            const int dryWritePos = st.dryDelayWritePos;
+            st.dryDelayRing[(size_t) dryWritePos] = inSample;
+            const int dryReadPos = (dryWritePos + N - dryDelaySamples) % N;
+            delayedDrySamples[(size_t) ch] = st.dryDelayRing[(size_t) dryReadPos];
+            st.dryDelayWritePos = (dryWritePos + 1) % N;
+
             ++st.accumCount;
             if (st.accumCount >= hop)
                 frameReady = true;
         }
 
-        // ---- Step B) 如果累积足够且正在 Print → 处理一帧 ----
-        if (frameReady && printActive)
+        // ---- Step B) 如果累积足够且 STFT 路径活跃 → 处理一帧 ----
+        if (frameReady && stftPathActive)
         {
             // 首次进入 Print：重置 OLA 累积状态（inputRing 已预填充，无需重置）
-            if (wasPrintActive == 0)
+            if (requestedPrint && wasPrintActive == 0)
             {
                 for (int ch = 0; ch < numCh; ++ch)
                 {
                     auto& st = stftStates[(size_t) ch];
                     std::fill (st.outputRing.begin(),     st.outputRing.end(),     0.0f);
+                    std::fill (st.olaNormRing.begin(),    st.olaNormRing.end(),    0.0f);
                     std::fill (st.outFifo.begin(),         st.outFifo.end(),         0.0f);
                     std::fill (st.smoothedGains.begin(),   st.smoothedGains.end(),   1.0f);
                     st.frameCount   = 0;
@@ -363,10 +410,11 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                     st.outFifoRead  = 0;
                     st.outFifoCount = 0;
                 }
+                wasPrintActive = 1;
             }
-            wasPrintActive = 1;
+
             // 计算 mask（只计算一次，所有通道共享）
-            if (printActive)
+            if (requestedPrint)
             {
                 const juce::SpinLock::ScopedLockType pl (printLock);
                 if (printMaskCols > 0 && printMaskRows > 0 && printColPerSample > 0.0)
@@ -414,8 +462,16 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                         }
                     }
                 }
+                else
+                {
+                    std::fill (targetBinGains.begin(), targetBinGains.end(), 1.0f);
+                }
             }
-            // 非 Print 时 targetBinGains 保持全 1.0（不修改音频）
+            else
+            {
+                // 退出 Print 后的尾段：继续以 unity 增益驱动 STFT，保证 wet 尾部连续
+                std::fill (targetBinGains.begin(), targetBinGains.end(), 1.0f);
+            }
 
             // 所有通道处理同一个 STFT 帧
             for (int ch = 0; ch < numCh; ++ch)
@@ -426,25 +482,49 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             }
         }
 
-        // ---- Step C) 读取输出 ----
-        if (! printActive)
+        if (! stftPathActive)
         {
-            // 非 Print：完全 bypass，音频原样通过
-            //   记录状态以便下次 Print 启动时正确重置 OLA 管道
+            // 非 Print 且非渐变阶段：重置启动检测，并限制 accum 防止“补账爆发”
             wasPrintActive = 0;
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                auto& st = stftStates[(size_t) ch];
+                if (st.accumCount >= hop)
+                    st.accumCount %= hop;
+                else if (st.accumCount < 0)
+                    st.accumCount = 0;
+            }
         }
-        else for (int ch = 0; ch < numCh; ++ch)
+
+        // ---- Step C) dry/wet 交叉渐入渐出（同一延迟基准，防止时序错位） ----
+        const float mixWet = juce::jlimit (0.0f, 1.0f, dryWetMix);
+        const float mixDry = 1.0f - mixWet;
+        for (int ch = 0; ch < numCh; ++ch)
         {
             auto& st = stftStates[(size_t) ch];
+            float wet = delayedDrySamples[(size_t) ch]; // FIFO 为空时回退到延迟 dry，避免硬切
             if (st.outFifoCount > 0)
             {
-                buffer.getWritePointer (ch)[n] = st.outFifo[(size_t) st.outFifoRead];
+                wet = st.outFifo[(size_t) st.outFifoRead];
                 st.outFifoRead = (st.outFifoRead + 1) % (N * 2);
                 --st.outFifoCount;
             }
-            // 预热期 FIFO 为空 → 不覆盖 buffer，保留原始音频
-            // （原始音频 = 本 block 进入时的数据，因为 Step A 只读了 getReadPointer 的值到 inputRing，
-            //   没有修改 buffer 中的值）
+            wetSamples[(size_t) ch] = wet;
+
+            buffer.getWritePointer (ch)[n] = delayedDrySamples[(size_t) ch] * mixDry
+                                           + wetSamples[(size_t) ch] * mixWet;
+        }
+
+        if (dryWetFadeSamplesRemaining > 0)
+        {
+            dryWetMix += (dryWetTarget - dryWetMix) / (float) dryWetFadeSamplesRemaining;
+            --dryWetFadeSamplesRemaining;
+            if (dryWetFadeSamplesRemaining <= 0)
+                dryWetMix = dryWetTarget;
+        }
+        else
+        {
+            dryWetMix = dryWetTarget;
         }
     }
 
@@ -580,6 +660,17 @@ void SpectrumTagAudioProcessor::startPrint (std::vector<float>&& maskData,
         printRunning.store (false);
         return;
     }
+
+   #if JUCE_DEBUG
+    int maxAccumCount = 0;
+    for (auto& st : stftStates)
+        maxAccumCount = juce::jmax (maxAccumCount, st.accumCount);
+    DBG ("[SpectrumTag] startPrint: maxAccumCount=" + juce::String (maxAccumCount)
+         + ", hop=" + juce::String (juce::jmax (1, stftHop))
+         + ", warmupFrames=" + juce::String (printWarmupFramesRemaining)
+         + ", maskCols=" + juce::String (printMaskCols)
+         + ", durationSec=" + juce::String (printDurationSec, 3));
+   #endif
 
     printRunning.store (true);
 }
