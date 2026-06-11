@@ -1,0 +1,37 @@
+# Build directories
+cmake-build-*/
+build/
+Builds/
+
+# JUCE generated files
+JuceLibraryCode/
+juce_*_Artefacts/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Visual Studio
+*.suo
+*.user
+*.sln.docstates
+.vs/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+Makefile
+
+# VST3 artefacts
+*.vst3/
+*.component/
+*.app/
