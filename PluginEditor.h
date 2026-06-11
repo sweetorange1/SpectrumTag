@@ -10,7 +10,7 @@
 // ----------------------------------------------------------------------------
 //  布局（参考 UI.png）：
 //   ┌──────────────────────────────────────────────────────────────────────┐
-//   │ SpectrumTag   v1.0.0  iisaacbeats.cn                                  │
+//   │ SpectrumTag   v1.1.0  iisaacbeats.cn                                  │
 //   │ ┌──────────────────────────────────────┐   FFT Size:   [2048▾]       │
 //   │ │                                      │   FFT scale:  [linear▾]     │
 //   │ │  (频谱瀑布 + 中央图片框)              │   Speed:      ━━○━━━        │
@@ -195,7 +195,7 @@ private:
 
     // ---- 顶部 ----
     juce::Label                       titleLabel;       // "SpectrumTag"
-    juce::Label                       versionLabel;     // "v1.0.0"
+    juce::Label                       versionLabel;     // "v1.1.0"
     std::unique_ptr<HyperlinkLabel>   websiteLabel;     // iisaacbeats.cn
 
     // ---- 频谱视图（占位，Phase 3 实现）----

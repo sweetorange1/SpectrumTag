@@ -34,7 +34,7 @@ usage() {
 Usage:
   ./build_macos_installer.sh
   ./build_macos_installer.sh --no-sign
-  ./build_macos_installer.sh --version 1.0.9
+  ./build_macos_installer.sh --version 1.1.0
 
 Options:
   --no-sign       Skip ad-hoc codesign for plugin bundles before packaging.
