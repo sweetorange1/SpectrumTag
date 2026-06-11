@@ -1,7 +1,7 @@
-#define MyAppName "Pupon"
-#define MyAppVersion "1.0.4"
+#define MyAppName "SpectrumTag"
+#define MyAppVersion "1.0.9"
 #define MyAppPublisher "iisaacbeats.cn"
-#define MyPluginBundle "Pupon.vst3"
+#define MyPluginBundle "SpectrumTag.vst3"
 
 [Setup]
 AppId={{0E3BF70B-5D5C-4F0F-B6E4-50F8C4B55C01}
@@ -28,8 +28,8 @@ DisableDirPage=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "cmake-build-release\Puponvst_artefacts\Release\VST3\{#MyPluginBundle}\*"; DestDir: "{app}\{#MyPluginBundle}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "presents\*"; DestDir: "{userdocs}\puponpresent"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "cmake-build-release\SpectrumTag_artefacts\Release\VST3\{#MyPluginBundle}\*"; DestDir: "{app}\{#MyPluginBundle}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "presents\*"; DestDir: "{userdocs}\spectrumtagpreset"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Code]
 var

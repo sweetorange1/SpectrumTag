@@ -2,8 +2,8 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
-set "ISS_FILE=%SCRIPT_DIR%Pupon_installer.iss"
-set "VST3_DIR=%SCRIPT_DIR%cmake-build-release\Puponvst_artefacts\Release\VST3"
+set "ISS_FILE=%SCRIPT_DIR%SpectrumTag_installer.iss"
+set "VST3_DIR=%SCRIPT_DIR%cmake-build-release\SpectrumTag_artefacts\Release\VST3"
 
 if not exist "%ISS_FILE%" (
   echo [ERROR] 未找到安装脚本: "%ISS_FILE%"

@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Pupon macOS packaging script
+# SpectrumTag macOS packaging script
 # - Builds an installer .pkg containing VST3 + AU
-# - Installs presets into the default runtime folder: ~/Documents/puponpresent
+# - Installs presets into the default runtime folder: ~/Documents/spectrumtagpreset
 # - Wraps the .pkg into a distributable .dmg
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${SCRIPT_DIR}"
 BUILD_DIR="${PROJECT_ROOT}/cmake-build-release"
-ARTEFACTS_DIR="${BUILD_DIR}/Puponvst_artefacts/Release"
+ARTEFACTS_DIR="${BUILD_DIR}/SpectrumTag_artefacts/Release"
 DIST_DIR="${PROJECT_ROOT}/dist"
 WORK_DIR="${DIST_DIR}/.mac_installer_work"
 PKG_ROOT_DIR="${WORK_DIR}/pkg_root"
 PKG_SCRIPTS_DIR="${WORK_DIR}/pkg_scripts"
 DMG_STAGE_DIR="${WORK_DIR}/dmg_stage"
 
-PRODUCT_NAME="Pupon"
-PKG_IDENTIFIER="cn.iisaacbeats.pupon"
-PRESET_FOLDER_NAME="puponpresent"
+PRODUCT_NAME="SpectrumTag"
+PKG_IDENTIFIER="cn.iisaacbeats.spectrumtag"
+PRESET_FOLDER_NAME="spectrumtagpreset"
 PRESET_SRC_DIR="${PROJECT_ROOT}/presents"
 
 VST3_BUNDLE="${ARTEFACTS_DIR}/VST3/${PRODUCT_NAME}.vst3"
@@ -34,7 +34,7 @@ usage() {
 Usage:
   ./build_macos_installer.sh
   ./build_macos_installer.sh --no-sign
-  ./build_macos_installer.sh --version 1.0.4
+  ./build_macos_installer.sh --version 1.0.9
 
 Options:
   --no-sign       Skip ad-hoc codesign for plugin bundles before packaging.
@@ -83,7 +83,7 @@ done
 
 if [[ -z "${VERSION}" ]]; then
   VERSION="$(awk '
-    /juce_add_plugin/,/\)/ {
+    /juce_add_plugin/,/)/ {
       if ($1 == "VERSION") { print $2; exit }
     }
   ' "${PROJECT_ROOT}/CMakeLists.txt" | tr -d '"')"
@@ -102,12 +102,12 @@ DMG_PATH="${DIST_DIR}/${DMG_NAME}"
 log "Step 1/6 Validate required build artifacts"
 if [[ ! -d "${VST3_BUNDLE}" ]]; then
   echo "[ERROR] Missing VST3 bundle: ${VST3_BUNDLE}" >&2
-  echo "[HINT] Build Release target Puponvst_VST3 first." >&2
+  echo "[HINT] Build Release target SpectrumTag_VST3 first." >&2
   exit 1
 fi
 if [[ ! -d "${AU_BUNDLE}" ]]; then
   echo "[ERROR] Missing AU bundle: ${AU_BUNDLE}" >&2
-  echo "[HINT] Build Release target Puponvst_AU first." >&2
+  echo "[HINT] Build Release target SpectrumTag_AU first." >&2
   exit 1
 fi
 if [[ ! -d "${PRESET_SRC_DIR}" ]]; then
@@ -150,14 +150,14 @@ cat > "${PKG_SCRIPTS_DIR}/postinstall" <<'POSTINSTALL'
 #!/bin/bash
 set -euo pipefail
 
-PRESET_FOLDER_NAME="puponpresent"
+PRESET_FOLDER_NAME="spectrumtagpreset"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PRESET_SRC_DIR="${SCRIPT_DIR}/presets"
 
 # Resolve the active console user (the user running Installer.app)
 CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console)"
 if [[ -z "${CONSOLE_USER}" || "${CONSOLE_USER}" == "root" ]]; then
-  echo "[Pupon postinstall] No valid console user; skip preset install." >&2
+  echo "[SpectrumTag postinstall] No valid console user; skip preset install." >&2
   exit 0
 fi
 
@@ -171,7 +171,7 @@ TARGET_DIR="${USER_HOME}/Documents/${PRESET_FOLDER_NAME}"
 /usr/bin/ditto "${PRESET_SRC_DIR}" "${TARGET_DIR}"
 /usr/sbin/chown -R "${CONSOLE_USER}:staff" "${TARGET_DIR}" || true
 
-echo "[Pupon postinstall] Presets installed to ${TARGET_DIR}"
+echo "[SpectrumTag postinstall] Presets installed to ${TARGET_DIR}"
 exit 0
 POSTINSTALL
 chmod +x "${PKG_SCRIPTS_DIR}/postinstall"

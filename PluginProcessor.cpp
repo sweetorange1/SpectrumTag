@@ -3,750 +3,676 @@
 #include "PluginEditor.h"
 #include <cmath>
 
+// ============================================================================
+//  SpectrumTagAudioProcessor - STFT / OLA 实现（v3）
+// ----------------------------------------------------------------------------
+//  - 未按 Print：音频完全 bypass，不执行任何 FFT/IFFT，零延迟、零开销。
+//  - 按下 Print：STFT（75% overlap，hop = N/4），每个 bin 独立查 mask、
+//    平滑增益、保留原始相位、IFFT、OLA 输出。bin 级精度 + 相位保留
+//    + 一阶增益平滑 → 彻底消除音量波动，同时保留图片高频细节。
+//  - 显示路径：独立实数 FFT，仅写 latestMagnitudes 供 UI 瀑布图读取。
+// ============================================================================
+
 namespace
 {
-constexpr std::array<const char*, 5> kDotGainParamIds {
-    "dot0", "dot1", "dot2", "dot3", "dot4"
-};
+    inline int fftChoiceToSize (int choice)
+    {
+        switch (choice)
+        {
+            case 0: return 1024;
+            case 1: return 2048;
+            case 2: return 4096;
+            case 3: return 8192;
+            default: return 4096;
+        }
+    }
 
-constexpr std::array<const char*, 5> kDotSemitoneParamIds {
-    "dot0Semitone", "dot1Semitone", "dot2Semitone", "dot3Semitone", "dot4Semitone"
-};
+    // mel <-> hz 转换（HTK mel，仅显示路径使用）
+    inline float hzToMel (float hz)  { return 2595.0f * std::log10 (1.0f + hz / 700.0f); }
+    inline float melToHz (float mel) { return 700.0f * (std::pow (10.0f, mel / 2595.0f) - 1.0f); }
+
+    // amplitudeRatio (0..1.5) -> 线性 gain，0.0 映射到 -80 dB（≈0.0001）
+    inline float ratioToGain (float ratio)
+    {
+        if (ratio <= 0.0f) return 0.0001f;       // -80 dB（比之前 -60dB 更深，增强对比度）
+        return ratio;                              // 1.0 = 0dB, 1.5 = +3.5dB
+    }
 }
 
-PuponvstAudioProcessor::PuponvstAudioProcessor()
+// ----------------------------------------------------------------------------
+SpectrumTagAudioProcessor::SpectrumTagAudioProcessor()
     : juce::AudioProcessor (BusesProperties()
 #if ! JucePlugin_IsMidiEffect
-#if ! JucePlugin_IsSynth
+ #if ! JucePlugin_IsSynth
         .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-#endif
+ #endif
         .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
 #endif
     ),
-      apvts(*this, nullptr, "PARAMETERS", createParameterLayout())
+      apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
 {
-    // 添加参数变化监听
-    apvts.addParameterListener(ParameterIDs::redRayClockwiseAngle, this);
-    apvts.addParameterListener(ParameterIDs::sigma, this);
-    apvts.addParameterListener(ParameterIDs::filterCenterSt, this);
-    apvts.addParameterListener(ParameterIDs::filterWidthSt, this);
-    apvts.addParameterListener(ParameterIDs::rbPitchQuality, this);
-    apvts.addParameterListener(ParameterIDs::rbFormantMode, this);
-    apvts.addParameterListener(ParameterIDs::dot0, this);
-    apvts.addParameterListener(ParameterIDs::dot1, this);
-    apvts.addParameterListener(ParameterIDs::dot2, this);
-    apvts.addParameterListener(ParameterIDs::dot3, this);
-    apvts.addParameterListener(ParameterIDs::dot4, this);
-    apvts.addParameterListener(ParameterIDs::dot0Semitone, this);
-    apvts.addParameterListener(ParameterIDs::dot1Semitone, this);
-    apvts.addParameterListener(ParameterIDs::dot2Semitone, this);
-    apvts.addParameterListener(ParameterIDs::dot3Semitone, this);
-    apvts.addParameterListener(ParameterIDs::dot4Semitone, this);
-
-    // Ensure audio-side defaults are valid even before any editor is created.
-    syncEngineFromParameters();
 }
 
-PuponvstAudioProcessor::~PuponvstAudioProcessor() 
-{
-    // 调试信息：析构函数开始执行
-    DBG("PuponvstAudioProcessor destructor called");
-    
-    // 清理资源 - 不需要获取锁，因为对象即将被销毁
-    oscilloscopeWritePos = 0;
-    std::fill(oscilloscopeBuffer.begin(), oscilloscopeBuffer.end(), 0.0f);
-    
-    DBG("PuponvstAudioProcessor destructor completed successfully");
-}
+SpectrumTagAudioProcessor::~SpectrumTagAudioProcessor() = default;
 
-bool PuponvstAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool SpectrumTagAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
 #if JucePlugin_IsMidiEffect
     juce::ignoreUnused (layouts);
     return true;
 #else
-    // 必须有输出
     if (layouts.getMainOutputChannelSet() == juce::AudioChannelSet::disabled())
         return false;
 
-#if ! JucePlugin_IsSynth
-    // 作为效果器：输入/输出声道数必须一致（支持 mono/stereo）
+ #if ! JucePlugin_IsSynth
     if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
         return false;
-#endif
+ #endif
 
     const auto out = layouts.getMainOutputChannelSet();
     return out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
 #endif
 }
 
-void PuponvstAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
+// ============================================================================
+//  STFT / OLA：构建 / 帧处理
+// ============================================================================
+void SpectrumTagAudioProcessor::rebuildStft (double sampleRate, int numChannels)
 {
-    const juce::SpinLock::ScopedLockType sl(oscilloscopeLock);
-    std::fill(oscilloscopeBuffer.begin(), oscilloscopeBuffer.end(), 0.0f);
-    oscilloscopeWritePos = 0;
+    const int N       = stftSize;
+    const int hop     = N / 4;
+    const int numBins = N / 2 + 1;
 
-    // 先把当前参数镜像到引擎（prepare 会读取这些状态决定内部配置）
-    syncEngineFromParameters();
+    stftHop  = hop;
+    stftStates.clear();
+    stftStates.resize ((size_t) numChannels);
 
-    // 初始化音频处理引擎
-    const int numCh = juce::jmax(getTotalNumInputChannels(), getTotalNumOutputChannels());
-    preparedSampleRate = sampleRate;
-    preparedBlockSize = samplesPerBlock;
-    stateSwitchFadeOutSamplesTotal = juce::jmax(32, (int) std::lround(sampleRate * 0.012)); // 12ms
-    stateSwitchFadeInSamplesTotal = juce::jmax(32, (int) std::lround(sampleRate * 0.060));  // 60ms
-    stateSwitchFadeOutSamplesRemaining.store(0, std::memory_order_relaxed);
-    stateSwitchFadeInSamplesRemaining.store(0, std::memory_order_relaxed);
-    lastOutputSample = { 0.0f, 0.0f };
-    pitchEngine.prepare(sampleRate, samplesPerBlock, numCh);
+    // Hann 窗：w[n] = 0.5 * (1 - cos(2πn/(N-1)))
+    std::vector<float> hann ((size_t) N);
+    for (int n = 0; n < N; ++n)
+        hann[(size_t) n] = 0.5f * (1.0f - std::cos (juce::MathConstants<float>::twoPi
+                                                     * (float) n / (float) (N - 1)));
 
-    // prepare 后再次同步一次，确保 dot gain/pan 等实时参数和当前状态一致。
-    syncEngineFromParameters();
-
-    // 状态复位
-    lastBarSeconds = 2.0;
-
-    // 上报稳定的插件总延迟（内部各 band 已补齐到该基准）。
-    lastReportedLatencySamples = pitchEngine.getLatencySamples();
-    setLatencySamples(lastReportedLatencySamples);
-
-}
-
-void PuponvstAudioProcessor::releaseResources()
-{
-    pitchEngine.reset();
-}
-
-void PuponvstAudioProcessor::pushSamplesToOscilloscope(const float* samples, int numSamples)
-{
-    if (samples == nullptr || numSamples <= 0)
-        return;
-
-    const juce::SpinLock::ScopedLockType sl(oscilloscopeLock);
-
-    for (int i = 0; i < numSamples; ++i)
+    for (int ch = 0; ch < numChannels; ++ch)
     {
-        oscilloscopeBuffer[(size_t) oscilloscopeWritePos] = samples[i];
-        oscilloscopeWritePos = (oscilloscopeWritePos + 1) % oscilloscopeBufferSize;
+        auto& st = stftStates[(size_t) ch];
+        const int order = (int) std::round (std::log2 ((double) N));
+        st.fft           = std::make_unique<juce::dsp::FFT> (order);
+        st.window        = hann;
+        st.fftWork.assign ((size_t) (2 * N), 0.0f);
+        st.inputRing.assign ((size_t) N, 0.0f);
+        st.outputRing.assign ((size_t) N, 0.0f);
+        st.smoothedGains.assign ((size_t) numBins, 1.0f);
+        st.outFifo.assign ((size_t) (N * 2), 0.0f);
+        st.inputPos      = 0;
+        st.accumCount    = 0;
+        st.frameCount    = 0;
+        st.outFifoWrite  = 0;
+        st.outFifoRead   = 0;
+        st.outFifoCount  = 0;
     }
 }
 
-void PuponvstAudioProcessor::getOscilloscopeSnapshot(juce::Array<float>& dest)
+// 处理一个 STFT 帧：取 inputRing 中最新的 N 个采样 → FFT → 按 bin 修改幅度 → IFFT → OLA
+void SpectrumTagAudioProcessor::processStftFrame (int ch,
+                                                   const std::vector<float>& targetBinGains,
+                                                   float gainSmoothAlpha)
 {
-    dest.resize(oscilloscopeBufferSize);
+    auto& st     = stftStates[(size_t) ch];
+    const int N  = stftSize;
+    const int hop = stftHop;
+    const int numBins = N / 2 + 1;
 
-    const juce::SpinLock::ScopedLockType sl(oscilloscopeLock);
-
-    // 以 writePos 作为“最新数据之后的位置”，从旧到新拷贝
-    for (int i = 0; i < oscilloscopeBufferSize; ++i)
+    // ---- 1) 从 inputRing 取出最新 N 个采样，加窗 ----
+    // JUCE real-only FFT 输入：fftWork[0..N-1] 为实数时域样本（连续存放）
+    // inputPos 指向"下一个写入位置"，因此最新 N 采样从 inputPos 开始（环形）
+    const int frameStart = st.inputPos;   // 最老采样在 inputPos（N 个采样前写入的）
+    for (int n = 0; n < N; ++n)
     {
-        const int idx = (oscilloscopeWritePos + i) % oscilloscopeBufferSize;
-        dest.set(i, oscilloscopeBuffer[(size_t) idx]);
+        const int idx = (frameStart + n) % N;
+        st.fftWork[(size_t) n] = st.inputRing[(size_t) idx] * st.window[(size_t) n];
+    }
+    // 清理工作区后半段（非必需，但可避免脏数据干扰调试）
+    std::fill (st.fftWork.begin() + N, st.fftWork.end(), 0.0f);
+
+    // ---- 2) 实数 FFT ----
+    st.fft->performRealOnlyForwardTransform (st.fftWork.data());
+
+    // ---- 3) 逐 bin 应用增益（保留原始相位）----
+    // JUCE real-only 频域打包：
+    //   bin0(DC)      -> fftWork[0] (实部), 虚部固定为 0
+    //   binN/2(Nyq)   -> fftWork[1] (实部), 虚部固定为 0
+    //   bin1..N/2-1   -> fftWork[2k], fftWork[2k+1]
+
+    // k = 0 (DC)
+    {
+        const float target = targetBinGains[0];
+        float& smooth = st.smoothedGains[0];
+        smooth += (target - smooth) * gainSmoothAlpha;
+        st.fftWork[0] *= smooth;
+    }
+
+    // k = 1 .. N/2-1
+    for (int k = 1; k < numBins - 1; ++k)
+    {
+        const float target = targetBinGains[(size_t) k];
+        float&      smooth = st.smoothedGains[(size_t) k];
+        smooth += (target - smooth) * gainSmoothAlpha;
+
+        st.fftWork[(size_t) (2 * k)]     *= smooth;
+        st.fftWork[(size_t) (2 * k + 1)] *= smooth;
+    }
+
+    // k = N/2 (Nyquist)
+    {
+        const int kNyq = numBins - 1;
+        const float target = targetBinGains[(size_t) kNyq];
+        float& smooth = st.smoothedGains[(size_t) kNyq];
+        smooth += (target - smooth) * gainSmoothAlpha;
+        st.fftWork[1] *= smooth;
+    }
+
+    // ---- 4) 实数 IFFT（JUCE 内部会除以 N）----
+    st.fft->performRealOnlyInverseTransform (st.fftWork.data());
+
+    // ---- 5) 加合成窗，OLA 叠加到 outputRing ----
+    // IFFT 后时域样本位于 fftWork[0..N-1]
+    // 叠加起始位置 = frameStart（对应输入帧起始位置）
+    for (int n = 0; n < N; ++n)
+    {
+        const int outIdx = (frameStart + n) % N;
+        st.outputRing[(size_t) outIdx] += st.fftWork[(size_t) n] * st.window[(size_t) n];
+    }
+
+    // ---- 6) 输出就绪 → 推送 hop 个全累积采样到 FIFO ----
+    // 前 N/hop 帧是预热期；之后每帧放出 hop 个全累积采样。
+    // 关键：从 outputRing 复制后立即清零该位置，这样下一轮 OLA 从此位置开始时不会叠加旧值。
+    ++st.frameCount;
+    if (st.frameCount >= N / hop)
+    {
+        // 循环找到"最老"的 hop 个全累积采样位置
+        // 当前帧 frameStart 是最新的写入起点，往前 3 帧（3*hop = N - hop）的起点最老。
+        // 即：fifoStart = (frameStart + N - 3*hop) % N = (frameStart + hop) % N
+        const int fifoStart = (frameStart + hop) % N;
+        for (int i = 0; i < hop; ++i)
+        {
+            const int pos = (fifoStart + i) % N;
+            st.outFifo[(size_t) st.outFifoWrite] = st.outputRing[(size_t) pos];
+            st.outputRing[(size_t) pos] = 0.0f;
+            st.outFifoWrite = (st.outFifoWrite + 1) % (N * 2);
+            ++st.outFifoCount;
+        }
     }
 }
 
-void PuponvstAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+// ============================================================================
+//  prepareToPlay / releaseResources
+// ============================================================================
+void SpectrumTagAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+{
+    juce::ignoreUnused (samplesPerBlock);
+
+    const int numCh = juce::jmax (getTotalNumInputChannels(), getTotalNumOutputChannels());
+    const int scale = (int) *apvts.getRawParameterValue (ParameterIDs::fftScale);
+    currentScaleMode = scale;
+
+    // ---- STFT（音频处理路径）----
+    const int stftSz = fftChoiceToSize (
+        (int) *apvts.getRawParameterValue (ParameterIDs::fftSize));
+    stftSize = stftSz;
+    stftHop  = stftSz / 4;
+    rebuildStft (sampleRate, numCh);
+
+    // ---- 显示用 FFT（独立路径）----
+    const int dispSize = stftSz;   // 显示与 STFT 共用同一尺寸
+    displayFftSize = dispSize;
+    displayHopSize = dispSize / 2;
+    const int order = (int) std::round (std::log2 ((double) dispSize));
+    displayFft = std::make_unique<juce::dsp::FFT> (order);
+
+    displayWindow.assign ((size_t) dispSize, 0.0f);
+    for (int n = 0; n < dispSize; ++n)
+        displayWindow[(size_t) n] = 0.5f * (1.0f - std::cos (juce::MathConstants<float>::twoPi
+                                                              * (float) n / (float) (dispSize - 1)));
+
+    displayInputRing.assign ((size_t) dispSize, 0.0f);
+    displayRingWritePos = 0;
+    displaySamplesAccum = 0;
+    displayFftWork.assign ((size_t) (2 * dispSize), 0.0f);
+
+    {
+        const juce::SpinLock::ScopedLockType sl (spectrumLock);
+        latestMagnitudes.assign ((size_t) (dispSize / 2 + 1), 0.0f);
+    }
+
+    // STFT/OLA 延迟 = stftSize - stftHop = 3*stftSize/4
+    setLatencySamples (stftSize - stftHop);
+}
+
+void SpectrumTagAudioProcessor::releaseResources() {}
+
+// ============================================================================
+//  processBlock：bypass（非 Print）/ STFT+OLA（Print 中）
+// ============================================================================
+void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
 
     const auto totalNumInputChannels  = getTotalNumInputChannels();
     const auto totalNumOutputChannels = getTotalNumOutputChannels();
 
-    // 质量/共振峰模式变化后，在块边界重建 shifter（并更新延迟上报）
-    if (pitchEngineOptionsDirty.exchange(false, std::memory_order_acq_rel))
-    {
-        const int numCh = juce::jmax((int) totalNumInputChannels, (int) totalNumOutputChannels);
-        pitchEngine.prepare(preparedSampleRate, preparedBlockSize, numCh);
-        lastReportedLatencySamples = pitchEngine.getLatencySamples();
-        setLatencySamples(lastReportedLatencySamples);
-        armStateSwitchFadeIn();
-    }
-
-    // 清理多余输出通道（例如输入是mono而输出是stereo等情况）
+    // 输出比输入多的通道清零
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear(i, 0, buffer.getNumSamples());
+        buffer.clear (i, 0, buffer.getNumSamples());
 
-    const int numSamples = buffer.getNumSamples();
-    juce::ignoreUnused(numSamples);
+    const int numCh    = juce::jmin (totalNumInputChannels, (int) stftStates.size());
+    const int numSamps = buffer.getNumSamples();
 
-    // ===== 从宿主 PlayHead 获取 BPM 和拍号信息 =====
+    const bool printActive = printRunning.load();
+    const double sr        = getSampleRate();
+
+    // ---- 1) 检查参数变化 ----
+    const int desiredScale = (int) *apvts.getRawParameterValue (ParameterIDs::fftScale);
+    if (desiredScale != currentScaleMode)
+        currentScaleMode = desiredScale;
+
+    const int desiredSize = fftChoiceToSize (
+        (int) *apvts.getRawParameterValue (ParameterIDs::fftSize));
+    if (desiredSize != stftSize && ! printActive)
     {
-        double barSeconds = lastBarSeconds;
-        if (auto* ph = getPlayHead())
+        // 非 Print 期间才重建 STFT，避免 mid-print 爆音
+        stftSize = desiredSize;
+        stftHop  = desiredSize / 4;
+        rebuildStft (sr, numCh);
+
+        // 同步显示 FFT
+        displayFftSize = desiredSize;
+        displayHopSize = desiredSize / 2;
+        const int order = (int) std::round (std::log2 ((double) desiredSize));
+        displayFft = std::make_unique<juce::dsp::FFT> (order);
+        displayWindow.assign ((size_t) desiredSize, 0.0f);
+        for (int n = 0; n < desiredSize; ++n)
+            displayWindow[(size_t) n] = 0.5f * (1.0f - std::cos (
+                juce::MathConstants<float>::twoPi * (float) n / (float) (desiredSize - 1)));
+        displayInputRing.assign ((size_t) desiredSize, 0.0f);
+        displayRingWritePos = 0;
+        displaySamplesAccum = 0;
+        displayFftWork.assign ((size_t) (2 * desiredSize), 0.0f);
         {
-            if (auto pos = ph->getPosition())
+            const juce::SpinLock::ScopedLockType sl (spectrumLock);
+            latestMagnitudes.assign ((size_t) (desiredSize / 2 + 1), 0.0f);
+        }
+
+        setLatencySamples (desiredSize - desiredSize / 4);
+    }
+
+    if (stftStates.empty()) return;
+
+    // ========================================================================
+    //  Print 处理：STFT + OLA
+    //
+    //  关键设计：
+    //   1) sample-major 循环（先 sample 后 channel），游标每帧仅推进一次
+    //   2) 非 Print 时也写入 inputRing 预填充，避免 Print 首帧处理空数据
+    //   3) 预热期（frameCount < N/hop）输出原始音频而非静音
+    // ========================================================================
+    const int N      = stftSize;
+    const int hop    = stftHop;
+    const int numBins = N / 2 + 1;
+
+    // 增益平滑参数（Print 和非 Print 都有效，但非 Print 时 gain 恒为 1.0）
+    const float frameSeconds = (float) hop / juce::jmax (1.0, sr);
+    const float smoothAlpha  = 1.0f - std::exp (- frameSeconds / 0.010f);
+
+    const float ratio     = *apvts.getRawParameterValue (ParameterIDs::amplitudeRatio);
+    const bool  invert    = *apvts.getRawParameterValue (ParameterIDs::invert) > 0.5f;
+    const float ratioGain = ratioToGain (ratio);
+
+    std::vector<float> targetBinGains ((size_t) numBins, 1.0f);
+
+    // ---- Sample-major 循环：每个采样点处理所有通道 ----
+    for (int n = 0; n < numSamps; ++n)
+    {
+        // ---- Step A) 写入 inputRing（所有通道同时写入）----
+        //           非 Print 时也写入，确保 inputRing 始终预填充最新音频
+        bool frameReady = false;
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            auto& st = stftStates[(size_t) ch];
+            st.inputRing[(size_t) st.inputPos] = buffer.getReadPointer (ch)[n];
+            st.inputPos = (st.inputPos + 1) % N;
+            ++st.accumCount;
+            if (st.accumCount >= hop)
+                frameReady = true;
+        }
+
+        // ---- Step B) 如果累积足够且正在 Print → 处理一帧 ----
+        if (frameReady && printActive)
+        {
+            // 首次进入 Print：重置 OLA 累积状态（inputRing 已预填充，无需重置）
+            if (wasPrintActive == 0)
             {
-                const double bpm = pos->getBpm().orFallback(120.0);
-                const auto   ts  = pos->getTimeSignature().orFallback(
-                                       juce::AudioPlayHead::TimeSignature { 4, 4 });
-                const int    num = juce::jmax(1, ts.numerator);
-                const int    den = juce::jmax(1, ts.denominator);
-                // 一拍秒数 = 60/bpm（按 4 分音符为一拍）；一小节 = num * (60/bpm) * (4/den)
-                // 这样 6/8、3/4 等拍号也能正确处理
-                barSeconds = (60.0 / juce::jmax(1.0, bpm))
-                           * (double) num
-                           * (4.0 / (double) den);
-                lastBarSeconds = barSeconds;
+                for (int ch = 0; ch < numCh; ++ch)
+                {
+                    auto& st = stftStates[(size_t) ch];
+                    std::fill (st.outputRing.begin(),     st.outputRing.end(),     0.0f);
+                    std::fill (st.outFifo.begin(),         st.outFifo.end(),         0.0f);
+                    std::fill (st.smoothedGains.begin(),   st.smoothedGains.end(),   1.0f);
+                    st.frameCount   = 0;
+                    st.outFifoWrite = 0;
+                    st.outFifoRead  = 0;
+                    st.outFifoCount = 0;
+                }
             }
+            wasPrintActive = 1;
+            // 计算 mask（只计算一次，所有通道共享）
+            if (printActive)
+            {
+                const juce::SpinLock::ScopedLockType pl (printLock);
+                if (printMaskCols > 0 && printMaskRows > 0 && printColPerSample > 0.0)
+                {
+                    const float maxHz = (float) sr * 0.5f;
+                    const float fLow  = printFreqLowNorm  * maxHz;
+                    const float fHigh = printFreqHighNorm * maxHz;
+                    const float denom = juce::jmax (1.0e-6f, fHigh - fLow);
+
+                    // 启动预热期：仅让 OLA 管线填满，不消费图片列，避免“从中间开始绘制”。
+                    if (printWarmupFramesRemaining > 0)
+                    {
+                        --printWarmupFramesRemaining;
+                        std::fill (targetBinGains.begin(), targetBinGains.end(), 1.0f);
+                    }
+                    else
+                    {
+                        const int maskCol = juce::jlimit (0, printMaskCols - 1,
+                                                          (int) std::floor (printColCursorD));
+
+                        for (int k = 0; k < numBins; ++k)
+                        {
+                            const float hz = (float) k / (float) (N / 2) * maxHz;
+                            if (hz < fLow || hz > fHigh)
+                            {
+                                targetBinGains[(size_t) k] = 1.0f;
+                                continue;
+                            }
+                            const float norm = (hz - fLow) / denom;
+                            const int   row  = juce::jlimit (0, printMaskRows - 1,
+                                                             (int) std::floor (norm * (printMaskRows - 1)));
+                            const float m = printMask[(size_t) (row * printMaskCols + maskCol)];
+                            const float g = invert
+                                ? juce::jmap (m, ratioGain, 1.0f)
+                                : juce::jmap (m, 1.0f,      ratioGain);
+                            targetBinGains[(size_t) k] = g;
+                        }
+
+                        // 游标只推进一次（所有通道共享同一个时间点）
+                        printColCursorD += printColPerSample * (double) hop;
+                        if (printColCursorD >= (double) printMaskCols)
+                        {
+                            printRunning.store (false);
+                            std::fill (targetBinGains.begin(), targetBinGains.end(), 1.0f);
+                        }
+                    }
+                }
+            }
+            // 非 Print 时 targetBinGains 保持全 1.0（不修改音频）
+
+            // 所有通道处理同一个 STFT 帧
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                auto& st = stftStates[(size_t) ch];
+                st.accumCount -= hop;
+                processStftFrame (ch, targetBinGains, smoothAlpha);
+            }
+        }
+
+        // ---- Step C) 读取输出 ----
+        if (! printActive)
+        {
+            // 非 Print：完全 bypass，音频原样通过
+            //   记录状态以便下次 Print 启动时正确重置 OLA 管道
+            wasPrintActive = 0;
+        }
+        else for (int ch = 0; ch < numCh; ++ch)
+        {
+            auto& st = stftStates[(size_t) ch];
+            if (st.outFifoCount > 0)
+            {
+                buffer.getWritePointer (ch)[n] = st.outFifo[(size_t) st.outFifoRead];
+                st.outFifoRead = (st.outFifoRead + 1) % (N * 2);
+                --st.outFifoCount;
+            }
+            // 预热期 FIFO 为空 → 不覆盖 buffer，保留原始音频
+            // （原始音频 = 本 block 进入时的数据，因为 Step A 只读了 getReadPointer 的值到 inputRing，
+            //   没有修改 buffer 中的值）
         }
     }
 
-    // ===== 核心音频处理：5 路重采样 pitch shift + 混音 + 声相 + 硬削波 =====
-    pitchEngine.process(buffer);
-
-    // 对状态切换（如切换预设）应用更强的两段包络：先淡出旧输出，再淡入新输出。
-    int fadeOutRemaining = stateSwitchFadeOutSamplesRemaining.load(std::memory_order_relaxed);
-    int fadeInRemaining = stateSwitchFadeInSamplesRemaining.load(std::memory_order_relaxed);
-    if ((fadeOutRemaining > 0 && stateSwitchFadeOutSamplesTotal > 0)
-        || (fadeInRemaining > 0 && stateSwitchFadeInSamplesTotal > 0))
+    // ---- 显示用 FFT（读处理后的 buffer）----
+    if (displayFft != nullptr && displayFftSize > 0)
     {
-        const int outCh = (int) totalNumOutputChannels;
-        const int n = buffer.getNumSamples();
+        const int dN = displayFftSize;
+        const int dHop = displayHopSize;
 
-        float prevOut[2] = { lastOutputSample[0], lastOutputSample[1] };
+        // 显示归一化：使用窗口能量（sum(w^2)）而不是简单 /N，
+        // 使白噪声在不同 FFT size 下的亮度更稳定。
+        float winSqSum = 0.0f;
+        for (float w : displayWindow) winSqSum += w * w;
+        const float displayMagNorm = (winSqSum > 1e-12f)
+            ? 1.0f / std::sqrt (winSqSum)
+            : 1.0f / (float) juce::jmax (1, dN);
 
-        for (int i = 0; i < n; ++i)
+        for (int i = 0; i < numSamps; ++i)
         {
-            if (fadeOutRemaining > 0)
-            {
-                const float outT = juce::jlimit(0.0f, 1.0f,
-                    (float) fadeOutRemaining / (float) stateSwitchFadeOutSamplesTotal);
+            float mono = 0.0f;
+            for (int ch = 0; ch < numCh; ++ch)
+                mono += buffer.getReadPointer (ch)[i];
+            mono /= (float) juce::jmax (1, numCh);
 
-                for (int ch = 0; ch < outCh; ++ch)
+            displayInputRing[(size_t) displayRingWritePos] = mono;
+            displayRingWritePos = (displayRingWritePos + 1) % dN;
+            ++displaySamplesAccum;
+
+            if (displaySamplesAccum >= dHop)
+            {
+                displaySamplesAccum -= dHop;   // 保留溢出样本，避免 FFT 窗口漂移
+                // JUCE real-only FFT 输入：displayFftWork[0..dN-1] 存放实数时域样本
+                for (int n = 0; n < dN; ++n)
                 {
-                    float* out = buffer.getWritePointer(ch);
-                    // Force a guaranteed smooth bridge from previous sample to silence.
-                    const float y = prevOut[ch] * outT;
-                    out[i] = y;
-                    prevOut[ch] = y;
+                    const int idx = (displayRingWritePos + n) % dN;
+                    displayFftWork[(size_t) n] = displayInputRing[(size_t) idx]
+                                               * displayWindow[(size_t) n];
+                }
+                std::fill (displayFftWork.begin() + dN, displayFftWork.end(), 0.0f);
+
+                displayFft->performRealOnlyForwardTransform (displayFftWork.data());
+                const int half = dN / 2 + 1;
+                std::vector<float> mags ((size_t) half);
+
+                // k=0 (DC)
+                mags[0] = std::abs (displayFftWork[0]) * displayMagNorm;
+
+                // k=1..N/2-1
+                for (int k = 1; k < half - 1; ++k)
+                {
+                    const float re = displayFftWork[(size_t) (2 * k)];
+                    const float im = displayFftWork[(size_t) (2 * k + 1)];
+                    mags[(size_t) k] = std::sqrt (re * re + im * im) * displayMagNorm;
                 }
 
-                --fadeOutRemaining;
-                if (fadeOutRemaining == 0 && fadeInRemaining <= 0)
-                    fadeInRemaining = stateSwitchFadeInSamplesTotal;
-                continue;
-            }
-
-            if (fadeInRemaining > 0)
-            {
-                const float inT = juce::jlimit(0.0f, 1.0f,
-                    1.0f - ((float) fadeInRemaining / (float) stateSwitchFadeInSamplesTotal));
-
-                for (int ch = 0; ch < outCh; ++ch)
+                // k=N/2 (Nyquist)
+                mags[(size_t) (half - 1)] = std::abs (displayFftWork[1]) * displayMagNorm;
                 {
-                    float* out = buffer.getWritePointer(ch);
-                    const float x = out[i];
-                    // Fade new stream in from silence while preserving per-sample continuity.
-                    const float target = x * inT;
-                    const float y = prevOut[ch] + (target - prevOut[ch]) * 0.6f;
-                    out[i] = y;
-                    prevOut[ch] = y;
+                    const juce::SpinLock::ScopedLockType sl (spectrumLock);
+                    latestMagnitudes = std::move (mags);
+                    displayUpdateCounter.fetch_add (1, std::memory_order_release);
                 }
-
-                --fadeInRemaining;
-                continue;
             }
-
-            for (int ch = 0; ch < outCh; ++ch)
-                prevOut[ch] = buffer.getReadPointer(ch)[i];
-        }
-
-        for (int ch = 0; ch < juce::jmin(2, outCh); ++ch)
-            lastOutputSample[(size_t) ch] = prevOut[ch];
-
-        stateSwitchFadeOutSamplesRemaining.store(juce::jmax(0, fadeOutRemaining), std::memory_order_relaxed);
-        stateSwitchFadeInSamplesRemaining.store(juce::jmax(0, fadeInRemaining), std::memory_order_relaxed);
-    }
-    else
-    {
-        const int outCh = (int) totalNumOutputChannels;
-        if (buffer.getNumSamples() > 0)
-        {
-            for (int ch = 0; ch < juce::jmin(2, outCh); ++ch)
-                lastOutputSample[(size_t) ch] = buffer.getReadPointer(ch)[buffer.getNumSamples() - 1];
         }
     }
-
-    // 示例波形：抓取主输出的第0通道（已是处理后的信号）
-    if (totalNumOutputChannels > 0)
-        pushSamplesToOscilloscope(buffer.getReadPointer(0), buffer.getNumSamples());
 }
 
-juce::AudioProcessorEditor* PuponvstAudioProcessor::createEditor() { return new PuponvstAudioProcessorEditor(*this); }
-bool PuponvstAudioProcessor::hasEditor() const { return true; }
-
-const juce::String PuponvstAudioProcessor::getName() const { return "Puponvst"; }
-bool PuponvstAudioProcessor::acceptsMidi() const { return false; }
-bool PuponvstAudioProcessor::producesMidi() const { return false; }
-bool PuponvstAudioProcessor::isMidiEffect() const { return false; }
-double PuponvstAudioProcessor::getTailLengthSeconds() const { return 0.0; }
-
-int PuponvstAudioProcessor::getNumPrograms() { return 1; }
-int PuponvstAudioProcessor::getCurrentProgram() { return 0; }
-void PuponvstAudioProcessor::setCurrentProgram(int) {}
-const juce::String PuponvstAudioProcessor::getProgramName(int) { return {}; }
-void PuponvstAudioProcessor::changeProgramName(int, const juce::String&) {}
-
-void PuponvstAudioProcessor::setEditorState(const EditorState& s)
+// ============================================================================
+//  Boilerplate
+// ============================================================================
+juce::AudioProcessorEditor* SpectrumTagAudioProcessor::createEditor()
 {
-    const juce::SpinLock::ScopedLockType sl(editorStateLock);
+    return new SpectrumTagAudioProcessorEditor (*this);
+}
+bool SpectrumTagAudioProcessor::hasEditor() const          { return true; }
+
+const juce::String SpectrumTagAudioProcessor::getName() const { return "SpectrumTag"; }
+bool   SpectrumTagAudioProcessor::acceptsMidi() const         { return false; }
+bool   SpectrumTagAudioProcessor::producesMidi() const        { return false; }
+bool   SpectrumTagAudioProcessor::isMidiEffect() const        { return false; }
+double SpectrumTagAudioProcessor::getTailLengthSeconds() const{ return 0.0; }
+
+int  SpectrumTagAudioProcessor::getNumPrograms()                                  { return 1; }
+int  SpectrumTagAudioProcessor::getCurrentProgram()                               { return 0; }
+void SpectrumTagAudioProcessor::setCurrentProgram (int)                           {}
+const juce::String SpectrumTagAudioProcessor::getProgramName (int)                { return {}; }
+void SpectrumTagAudioProcessor::changeProgramName (int, const juce::String&)      {}
+
+// ===== Editor State 镜像 =====
+void SpectrumTagAudioProcessor::setEditorState (const EditorState& s)
+{
+    const juce::SpinLock::ScopedLockType sl (editorStateLock);
     editorState = s;
     editorState.hasValidValues = true;
 }
 
-PuponvstAudioProcessor::EditorState PuponvstAudioProcessor::getEditorState() const
+SpectrumTagAudioProcessor::EditorState SpectrumTagAudioProcessor::getEditorState() const
 {
-    const juce::SpinLock::ScopedLockType sl(editorStateLock);
+    const juce::SpinLock::ScopedLockType sl (editorStateLock);
     return editorState;
 }
 
-// ===== 状态序列化（保存到宿主工程）=====
-// 用 ValueTree + XML 文本序列化，向后兼容（未来加字段时旧版工程可读）。
-// 内容包含：5 圆点高度、红蓝射线角度、正态曲线方差、黄色激光归一化值。
-void PuponvstAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
+// ===== 频谱可视化数据 =====
+void SpectrumTagAudioProcessor::getLatestMagnitudeSpectrum (std::vector<float>& dest)
 {
-    // 保存 APVTS 状态 + EditorState
-    juce::ValueTree tree("PuponState");
-    tree.setProperty("version", 1, nullptr);
-    
-    // 保存 APVTS 参数值 (copyState() 返回的就是 ValueTree)
-    juce::ValueTree paramsTree = apvts.copyState();
-    tree.appendChild(paramsTree, nullptr);
-    
-    // 保存 EditorState（用于非参数状态）
-    EditorState s = getEditorState();
-    tree.setProperty("blueAngleDeg_extra", s.blueAngleDeg, nullptr);
-    tree.setProperty("redRayClockwiseDeg_extra", s.redRayClockwiseDeg, nullptr);
-    tree.setProperty("sigma_extra", s.sigma, nullptr);
-    for (int i = 0; i < 5; ++i)
+    const juce::SpinLock::ScopedLockType sl (spectrumLock);
+    dest = latestMagnitudes;
+}
+
+// ===== Print 流程 =====
+void SpectrumTagAudioProcessor::startPrint (std::vector<float>&& maskData,
+                                             int maskRows, int maskCols,
+                                             float freqLowNorm, float freqHighNorm,
+                                             double durationSeconds)
+{
+    const juce::SpinLock::ScopedLockType sl (printLock);
+    printMask         = std::move (maskData);
+    printMaskRows     = maskRows;
+    printMaskCols     = maskCols;
+    printFreqLowNorm  = juce::jlimit (0.0f, 1.0f, freqLowNorm);
+    printFreqHighNorm = juce::jlimit (0.0f, 1.0f, freqHighNorm);
+    printDurationSec  = juce::jmax (0.05, durationSeconds);
+    printColCursorD   = 0.0;
+    printWarmupFramesRemaining = juce::jmax (0, stftSize / juce::jmax (1, stftHop));
+
+    const double sr = getSampleRate();
+    const double safeSr = sr > 1000.0 ? sr : 44100.0;
+    printColPerSample = (double) juce::jmax (1, maskCols) / (printDurationSec * safeSr);
+
+    // 若 mask 无效，直接不进入 Print，避免“按钮变灰但无处理”的假启动。
+    if (printMask.empty() || printMaskRows <= 0 || printMaskCols <= 0)
     {
-        tree.setProperty("dot" + juce::String(i) + "_extra", s.dotOffsetT[(size_t) i], nullptr);
-        tree.setProperty("dot" + juce::String(i) + "_st_extra", s.dotSemitoneOffsets[(size_t) i], nullptr);
+        printRunning.store (false);
+        return;
     }
+
+    printRunning.store (true);
+}
+
+// ===== 状态序列化 =====
+void SpectrumTagAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    juce::ValueTree tree ("SpectrumTagState");
+    tree.setProperty ("version", 1, nullptr);
+
+    tree.appendChild (apvts.copyState(), nullptr);
+
+    EditorState s = getEditorState();
+    tree.setProperty ("imagePath",     s.imagePath,     nullptr);
+    tree.setProperty ("imgRectXNorm",  s.imgRectXNorm,  nullptr);
+    tree.setProperty ("imgRectYNorm",  s.imgRectYNorm,  nullptr);
+    tree.setProperty ("imgRectWNorm",  s.imgRectWNorm,  nullptr);
+    tree.setProperty ("imgRectHNorm",  s.imgRectHNorm,  nullptr);
 
     if (auto xml = tree.createXml())
-        copyXmlToBinary(*xml, destData);
+        copyXmlToBinary (*xml, destData);
 }
 
-void PuponvstAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
+void SpectrumTagAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    isRestoringState.store(true, std::memory_order_release);
-    struct RestoreFlagGuard
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
     {
-        std::atomic<bool>& flag;
-        ~RestoreFlagGuard() { flag.store(false, std::memory_order_release); }
-    } restoreGuard { isRestoringState };
-
-    if (auto xml = getXmlFromBinary(data, sizeInBytes))
-    {
-        if (!xml->hasTagName("PuponState"))
+        if (! xml->hasTagName ("SpectrumTagState"))
             return;
 
-        auto tree = juce::ValueTree::fromXml(*xml);
-        if (!tree.isValid())
+        auto tree = juce::ValueTree::fromXml (*xml);
+        if (! tree.isValid())
             return;
 
-        // 恢复 APVTS 参数状态
         if (tree.getNumChildren() > 0)
         {
-            auto paramsTree = tree.getChild(0);
-            if (paramsTree.hasType("PARAMETERS"))
-            {
-                apvts.replaceState(paramsTree);
-            }
+            auto paramsTree = tree.getChild (0);
+            if (paramsTree.hasType ("PARAMETERS"))
+                apvts.replaceState (paramsTree);
         }
 
-        // 恢复 EditorState
         EditorState s;
-        s.blueAngleDeg  = (float) tree.getProperty("blueAngleDeg_extra", s.blueAngleDeg);
-        s.redRayClockwiseDeg = (float) tree.getProperty("redRayClockwiseDeg_extra", s.blueAngleDeg);
-        s.sigma         = (float) tree.getProperty("sigma_extra", s.sigma);
-        for (int i = 0; i < 5; ++i)
-        {
-            s.dotOffsetT[(size_t) i] = (float) tree.getProperty("dot" + juce::String(i) + "_extra",
-                                                                 s.dotOffsetT[(size_t) i]);
-            s.dotSemitoneOffsets[(size_t) i] = juce::jlimit(-36, +36,
-                (int) tree.getProperty("dot" + juce::String(i) + "_st_extra", s.dotSemitoneOffsets[(size_t) i]));
-        }
+        s.imagePath     = tree.getProperty ("imagePath",     s.imagePath).toString();
+        s.imgRectXNorm  = (float) tree.getProperty ("imgRectXNorm",  s.imgRectXNorm);
+        s.imgRectYNorm  = (float) tree.getProperty ("imgRectYNorm",  s.imgRectYNorm);
+        s.imgRectWNorm  = (float) tree.getProperty ("imgRectWNorm",  s.imgRectWNorm);
+        s.imgRectHNorm  = (float) tree.getProperty ("imgRectHNorm",  s.imgRectHNorm);
         s.hasValidValues = true;
 
-        {
-            const juce::SpinLock::ScopedLockType sl(editorStateLock);
-            editorState = s;
-        }
-
-        // 兼容参数重命名：无论旧工程是否包含新 APVTS ID，都以恢复出的角度回写当前参数。
-        if (auto* angleParam = apvts.getParameter(ParameterIDs::redRayClockwiseAngle))
-            angleParam->setValue(juce::jlimit(0.0f, 1.0f, s.redRayClockwiseDeg / 180.0f));
-
-        // 某些宿主在恢复阶段不会立即创建编辑器，这里必须直接同步音频引擎。
-        syncEngineFromParameters();
-        pitchEngineOptionsDirty.store(true, std::memory_order_release);
-        armStateSwitchFadeIn();
+        const juce::SpinLock::ScopedLockType sl (editorStateLock);
+        editorState = s;
     }
-
 }
 
-// 插件入口实现
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
-{
-    return new PuponvstAudioProcessor();
-}
-
-juce::AudioProcessorValueTreeState::ParameterLayout PuponvstAudioProcessor::createParameterLayout()
+// ===== 参数布局 =====
+juce::AudioProcessorValueTreeState::ParameterLayout SpectrumTagAudioProcessor::createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    // 红线顺时针角度（红蓝激光控制器）- 归一化范围 [0, 1]，默认 0.25 (45°)
-    // 角度定义：以红线水平向左为 0°，顺时针旋转到水平向右为 180°
-    //
-    // 使用角度映射（连续变化）：
-    //   归一化值 n ∈ [0,1] → redRayClockwiseDeg = n * 180°（0°=向左，90°=向上，180°=向右）
-    //   与蓝线角度关系：blueAngleDeg = redRayClockwiseDeg（数值等价）
-    //   数学角度（从 +X 逆时针）下：redMathDeg = 180° - redRayClockwiseDeg
-    //
-    // 映射关系：
-    //   n=0    → redRayClockwiseDeg=0°   → 红线水平向左，蓝线水平向右
-    //   n=0.25 → redRayClockwiseDeg=45°  → 红线左上，蓝线右上
-    //   n=0.5  → redRayClockwiseDeg=90°  → 两线垂直向上
-    //   n=1    → redRayClockwiseDeg=180° → 红线水平向右，蓝线水平向左
+    layout.add (std::make_unique<juce::AudioParameterChoice>(
+        ParameterIDs::fftSize, "FFT Size",
+        juce::StringArray { "1024", "2048", "4096", "8192" },
+        2));
 
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        ParameterIDs::redRayClockwiseAngle,
-        "Red Ray Clockwise Angle",
-        juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f),
-        0.25f,
+    layout.add (std::make_unique<juce::AudioParameterChoice>(
+        ParameterIDs::fftScale, "FFT Scale",
+        juce::StringArray { "linear", "mel" },
+        0));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat>(
+        ParameterIDs::speed, "Speed",
+        juce::NormalisableRange<float>(0.1f, 4.0f, 0.0f, 0.5f),
+        1.0f,
         juce::AudioParameterFloatAttributes()
-            .withLabel("deg")
-            .withStringFromValueFunction([](float value, int) {
-                // value 是归一化值 [0,1]，显示红线顺时针角度（0°=向左）
-                float redRayClockwiseDeg = value * 180.0f;
-                return juce::String(redRayClockwiseDeg, 1) + "°";
-            })
-    ));
+            .withStringFromValueFunction ([] (float v, int) { return juce::String (v, 2) + "x"; })));
 
-    // 正态分布标准差 - 范围 [0.24, 8.0]，默认 1.0
-    // 注意：interval 必须设为 0，否则归一化值会被量化
-    // 当 sigma 接近下限 0.24 时，归一化值接近 0，会被 interval=0.01 量化到 0，导致跳变
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        ParameterIDs::sigma,
-        "Gaussian Sigma",
-        juce::NormalisableRange<float>(0.24f, 8.0f, 0.0f),  // interval=0 禁用量化
-        2.70f,
+    layout.add (std::make_unique<juce::AudioParameterFloat>(
+        ParameterIDs::amplitudeRatio, "Amplitude Ratio",
+        juce::NormalisableRange<float>(0.0f, 1.5f, 0.0f),
+        0.0f,
         juce::AudioParameterFloatAttributes()
-            .withLabel("sigma")
-            .withStringFromValueFunction([](float value, int) {
-                return juce::String(value, 2);
-            })
-    ));
+            .withStringFromValueFunction ([] (float v, int) {
+                return juce::String (juce::roundToInt (v * 100.0f)) + "%";
+            })));
 
-    // 每路滤波器频段中心偏移（st）
-    layout.add(std::make_unique<juce::AudioParameterInt>(
-        ParameterIDs::filterCenterSt,
-        "Filter Center",
-        -36,
-        +36,
-        0,
-        juce::AudioParameterIntAttributes()
-            .withLabel("st")
-    ));
-
-    // 每路滤波器频段宽度（st），用于控制抛物线与底部刻度线的两个交点距离
-    layout.add(std::make_unique<juce::AudioParameterInt>(
-        ParameterIDs::filterWidthSt,
-        "Filter Width",
-        10,
-        72,
-        72,
-        juce::AudioParameterIntAttributes()
-            .withLabel("st")
-    ));
-
-    layout.add(std::make_unique<juce::AudioParameterChoice>(
-        ParameterIDs::rbPitchQuality,
-        "Pitch Quality",
-        juce::StringArray{ "Fastest", "Mid", "Best" },
-        1
-    ));
-
-    layout.add(std::make_unique<juce::AudioParameterChoice>(
-        ParameterIDs::rbFormantMode,
-        "Formant Mode",
-        juce::StringArray{ "Complex", "Vocal" },
-        0
-    ));
-
-    // 5个珍珠圆点位置（归一化高度）- 范围 [0.0, 1.0]，默认 1.0（顶端）
-    for (int i = 0; i < 5; ++i)
-    {
-        juce::String paramID = "dot" + juce::String(i);
-        juce::String paramName = "Pearl Dot " + juce::String(i + 1);
-        
-        layout.add(std::make_unique<juce::AudioParameterFloat>(
-            paramID,
-            paramName,
-            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-            1.0f,
-            juce::AudioParameterFloatAttributes()
-                .withLabel("gain")
-                .withStringFromValueFunction([](float value, int) {
-                    return juce::String(int(value * 100.0f)) + "%";
-                })
-        ));
-    }
-
-    // 5 路每路独立半音偏移（可被宿主自动化）
-    const int kDefaultSemitone[5] = { -24, -12, 0, +12, +24 };
-    const juce::String semitoneIDs[5] = {
-        ParameterIDs::dot0Semitone,
-        ParameterIDs::dot1Semitone,
-        ParameterIDs::dot2Semitone,
-        ParameterIDs::dot3Semitone,
-        ParameterIDs::dot4Semitone
-    };
-
-    for (int i = 0; i < 5; ++i)
-    {
-        layout.add(std::make_unique<juce::AudioParameterInt>(
-            semitoneIDs[i],
-            "Pearl Dot " + juce::String(i + 1) + " Semitone",
-            -36,
-            +36,
-            kDefaultSemitone[i],
-            juce::AudioParameterIntAttributes().withLabel("st")
-        ));
-    }
+    layout.add (std::make_unique<juce::AudioParameterBool>(
+        ParameterIDs::invert, "Invert", false));
 
     return layout;
 }
 
-void PuponvstAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
+// ===== JUCE 入口 =====
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    // 当宿主自动化参数时，同步更新 EditorState
-    // newValue 是归一化值 [0,1]，对应红线顺时针角度 [0°, 180°]
-    EditorState s = getEditorState();
-    bool stateChanged = false;
-    const bool deferEngineApply = isRestoringState.load(std::memory_order_acquire);
-
-    if (parameterID == ParameterIDs::redRayClockwiseAngle)
-    {
-        s.redRayClockwiseDeg = newValue * 180.0f;
-        // redRayClockwiseDeg 与 blueAngleDeg 数值等价，方向解释不同。
-        // blueAngleDeg 解释：0°=向右，90°=向上，180°=向左。
-        s.blueAngleDeg = s.redRayClockwiseDeg;
-
-        if (!deferEngineApply)
-            updateDotGainsAndPansFromParameters();
-        stateChanged = true;
-    }
-    else if (parameterID == ParameterIDs::sigma)
-    {
-        // 重要：对于 AudioParameterFloat，parameterChanged 的 newValue 
-        // 是去归一化后的实际值，即 [0.24, 8.0] 范围内的值
-        // 这不是归一化值 [0,1]！
-        float actualSigma = newValue;
-        
-        float newSigma = juce::jlimit(0.24f, 8.0f, actualSigma);
-        s.sigma = newSigma;
-        if (!deferEngineApply)
-            updateDotGainsAndPansFromParameters();
-        stateChanged = true;
-    }
-    else if (parameterID == ParameterIDs::filterCenterSt)
-    {
-        const int centerSt = juce::jlimit(-36, +36, (int) std::lround(newValue));
-        if (!deferEngineApply)
-            pitchEngine.setFilterCenterOffsetSemitones(centerSt);
-    }
-    else if (parameterID == ParameterIDs::filterWidthSt)
-    {
-        const int widthSt = juce::jlimit(10, 72, (int) std::lround(newValue));
-        if (!deferEngineApply)
-            pitchEngine.setFilterWidthSemitones(widthSt);
-    }
-    else if (parameterID == ParameterIDs::rbPitchQuality)
-    {
-        if (!deferEngineApply)
-        {
-            pitchEngine.setPitchQualityMode((int) std::lround(newValue));
-            pitchEngineOptionsDirty.store(true, std::memory_order_release);
-        }
-    }
-    else if (parameterID == ParameterIDs::rbFormantMode)
-    {
-        if (!deferEngineApply)
-        {
-            pitchEngine.setFormantMode((int) std::lround(newValue));
-            pitchEngineOptionsDirty.store(true, std::memory_order_release);
-        }
-    }
-    else if (parameterID == ParameterIDs::dot0
-          || parameterID == ParameterIDs::dot1
-          || parameterID == ParameterIDs::dot2
-          || parameterID == ParameterIDs::dot3
-          || parameterID == ParameterIDs::dot4)
-    {
-        int dotIndex = parameterID.substring(3).getIntValue();
-        if (dotIndex >= 0 && dotIndex < 5)
-        {
-            s.dotOffsetT[dotIndex] = juce::jlimit(0.0f, 1.0f, newValue);
-            if (!deferEngineApply)
-                updateDotGainsAndPansFromParameters();
-            stateChanged = true;
-        }
-    }
-    else if (parameterID == ParameterIDs::dot0Semitone)
-    {
-        const int st = juce::jlimit(-36, +36, (int) std::lround(newValue));
-        s.dotSemitoneOffsets[0] = st;
-        if (!deferEngineApply)
-        {
-            pitchEngine.setDotSemitoneOffset(0, st);
-            updateDotGainsAndPansFromParameters();
-        }
-        stateChanged = true;
-    }
-    else if (parameterID == ParameterIDs::dot1Semitone)
-    {
-        const int st = juce::jlimit(-36, +36, (int) std::lround(newValue));
-        s.dotSemitoneOffsets[1] = st;
-        if (!deferEngineApply)
-        {
-            pitchEngine.setDotSemitoneOffset(1, st);
-            updateDotGainsAndPansFromParameters();
-        }
-        stateChanged = true;
-    }
-    else if (parameterID == ParameterIDs::dot2Semitone)
-    {
-        const int st = juce::jlimit(-36, +36, (int) std::lround(newValue));
-        s.dotSemitoneOffsets[2] = st;
-        if (!deferEngineApply)
-        {
-            pitchEngine.setDotSemitoneOffset(2, st);
-            updateDotGainsAndPansFromParameters();
-        }
-        stateChanged = true;
-    }
-    else if (parameterID == ParameterIDs::dot3Semitone)
-    {
-        const int st = juce::jlimit(-36, +36, (int) std::lround(newValue));
-        s.dotSemitoneOffsets[3] = st;
-        if (!deferEngineApply)
-        {
-            pitchEngine.setDotSemitoneOffset(3, st);
-            updateDotGainsAndPansFromParameters();
-        }
-        stateChanged = true;
-    }
-    else if (parameterID == ParameterIDs::dot4Semitone)
-    {
-        const int st = juce::jlimit(-36, +36, (int) std::lround(newValue));
-        s.dotSemitoneOffsets[4] = st;
-        if (!deferEngineApply)
-        {
-            pitchEngine.setDotSemitoneOffset(4, st);
-            updateDotGainsAndPansFromParameters();
-        }
-        stateChanged = true;
-    }
-
-    if (stateChanged)
-    {
-        setEditorState(s);
-    }
+    return new SpectrumTagAudioProcessor();
 }
-
-void PuponvstAudioProcessor::syncEngineFromParameters()
-{
-    if (auto* centerParam = apvts.getRawParameterValue(ParameterIDs::filterCenterSt))
-        pitchEngine.setFilterCenterOffsetSemitones((int) std::lround(centerParam->load()));
-    if (auto* widthParam = apvts.getRawParameterValue(ParameterIDs::filterWidthSt))
-        pitchEngine.setFilterWidthSemitones((int) std::lround(widthParam->load()));
-    if (auto* qualityParam = apvts.getRawParameterValue(ParameterIDs::rbPitchQuality))
-        pitchEngine.setPitchQualityMode((int) std::lround(qualityParam->load()));
-    if (auto* formantParam = apvts.getRawParameterValue(ParameterIDs::rbFormantMode))
-        pitchEngine.setFormantMode((int) std::lround(formantParam->load()));
-
-    updateDotGainsAndPansFromParameters();
-}
-
-void PuponvstAudioProcessor::updateDotGainsAndPansFromParameters() noexcept
-{
-    float blueAngleDeg = 90.0f;
-    if (auto* angleParam = apvts.getRawParameterValue(ParameterIDs::redRayClockwiseAngle))
-        blueAngleDeg = juce::jlimit(0.0f, 180.0f, angleParam->load() * 180.0f);
-
-    float sigma = 2.70f;
-    if (auto* sigmaParam = apvts.getRawParameterValue(ParameterIDs::sigma))
-        sigma = juce::jlimit(0.24f, 8.0f, sigmaParam->load());
-
-    for (int i = 0; i < 5; ++i)
-    {
-        float dotOffset = 1.0f;
-        if (auto* dotParam = apvts.getRawParameterValue(kDotGainParamIds[(size_t) i]))
-            dotOffset = juce::jlimit(0.0f, 1.0f, dotParam->load());
-
-        int semitone = PitchShiftEngine::kDefaultSemitones[(size_t) i];
-        if (auto* stParam = apvts.getRawParameterValue(kDotSemitoneParamIds[(size_t) i]))
-            semitone = juce::jlimit(-36, +36, (int) std::lround(stParam->load()));
-
-        pitchEngine.setDotSemitoneOffset(i, semitone);
-        pitchEngine.setDotGain(i, computeGainFromDotState(dotOffset, semitone, sigma));
-        pitchEngine.setDotPan(i, computePanFromBlueAngleAndSemitone(blueAngleDeg, semitone));
-    }
-}
-
-float PuponvstAudioProcessor::computePanFromBlueAngleAndSemitone(float blueAngleDeg, int semitone) noexcept
-{
-    if (semitone == 0)
-        return 0.0f;
-
-    const float angleClamped = juce::jlimit(0.0f, 180.0f, blueAngleDeg);
-
-    float panMin = 0.0f;
-    float panMax = 0.0f;
-    if (angleClamped >= 45.0f && angleClamped <= 135.0f)
-    {
-        const float dCenter = juce::jlimit(0.0f, 1.0f, std::abs(angleClamped - 90.0f) / 45.0f);
-        panMin = 0.0f;
-        panMax = juce::jlimit(0.0f, 1.0f, dCenter * (1.2f - 0.2f * dCenter));
-    }
-    else
-    {
-        const float dOuter = (angleClamped < 45.0f)
-            ? juce::jlimit(0.0f, 1.0f, (45.0f - angleClamped) / 45.0f)
-            : juce::jlimit(0.0f, 1.0f, (angleClamped - 135.0f) / 45.0f);
-        panMin = dOuter;
-        panMax = 1.0f;
-    }
-
-    const float stNorm = juce::jlimit(-1.0f, 1.0f, (float) juce::jlimit(-36, +36, semitone) / 36.0f);
-    const float magnitude = juce::jlimit(0.0f, 1.0f,
-        panMin + (panMax - panMin) * std::abs(stNorm));
-
-    const float directionFlipByAngle = (angleClamped <= 90.0f) ? 1.0f : -1.0f;
-    const float signedPan = directionFlipByAngle * ((stNorm >= 0.0f) ? magnitude : -magnitude);
-    return juce::jlimit(-1.0f, 1.0f, signedPan);
-}
-
-float PuponvstAudioProcessor::computeGainFromDotState(float dotOffsetT, int semitone, float sigma) noexcept
-{
-    const float t = juce::jlimit(0.0f, 1.0f, dotOffsetT);
-    const float sigmaSafe = juce::jlimit(0.24f, 8.0f, sigma);
-    const float stNorm = (float) juce::jlimit(-36, +36, semitone) / 12.0f;
-    const float gaussian = std::exp(-0.5f * stNorm * stNorm / (sigmaSafe * sigmaSafe));
-    return juce::jlimit(0.0f, 1.0f, t * gaussian);
-}
-
-void PuponvstAudioProcessor::armStateSwitchFadeIn() noexcept
-{
-    if (stateSwitchFadeOutSamplesTotal > 0)
-        stateSwitchFadeOutSamplesRemaining.store(stateSwitchFadeOutSamplesTotal, std::memory_order_relaxed);
-    else if (stateSwitchFadeInSamplesTotal > 0)
-        stateSwitchFadeInSamplesRemaining.store(stateSwitchFadeInSamplesTotal, std::memory_order_relaxed);
-
-    if (stateSwitchFadeOutSamplesTotal > 0)
-        stateSwitchFadeInSamplesRemaining.store(0, std::memory_order_relaxed);
-}
-

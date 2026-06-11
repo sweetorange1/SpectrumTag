@@ -2,42 +2,40 @@
 
 #include <JuceHeader.h>
 #include <array>
-#include "PitchShiftEngine.h"
+#include <atomic>
+#include <memory>
+#include <vector>
 
-// ===== 参数ID定义（供 Processor 和 Editor 共用）=====
+// ============================================================================
+//  SpectrumTag - 音频信号 × 图片轮廓 的频谱"印章"插件
+// ----------------------------------------------------------------------------
+//  设计要点（v3 STFT/OLA 方案）：
+//   - 未按 Print 时：音频完全 bypass，不做任何 FFT/IFFT 运算，零延迟。
+//   - 按下 Print 后：STFT（75% 重叠，hop = N/4），每个 bin 根据 mask 独立
+//     调节幅度，保留原始相位，IFFT 后重叠相加（OLA）输出。
+//     配合逐 bin 增益平滑 + 相位保留，彻底消除音量波动。
+//   - 显示路径（瀑布图）保持独立实数 FFT，仅用于可视化。
+// ============================================================================
+
 namespace ParameterIDs
 {
-    static const juce::String redRayClockwiseAngle = "redRayClockwiseAngle";
-    static const juce::String isVerticalRay = "isVerticalRay";
-    static const juce::String sigma          = "sigma";
-    static const juce::String filterCenterSt = "filterCenterSt";
-    static const juce::String filterWidthSt  = "filterWidthSt";
-    static const juce::String rbPitchQuality = "rbPitchQuality";
-    static const juce::String rbFormantMode  = "rbFormantMode";
-    static const juce::String dot0          = "dot0";
-    static const juce::String dot1          = "dot1";
-    static const juce::String dot2          = "dot2";
-    static const juce::String dot3          = "dot3";
-    static const juce::String dot4          = "dot4";
-    static const juce::String dot0Semitone  = "dot0Semitone";
-    static const juce::String dot1Semitone  = "dot1Semitone";
-    static const juce::String dot2Semitone  = "dot2Semitone";
-    static const juce::String dot3Semitone  = "dot3Semitone";
-    static const juce::String dot4Semitone  = "dot4Semitone";
+    static const juce::String fftSize        = "fftSize";        // Choice: 1024/2048/4096/8192
+    static const juce::String fftScale       = "fftScale";       // Choice: linear / mel
+    static const juce::String speed          = "speed";          // Float
+    static const juce::String amplitudeRatio = "amplitudeRatio"; // Float: 0.0 - 1.5
+    static const juce::String invert         = "invert";         // Bool
 }
 
-class PuponvstAudioProcessor : public juce::AudioProcessor,
-                                  public juce::AudioProcessorValueTreeState::Listener
+class SpectrumTagAudioProcessor : public juce::AudioProcessor
 {
 public:
-    PuponvstAudioProcessor();
-    ~PuponvstAudioProcessor() override;
+    SpectrumTagAudioProcessor();
+    ~SpectrumTagAudioProcessor() override;
 
-    // AudioProcessor overrides
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
-    void prepareToPlay(double sampleRate, int samplesPerBlock) override;
+    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
-    void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override;
@@ -50,112 +48,115 @@ public:
 
     int getNumPrograms() override;
     int getCurrentProgram() override;
-    void setCurrentProgram(int index) override;
-    const juce::String getProgramName(int index) override;
-    void changeProgramName(int index, const juce::String& newName) override;
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
+    void changeProgramName (int index, const juce::String& newName) override;
 
-    void getStateInformation(juce::MemoryBlock& destData) override;
-    void setStateInformation(const void* data, int sizeInBytes) override;
+    void getStateInformation (juce::MemoryBlock& destData) override;
+    void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // 参数系统：暴露给宿主用于自动化控制 =====
-    // 使用 AudioProcessorValueTreeState 来管理参数
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    
-    // 获取 APVTS 引用（供 Editor 使用）
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts; }
 
-    // AudioProcessorValueTreeState::Listener 接口 - 参数改变回调
-    void parameterChanged(const juce::String& parameterID, float newValue) override;
+    // ===== 频谱可视化（仅显示用 FFT）=====
+    void getLatestMagnitudeSpectrum (std::vector<float>& dest);
+    int  getDisplayUpdateCounter() const { return displayUpdateCounter.load (std::memory_order_acquire); }
 
-    // ===== 持久化的 UI 控制状态（由 Editor 拥有的"模型层"数值在此存档） =====
-    // 设计：Editor 是临时组件（用户随时关闭/重开），状态必须存放在 Processor。
-    //   - 每次用户交互后 Editor 主动调用 setEditorState(...) 推送一份镜像
-    //   - setStateInformation 反序列化时填充这些字段
-    //   - 新 Editor 构造时调用 getEditorState(...) 回填到自己的成员
+    // ===== Editor → Processor 状态镜像 =====
     struct EditorState
     {
-        // 蓝线角度（度，数学坐标）：0° = 水平向右，90° = 垂直向上，180° = 水平向左
-        // 红线角度 = 180° - blueAngleDeg（左右对称）
-        float blueAngleDeg = 90.0f;  // 默认垂直向上
-
-        // 红线顺时针角度（以水平向左为 0°）：
-        // 0° = 水平向左，90° = 垂直向上，180° = 水平向右
-        // 与 blueAngleDeg 数值等价（redClockwise = blueAngleDeg）
-        float redRayClockwiseDeg = 90.0f;
-        bool  isVerticalRay = false;
-        // 正态曲线方差（标准差）
-        float sigma        = 2.70f;
-        // 5 个圆点在轨道上的归一化高度，1.0 = 顶端（默认最大），0.0 = 底部
-        std::array<float, 5> dotOffsetT { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
-        // 5 个圆点的半音偏移（单位 st，始终为整数）
-        std::array<int, 5> dotSemitoneOffsets { -24, -12, 0, +12, +24 };
-        // 是否包含已保存的有效内容（Processor 刚被构造、尚未恢复时为 false）
+        juce::String imagePath;
+        float imgRectXNorm = 0.30f;
+        float imgRectYNorm = 0.20f;
+        float imgRectWNorm = 0.40f;
+        float imgRectHNorm = 0.50f;
         bool  hasValidValues = false;
     };
 
-    void setEditorState(const EditorState& s);
+    void setEditorState (const EditorState& s);
     EditorState getEditorState() const;
 
-    // 提供给界面线程使用：获取示波器数据快照（按时间从旧到新排列）
-    void getOscilloscopeSnapshot(juce::Array<float>& dest);
-
-    // 提供给界面线程：获取当前活动的band数量（gain > 0 的band数量，用于调试显示）
-    int getActiveBandsCount() const { return pitchEngine.getActiveBandsCount(); }
-
-    // 提供给界面线程：把 5 个圆点的当前 gain / pan 同步给音频线程（lock-free）
-    // index ∈ [0, 4]，gain ∈ [0, 1]，pan ∈ [-1, +1]
-    void setDotGain(int index, float gain) { pitchEngine.setDotGain(index, gain); }
-    void setDotPan (int index, float pan ) { pitchEngine.setDotPan (index, pan ); }
-    void setDotSemitoneOffset(int index, int semitone) { pitchEngine.setDotSemitoneOffset(index, semitone); }
-    void setFilterCenterOffsetSemitones(int centerOffsetSt) { pitchEngine.setFilterCenterOffsetSemitones(centerOffsetSt); }
-    void setFilterWidthSemitones(int widthSt) { pitchEngine.setFilterWidthSemitones(widthSt); }
-    void setPitchQualityMode(int mode) { pitchEngine.setPitchQualityMode(mode); }
-    void setFormantMode(int mode) { pitchEngine.setFormantMode(mode); }
-
-    // 视觉同步：UI 通过此 getter 获取相关状态
+    // ===== Print 流程 =====
+    void startPrint (std::vector<float>&& maskData,
+                     int maskRows, int maskCols,
+                     float freqLowNorm, float freqHighNorm,
+                     double durationSeconds);
+    bool isPrintRunning() const { return printRunning.load(); }
 
 private:
-    void syncEngineFromParameters();
-    void updateDotGainsAndPansFromParameters() noexcept;
-    static float computePanFromBlueAngleAndSemitone(float blueAngleDeg, int semitone) noexcept;
-    static float computeGainFromDotState(float dotOffsetT, int semitone, float sigma) noexcept;
-    void armStateSwitchFadeIn() noexcept;
+    // =========================================================================
+    //  STFT / OLA 状态（每通道独立）
+    // =========================================================================
+    struct StftChannelState
+    {
+        std::unique_ptr<juce::dsp::FFT> fft;
+        std::vector<float> window;          // Hann 窗，长度 stftSize
+        std::vector<float> fftWork;         // 2 * stftSize，复数值交错存储
 
-    // 参数系统
+        // 输入环形缓冲
+        std::vector<float> inputRing;       // 长度 stftSize
+        int                inputPos = 0;    // 下一个写入位置
+        int                accumCount = 0;  // 自上一帧以来累积的采样数
+
+        // 输出 OLA 累积环形缓冲（只写不读）
+        std::vector<float> outputRing;      // 长度 stftSize（accumulator）
+
+        // 输出 FIFO 环形缓冲（解耦 OLA 与输出读取）
+        std::vector<float> outFifo;         // 长度 stftSize × 2（安全余量）
+        int                outFifoWrite = 0;
+        int                outFifoRead  = 0;
+        int                outFifoCount = 0;
+
+        // OLA 帧计数：只有 frameCount >= stftSize/stftHop 后才能放出采样到 FIFO
+        int                frameCount = 0;
+
+        // 逐 bin 增益平滑状态
+        std::vector<float> smoothedGains;   // 长度 numBins = stftSize/2+1
+    };
+
     juce::AudioProcessorValueTreeState apvts;
 
-    static constexpr int oscilloscopeBufferSize = 2048;
-
-    void pushSamplesToOscilloscope(const float* samples, int numSamples);
-
-    juce::SpinLock oscilloscopeLock;
-    std::array<float, oscilloscopeBufferSize> oscilloscopeBuffer {};
-    int oscilloscopeWritePos = 0;
-
-    // 音频处理引擎（重采样 pitch shift + 5 路混音 + 声相 + 硬削波）
-    PitchShiftEngine pitchEngine;
-
-    // 缓存上次读到的"一小节秒数"，用于相关处理（默认 120 BPM 4/4 = 2s）
-    double lastBarSeconds = 2.0;
-
-    // 记录 prepareToPlay 环境，供运行中重建 shifter 选项
-    double preparedSampleRate = 44100.0;
-    int preparedBlockSize = 512;
-    int lastReportedLatencySamples = -1;
-    std::atomic<bool> pitchEngineOptionsDirty { false };
-    int stateSwitchFadeOutSamplesTotal = 0;
-    int stateSwitchFadeInSamplesTotal = 0;
-    std::atomic<int> stateSwitchFadeOutSamplesRemaining { 0 };
-    std::atomic<int> stateSwitchFadeInSamplesRemaining { 0 };
-    std::atomic<bool> isRestoringState { false };
-    std::array<float, 2> lastOutputSample { 0.0f, 0.0f };
-
-    // ===== 持久化的 UI 状态镜像（GUI 关闭时此处保留最新值，宿主存档读取于此）=====
-    // 由 Editor 在每次交互后通过 setEditorState() 推送；Editor 重新打开时通过 getEditorState() 拉取。
-    // 用 SpinLock 保护：写入只发生在消息线程（Editor 交互、setStateInformation），读取也只发生在消息线程
-    // （新 Editor 构造、getStateInformation 由 host 在主线程调用），SpinLock 足够。
+    // ===== Editor 状态镜像 =====
     mutable juce::SpinLock editorStateLock;
     EditorState            editorState;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PuponvstAudioProcessor)
+    // ===== 频谱可视化：FFT 显示路径（独立，不参与音频处理）=====
+    mutable juce::SpinLock spectrumLock;
+    std::vector<float>     latestMagnitudes;
+    std::atomic<int>       displayUpdateCounter { 0 };
+
+    int                             displayFftSize = 0;
+    int                             displayHopSize = 0;
+    std::unique_ptr<juce::dsp::FFT> displayFft;
+    std::vector<float>              displayWindow;
+    std::vector<float>              displayInputRing;
+    int                             displayRingWritePos = 0;
+    int                             displaySamplesAccum = 0;
+    std::vector<float>              displayFftWork;
+
+    // ===== Print 状态 =====
+    std::atomic<bool> printRunning { false };
+    int                wasPrintActive = 0;       // 检测 Print 启动瞬间，用于重置 OLA 管道
+    juce::SpinLock     printLock;
+    std::vector<float> printMask;
+    int                printMaskRows = 0;
+    int                printMaskCols = 0;
+    float              printFreqLowNorm = 0.0f;
+    float              printFreqHighNorm = 1.0f;
+    double             printDurationSec = 0.0;
+    double             printColCursorD = 0.0;     // 当前列游标（小数，精确推进）
+    double             printColPerSample = 0.0;
+    int                printWarmupFramesRemaining = 0; // Print 启动预热帧数（预热期不消费 mask 列）
+
+    // ===== STFT 参数 =====
+    int  stftSize = 4096;
+    int  stftHop  = 1024;                         // stftSize / 4 (75% overlap)
+    int  currentScaleMode = 0;                    // 0=linear, 1=mel（影响显示，不影响 STFT）
+    std::vector<StftChannelState> stftStates;     // 每通道一个
+
+    // ---- 内部辅助 ----
+    void rebuildStft (double sampleRate, int numChannels);
+    void processStftFrame (int ch, const std::vector<float>& targetBinGains, float gainSmoothAlpha);
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumTagAudioProcessor)
 };
