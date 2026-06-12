@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(SpectrumTag VERSION 1.1.0 LANGUAGES C CXX)
+project(SpectrumTag VERSION 1.1.7 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,7 +16,7 @@ FetchContent_MakeAvailable(juce)
 juce_add_plugin(
         SpectrumTag
         PRODUCT_NAME "SpectrumTag"
-        VERSION 1.1.0
+VERSION 1.1.7
         COMPANY_NAME "iisaacbeas.cn"
         BUNDLE_ID "cn.iisaacbeas.SpectrumTag"
         PLUGIN_MANUFACTURER_CODE Pupo

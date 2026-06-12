@@ -5,6 +5,8 @@
 #include <atomic>
 #include <memory>
 #include <vector>
+#include <deque>
+#include <mutex>
 
 // ============================================================================
 //  SpectrumTag - 音频信号 × 图片轮廓 的频谱"印章"插件
@@ -83,6 +85,10 @@ public:
                      double durationSeconds);
     bool isPrintRunning() const { return printRunning.load(); }
 
+    // ===== Print 数学日志 =====
+    void markPrintClickAndBeginMathLog();
+    void flushPrintMathLogToFile();
+
 private:
     // =========================================================================
     //  STFT / OLA 状态（每通道独立）
@@ -117,6 +123,14 @@ private:
 
         // 逐 bin 增益平滑状态
         std::vector<float> smoothedGains;   // 长度 numBins = stftSize/2+1
+
+        // 数学日志探针（最近一次 STFT 帧）
+        float              lastTargetGainProbe = 1.0f;
+        float              lastSmoothGainProbe = 1.0f;
+        float              lastFftMagProbe = 0.0f;
+        float              lastIfftProbe = 0.0f;
+        float              lastOlaNormProbe = 0.0f;
+        int                lastProcessedFrame = 0;
     };
 
     juce::AudioProcessorValueTreeState apvts;
@@ -159,6 +173,7 @@ private:
     float              dryWetTarget = 0.0f;
     int                dryWetFadeSamplesRemaining = 0;
     int                dryWetFadeTotalSamples = 0;
+    int                printFadeDelaySamples = 0;    // Print 状态翻转后延迟启动 crossfade 的采样计数
 
     // ===== STFT 参数 =====
     int  stftSize = 4096;
@@ -166,9 +181,61 @@ private:
     int  currentScaleMode = 0;                    // 0=linear, 1=mel（影响显示，不影响 STFT）
     std::vector<StftChannelState> stftStates;     // 每通道一个
 
+    // ===== 数学日志会话（每次点击 Print 产生一次） =====
+    struct MathLogEvent
+    {
+        int64_t sampleIndex = 0;
+        int channel = 0;
+        int stftFrame = 0;
+        bool printRequested = false;
+        bool stftPathActive = false;
+        bool frameReady = false;
+        bool printStateFlipped = false;
+        int maskCol = -1;
+        int fadeDelaySamples = 0;
+        int fadeSamplesRemaining = 0;
+        int printWarmupRemaining = 0;
+        int accumCount = 0;
+        float printColCursor = 0.0f;
+        float targetGainMin = 1.0f;
+        float targetGainMax = 1.0f;
+        float targetGainMean = 1.0f;
+        float dryIn = 0.0f;
+        float delayedDry = 0.0f;
+        float wetOut = 0.0f;
+        float outSample = 0.0f;
+        float dryWetMix = 0.0f;
+        float dryWetTarget = 0.0f;
+        float targetGainProbe = 1.0f;
+        float smoothGainProbe = 1.0f;
+        float fftMagProbe = 0.0f;
+        float ifftProbe = 0.0f;
+        float olaNormProbe = 0.0f;
+        int outFifoCount = 0;
+    };
+
+    struct MathLogSession
+    {
+        bool active = false;
+        bool requestFlush = false;
+        bool collectingPost = false;
+        int64_t postSamplesRemaining = 0;
+        int64_t globalSampleCounter = 0;
+        int64_t printClickSample = -1;
+        int64_t sampleRateRounded = 44100;
+        juce::String clickTimeIso;
+        std::deque<MathLogEvent> preEvents;
+        std::vector<MathLogEvent> frozenPreEvents;
+        std::vector<MathLogEvent> postEvents;
+    };
+
+    std::mutex mathLogMutex;
+    MathLogSession mathLog;
+
     // ---- 内部辅助 ----
     void rebuildStft (double sampleRate, int numChannels);
     void processStftFrame (int ch, const std::vector<float>& targetBinGains, float gainSmoothAlpha);
+    void pushMathLogEvent (const MathLogEvent& e);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumTagAudioProcessor)
 };

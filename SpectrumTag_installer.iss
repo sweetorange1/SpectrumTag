@@ -1,5 +1,5 @@
 #define MyAppName "SpectrumTag"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.7"
 #define MyAppPublisher "iisaacbeats.cn"
 #define MyPluginBundle "SpectrumTag.vst3"
 

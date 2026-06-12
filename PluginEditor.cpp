@@ -318,8 +318,8 @@ void ImageBoxComponent::preprocessImage()
 {
     if (! sourceImage.isValid()) { binaryPreview = juce::Image(); return; }
 
-    // 1) 缩放到合理尺寸（限制最大 256x256，避免 mask 过大）
-    const int maxDim = 256;
+    // 1) 限制最大尺寸 2048x2048，既保留足够细节，又避免极端分辨率下性能问题
+    const int maxDim = 2048;
     int w = sourceImage.getWidth();
     int h = sourceImage.getHeight();
     if (juce::jmax (w, h) > maxDim)
@@ -1099,6 +1099,9 @@ void SpectrumTagAudioProcessorEditor::timerCallback()
     if (! processor.isPrintRunning() && ! printButton.isEnabled())
         printButton.setEnabled (true);
 
+    // 若日志后1秒窗口采集完成，则在消息线程落盘
+    processor.flushPrintMathLogToFile();
+
     // 推送一帧到瀑布图
     if (spectrumView != nullptr)
     {
@@ -1118,6 +1121,7 @@ void SpectrumTagAudioProcessorEditor::onPrintClicked()
     if (processor.isPrintRunning() || spectrumView == nullptr) return;
     auto& imgBox = spectrumView->getImageBox();
     if (! imgBox.hasImage()) return;
+    processor.markPrintClickAndBeginMathLog();
 
     // 1) 计算 mask 维度
     //   rows = fft bins = fftSize/2 + 1

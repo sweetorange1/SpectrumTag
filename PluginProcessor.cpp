@@ -2,6 +2,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <cmath>
+#include <fstream>
+#include <iomanip>
 
 // ============================================================================
 //  SpectrumTagAudioProcessor - STFT / OLA 实现（v3）
@@ -37,6 +39,132 @@ namespace
         if (ratio <= 0.0f) return 0.0f;       // -80 dB（比之前 -60dB 更深，增强对比度）
         return ratio;                              // 1.0 = 0dB, 1.5 = +3.5dB
     }
+
+    inline juce::String toSafeFilenameTimestamp (const juce::String& iso)
+    {
+        juce::String s = iso;
+        s = s.replaceCharacter (':', '-');
+        s = s.replaceCharacter ('T', '_');
+        s = s.replaceCharacter ('.', '-');
+        s = s.removeCharacters ("+");
+        return s;
+    }
+}
+
+void SpectrumTagAudioProcessor::markPrintClickAndBeginMathLog()
+{
+    std::lock_guard<std::mutex> lk (mathLogMutex);
+    mathLog.sampleRateRounded = (int64_t) juce::jmax (1, juce::roundToInt (getSampleRate() > 1000.0 ? getSampleRate() : 44100.0));
+    mathLog.clickTimeIso = juce::Time::getCurrentTime().toISO8601 (true);
+    mathLog.printClickSample = mathLog.globalSampleCounter;
+    mathLog.collectingPost = true;
+    mathLog.postSamplesRemaining = mathLog.sampleRateRounded;
+    mathLog.frozenPreEvents.clear();
+    mathLog.frozenPreEvents.assign (mathLog.preEvents.begin(), mathLog.preEvents.end());
+    mathLog.postEvents.clear();
+    mathLog.requestFlush = false;
+    mathLog.active = true;
+}
+
+void SpectrumTagAudioProcessor::pushMathLogEvent (const MathLogEvent& e)
+{
+    std::lock_guard<std::mutex> lk (mathLogMutex);
+
+    const int64_t sr = juce::jmax ((int64_t) 8000, mathLog.sampleRateRounded);
+    const int channels = juce::jmax (1, getTotalNumInputChannels());
+    const size_t maxPreEvents = (size_t) juce::jmax ((int64_t) 4096, sr * (int64_t) channels); // 前1秒滚动窗口
+    mathLog.preEvents.push_back (e);
+    while (mathLog.preEvents.size() > maxPreEvents)
+        mathLog.preEvents.pop_front();
+
+    if (mathLog.collectingPost)
+    {
+        mathLog.postEvents.push_back (e);
+        if (e.channel == 0)
+        {
+            --mathLog.postSamplesRemaining;
+            if (mathLog.postSamplesRemaining <= 0)
+            {
+                mathLog.collectingPost = false;
+                mathLog.requestFlush = true;
+            }
+        }
+    }
+}
+
+void SpectrumTagAudioProcessor::flushPrintMathLogToFile()
+{
+    MathLogSession snap;
+    {
+        std::lock_guard<std::mutex> lk (mathLogMutex);
+        if (! mathLog.requestFlush)
+            return;
+        mathLog.requestFlush = false;
+        snap = mathLog;
+    }
+
+    juce::File logDir ("G:\\SpectrumTag\\Log");
+    if (! logDir.exists())
+        logDir.createDirectory();
+
+    const juce::String safeTs = toSafeFilenameTimestamp (snap.clickTimeIso);
+    const juce::File logFile = logDir.getChildFile ("print_math_" + safeTs + ".csv");
+
+    std::ofstream os (logFile.getFullPathName().toRawUTF8(), std::ios::out | std::ios::trunc);
+    if (! os.is_open())
+        return;
+
+    os << "meta,click_time_iso," << snap.clickTimeIso.toRawUTF8() << "\n";
+    os << "meta,print_click_sample," << snap.printClickSample << "\n";
+    os << "meta,sample_rate," << snap.sampleRateRounded << "\n";
+    os << "meta,stft_size," << stftSize << "\n";
+    os << "meta,stft_hop," << stftHop << "\n";
+    os << "meta,dry_wet_fade_total_samples," << dryWetFadeTotalSamples << "\n";
+    os << "section,type,sample,delta_to_click,channel,stft_frame,print_requested,stft_path_active,frame_ready,print_state_flipped,mask_col,print_col_cursor,fade_delay_samples,fade_samples_remaining,print_warmup_remaining,accum_count,target_gain_min,target_gain_max,target_gain_mean,dry_in,delayed_dry,wet_out,mix,mix_target,out_sample,rebuild_out,mix_error,target_gain_probe,smooth_gain_probe,fft_mag_probe,ifft_probe,ola_norm_probe,out_fifo_count\n";
+
+    auto writeEvent = [&] (const char* section, const MathLogEvent& e)
+    {
+        const float rebuiltOut = e.delayedDry * (1.0f - e.dryWetMix) + e.wetOut * e.dryWetMix;
+        const float mixError = e.outSample - rebuiltOut;
+        os << section << ","
+           << "event" << ","
+           << e.sampleIndex << ","
+           << (e.sampleIndex - snap.printClickSample) << ","
+           << e.channel << ","
+           << e.stftFrame << ","
+           << (e.printRequested ? 1 : 0) << ","
+           << (e.stftPathActive ? 1 : 0) << ","
+           << (e.frameReady ? 1 : 0) << ","
+           << (e.printStateFlipped ? 1 : 0) << ","
+           << e.maskCol << ","
+           << e.printColCursor << ","
+           << e.fadeDelaySamples << ","
+           << e.fadeSamplesRemaining << ","
+           << e.printWarmupRemaining << ","
+           << e.accumCount << ","
+           << e.targetGainMin << ","
+           << e.targetGainMax << ","
+           << e.targetGainMean << ","
+           << std::setprecision (9) << e.dryIn << ","
+           << e.delayedDry << ","
+           << e.wetOut << ","
+           << e.dryWetMix << ","
+           << e.dryWetTarget << ","
+           << e.outSample << ","
+           << rebuiltOut << ","
+           << mixError << ","
+           << e.targetGainProbe << ","
+           << e.smoothGainProbe << ","
+           << e.fftMagProbe << ","
+           << e.ifftProbe << ","
+           << e.olaNormProbe << ","
+           << e.outFifoCount << "\n";
+    };
+
+    for (const auto& e : snap.frozenPreEvents) writeEvent ("pre", e);
+    for (const auto& e : snap.postEvents)      writeEvent ("post", e);
+
+    os.flush();
 }
 
 // ----------------------------------------------------------------------------
@@ -155,6 +283,9 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
         st.fftWork[0] *= smooth;
     }
 
+    const int probeBin = juce::jlimit (0, numBins - 1, numBins / 4);
+    st.lastTargetGainProbe = targetBinGains[(size_t) probeBin];
+
     // k = 1 .. N/2-1
     for (int k = 1; k < numBins - 1; ++k)
     {
@@ -173,6 +304,22 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
         float& smooth = st.smoothedGains[(size_t) kNyq];
         smooth += (target - smooth) * gainSmoothAlpha;
         st.fftWork[1] *= smooth;
+    }
+
+    st.lastSmoothGainProbe = st.smoothedGains[(size_t) probeBin];
+    if (probeBin == 0)
+    {
+        st.lastFftMagProbe = std::abs (st.fftWork[0]);
+    }
+    else if (probeBin == numBins - 1)
+    {
+        st.lastFftMagProbe = std::abs (st.fftWork[1]);
+    }
+    else
+    {
+        const float re = st.fftWork[(size_t) (2 * probeBin)];
+        const float im = st.fftWork[(size_t) (2 * probeBin + 1)];
+        st.lastFftMagProbe = std::sqrt (re * re + im * im);
     }
 
     // ---- 4) 实数 IFFT（JUCE 内部会除以 N）----
@@ -216,6 +363,11 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
             ++st.outFifoCount;
         }
     }
+
+    st.lastIfftProbe = st.fftWork[(size_t) juce::jlimit (0, N - 1, N / 2)];
+    const int normProbePos = (frameStart + hop) % N;
+    st.lastOlaNormProbe = st.olaNormRing[(size_t) normProbePos];
+    st.lastProcessedFrame = st.frameCount;
 }
 
 // ============================================================================
@@ -265,7 +417,8 @@ void SpectrumTagAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     dryWetMix = 0.0f;
     dryWetTarget = 0.0f;
     dryWetFadeSamplesRemaining = 0;
-    dryWetFadeTotalSamples = juce::jmax (1, (int) std::round (0.008 * sampleRate)); // 8ms
+    dryWetFadeTotalSamples = juce::jmax (1, (int) std::round (0.2 * sampleRate)); // 200ms，覆盖 OLA 8 帧预热期
+    printFadeDelaySamples = 0;
 }
 
 void SpectrumTagAudioProcessor::releaseResources() {}
@@ -324,7 +477,7 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
         setLatencySamples (desiredSize - desiredSize / 4);
 
-        dryWetFadeTotalSamples = juce::jmax (1, (int) std::round (0.008 * sr));
+        dryWetFadeTotalSamples = juce::jmax (1, (int) std::round (0.2 * sr));
     }
 
     if (stftStates.empty()) return;
@@ -359,17 +512,26 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     // ---- Sample-major 循环：每个采样点处理所有通道 ----
     for (int n = 0; n < numSamps; ++n)
     {
+        int usedMaskCol = -1;
+        bool printStateFlipped = false;
         const bool requestedPrint = printRunning.load();
         if (requestedPrint != prevPrintActive)
         {
             prevPrintActive = requestedPrint;
+            printStateFlipped = true;
+            // 目标值立即更新，避免在退出 Print 时因为目标仍为 wet 导致额外能量塌陷。
+            // 延迟期间先冻结 mix，等管线稳定后再启动 crossfade。
             dryWetTarget = requestedPrint ? 1.0f : 0.0f;
-            dryWetFadeSamplesRemaining = juce::jmax (1, dryWetFadeTotalSamples);
+            printFadeDelaySamples = requestedPrint ? (2 * N) : N;
         }
 
         const bool stftPathActive = requestedPrint
             || (dryWetMix > 1.0e-4f)
             || (dryWetFadeSamplesRemaining > 0);
+
+        float gainMin = 1.0f;
+        float gainMax = 1.0f;
+        float gainMean = 1.0f;
 
         // ---- Step A) 写入 inputRing + dryDelayRing（所有通道同时写入）----
         bool frameReady = false;
@@ -406,6 +568,7 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                     std::fill (st.outFifo.begin(),         st.outFifo.end(),         0.0f);
                     std::fill (st.smoothedGains.begin(),   st.smoothedGains.end(),   1.0f);
                     st.frameCount   = 0;
+                    st.accumCount   = 0;
                     st.outFifoWrite = 0;
                     st.outFifoRead  = 0;
                     st.outFifoCount = 0;
@@ -434,6 +597,37 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                     {
                         const int maskCol = juce::jlimit (0, printMaskCols - 1,
                                                           (int) std::floor (printColCursorD));
+                        usedMaskCol = maskCol;
+
+                        int activeRowMin = printMaskRows;
+                        int activeRowMax = -1;
+                        for (int row = 0; row < printMaskRows; ++row)
+                        {
+                            const float m = printMask[(size_t) (row * printMaskCols + maskCol)];
+                            if (m > 0.5f)
+                            {
+                                activeRowMin = juce::jmin (activeRowMin, row);
+                                activeRowMax = juce::jmax (activeRowMax, row);
+                            }
+                        }
+
+                        const bool hasActiveRows = (activeRowMax >= activeRowMin);
+                        const float binHz = (float) sr / (float) juce::jmax (1, N);
+
+                        float activeLowHz = fLow;
+                        float activeHighHz = fHigh;
+                        if (hasActiveRows && printMaskRows > 1)
+                        {
+                            const float rowToNorm = 1.0f / (float) (printMaskRows - 1);
+                            activeLowHz  = fLow + ((float) activeRowMin * rowToNorm) * denom;
+                            activeHighHz = fLow + ((float) activeRowMax * rowToNorm) * denom;
+                        }
+
+                        // 保护带：黑色形状上下限之外强制旁通；边缘给一个很陡的过渡，抑制误挖孔竖线。
+                        const float protectPadHz = juce::jmax (2.0f * binHz, 0.005f * denom);
+                        const float edgeSlopeHz  = juce::jmax (1.5f * binHz, 0.002f * denom);
+                        const float protectLowHz = activeLowHz  - protectPadHz;
+                        const float protectHighHz = activeHighHz + protectPadHz;
 
                         for (int k = 0; k < numBins; ++k)
                         {
@@ -443,15 +637,59 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                                 targetBinGains[(size_t) k] = 1.0f;
                                 continue;
                             }
+
                             const float norm = (hz - fLow) / denom;
-                            const int   row  = juce::jlimit (0, printMaskRows - 1,
-                                                             (int) std::floor (norm * (printMaskRows - 1)));
+                            const int row = juce::jlimit (0, printMaskRows - 1,
+                                                          (int) std::floor (norm * (printMaskRows - 1)));
                             const float m = printMask[(size_t) (row * printMaskCols + maskCol)];
-                            const float g = invert
+                            float g = invert
                                 ? juce::jmap (m, ratioGain, 1.0f)
                                 : juce::jmap (m, 1.0f,      ratioGain);
+
+                            if (hasActiveRows)
+                            {
+                                if (hz < protectLowHz || hz > protectHighHz)
+                                {
+                                    g = 1.0f;
+                                }
+                                else
+                                {
+                                    const float loEdge = juce::jlimit (0.0f, 1.0f, (hz - protectLowHz) / edgeSlopeHz);
+                                    const float hiEdge = juce::jlimit (0.0f, 1.0f, (protectHighHz - hz) / edgeSlopeHz);
+                                    const float edgeKeep = juce::jmin (loEdge, hiEdge);
+                                    g = 1.0f + (g - 1.0f) * edgeKeep;
+                                }
+                            }
+
                             targetBinGains[(size_t) k] = g;
                         }
+
+                        // 频域轻度平滑（仅对掩码覆盖频段），抑制列间量化造成的孤立窄带竖线。
+                        {
+                            std::vector<float> filtered = targetBinGains;
+                            for (int k = 1; k < numBins - 1; ++k)
+                            {
+                                const float hz = (float) k / (float) (N / 2) * maxHz;
+                                if (hz < fLow || hz > fHigh)
+                                    continue;
+
+                                filtered[(size_t) k] = 0.2f * targetBinGains[(size_t) (k - 1)]
+                                                     + 0.6f * targetBinGains[(size_t) k]
+                                                     + 0.2f * targetBinGains[(size_t) (k + 1)];
+                            }
+                            targetBinGains.swap (filtered);
+                        }
+
+                        double gSum = 0.0;
+                        gainMin = targetBinGains[0];
+                        gainMax = targetBinGains[0];
+                        for (float g : targetBinGains)
+                        {
+                            gainMin = juce::jmin (gainMin, g);
+                            gainMax = juce::jmax (gainMax, g);
+                            gSum += g;
+                        }
+                        gainMean = (float) (gSum / (double) juce::jmax (1, (int) targetBinGains.size()));
 
                         // 游标只推进一次（所有通道共享同一个时间点）
                         printColCursorD += printColPerSample * (double) hop;
@@ -471,6 +709,9 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             {
                 // 退出 Print 后的尾段：继续以 unity 增益驱动 STFT，保证 wet 尾部连续
                 std::fill (targetBinGains.begin(), targetBinGains.end(), 1.0f);
+                gainMin = 1.0f;
+                gainMax = 1.0f;
+                gainMean = 1.0f;
             }
 
             // 所有通道处理同一个 STFT 帧
@@ -502,6 +743,7 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         for (int ch = 0; ch < numCh; ++ch)
         {
             auto& st = stftStates[(size_t) ch];
+            const float dryIn = buffer.getReadPointer (ch)[n];
             float wet = delayedDrySamples[(size_t) ch]; // FIFO 为空时回退到延迟 dry，避免硬切
             if (st.outFifoCount > 0)
             {
@@ -511,18 +753,70 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             }
             wetSamples[(size_t) ch] = wet;
 
-            buffer.getWritePointer (ch)[n] = delayedDrySamples[(size_t) ch] * mixDry
-                                           + wetSamples[(size_t) ch] * mixWet;
+            const float out = delayedDrySamples[(size_t) ch] * mixDry
+                            + wetSamples[(size_t) ch] * mixWet;
+            buffer.getWritePointer (ch)[n] = out;
+
+            MathLogEvent e;
+            {
+                std::lock_guard<std::mutex> lk (mathLogMutex);
+                e.sampleIndex = mathLog.globalSampleCounter;
+            }
+            e.channel = ch;
+            e.stftFrame = st.lastProcessedFrame;
+            e.printRequested = requestedPrint;
+            e.stftPathActive = stftPathActive;
+            e.frameReady = frameReady;
+            e.printStateFlipped = printStateFlipped;
+            e.maskCol = usedMaskCol;
+            e.fadeDelaySamples = printFadeDelaySamples;
+            e.fadeSamplesRemaining = dryWetFadeSamplesRemaining;
+            e.printWarmupRemaining = printWarmupFramesRemaining;
+            e.accumCount = st.accumCount;
+            e.printColCursor = (float) printColCursorD;
+            e.targetGainMin = gainMin;
+            e.targetGainMax = gainMax;
+            e.targetGainMean = gainMean;
+            e.dryIn = dryIn;
+            e.delayedDry = delayedDrySamples[(size_t) ch];
+            e.wetOut = wetSamples[(size_t) ch];
+            e.outSample = out;
+            e.dryWetMix = mixWet;
+            e.dryWetTarget = dryWetTarget;
+            e.targetGainProbe = st.lastTargetGainProbe;
+            e.smoothGainProbe = st.lastSmoothGainProbe;
+            e.fftMagProbe = st.lastFftMagProbe;
+            e.ifftProbe = st.lastIfftProbe;
+            e.olaNormProbe = st.lastOlaNormProbe;
+            e.outFifoCount = st.outFifoCount;
+            pushMathLogEvent (e);
+        }
+
+        {
+            std::lock_guard<std::mutex> lk (mathLogMutex);
+            ++mathLog.globalSampleCounter;
+        }
+
+        // 延迟启动 crossfade：等待 STFT 管线（OLA warmup / smoothedGains 恢复）达到稳态
+        if (printFadeDelaySamples > 0)
+        {
+            --printFadeDelaySamples;
+            if (printFadeDelaySamples <= 0)
+            {
+                // 延迟结束，启动实际 crossfade（目标值在状态翻转时已设定）
+                dryWetFadeSamplesRemaining = juce::jmax (1, dryWetFadeTotalSamples);
+            }
         }
 
         if (dryWetFadeSamplesRemaining > 0)
         {
-            dryWetMix += (dryWetTarget - dryWetMix) / (float) dryWetFadeSamplesRemaining;
+            const float step = 1.0f / (float) juce::jmax (1, dryWetFadeTotalSamples);
+            dryWetMix += (dryWetTarget - dryWetMix) * step;
             --dryWetFadeSamplesRemaining;
             if (dryWetFadeSamplesRemaining <= 0)
                 dryWetMix = dryWetTarget;
         }
-        else
+        else if (printFadeDelaySamples <= 0)
         {
             dryWetMix = dryWetTarget;
         }
@@ -648,7 +942,7 @@ void SpectrumTagAudioProcessor::startPrint (std::vector<float>&& maskData,
     printFreqHighNorm = juce::jlimit (0.0f, 1.0f, freqHighNorm);
     printDurationSec  = juce::jmax (0.05, durationSeconds);
     printColCursorD   = 0.0;
-    printWarmupFramesRemaining = juce::jmax (0, stftSize / juce::jmax (1, stftHop));
+    printWarmupFramesRemaining = juce::jmax (0, 2 * stftSize / juce::jmax (1, stftHop));
 
     const double sr = getSampleRate();
     const double safeSr = sr > 1000.0 ? sr : 44100.0;
