@@ -686,6 +686,39 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     const int numCh    = juce::jmin (totalNumInputChannels, (int) stftStates.size());
     const int numSamps = buffer.getNumSamples();
 
+    // -------------------------------------------------------------------
+    //  Print Trigger（自动化）—— sample-clock 加载抑制窗口扣减
+    //  + 离线/无 UI 场景下由音频线程自行消费 automationPrintRequest。
+    //
+    //  实时模式（isNonRealtime == false）：保持原行为，
+    //    automationPrintRequest 由 Editor 的 30Hz timer 在消息线程里取走，
+    //    可以充分复用 UI 当前实时的 ComboBox / ImageBox 状态；
+    //    若实时模式下用户没打开 UI，请求会暂时挂起直至 UI 打开（符合常规体验）。
+    //  离线/导出（isNonRealtime == true）：
+    //    Editor timer 不会按实时节奏跑，宿主多数情况下根本不创建 Editor。
+    //    这里直接在音频线程内取走并由 Processor 自行启动 Print，
+    //    确保导出时自动化曲线触发的水印能正确写入输出音频。
+    //    （此分支会做一次性的 image I/O，但离线渲染本身是非实时批处理，可接受。）
+    // -------------------------------------------------------------------
+    {
+        int remaining = triggerSuppressSamplesRemaining.load (std::memory_order_acquire);
+        if (remaining > 0)
+        {
+            const int next = juce::jmax (0, remaining - juce::jmax (0, numSamps));
+            triggerSuppressSamplesRemaining.store (next, std::memory_order_release);
+        }
+    }
+
+    if (isNonRealtime()
+        && automationPrintRequest.load (std::memory_order_acquire)
+        && ! printRunning.load())
+    {
+        // 取走标志位，避免本帧失败后下帧又试一次（仍然失败时按用户视角是"无图片"等
+        // 永久性不可用情况，反复重试只会拖慢导出）。
+        automationPrintRequest.store (false, std::memory_order_release);
+        triggerPrintFromAutomationInternal();
+    }
+
     const bool printActive = printRunning.load();
     const double sr        = getSampleRate();
 
@@ -1424,13 +1457,22 @@ void SpectrumTagAudioProcessor::setStateInformation (const void* data, int sizeI
         editorState = s;
     }
 
-    // 工程加载后的伪边沿抑制：在接下来的 ~120ms 内忽略所有 trigger 上升沿，
-    // 避免 DAW 重放参数时意外启动 Print。同时同步 lastPrintTriggerState，
-    // 下一次 false→true 才会被认为算一个"新"边沿。
+    // 工程加载后的伪边沿抑制：在接下来的 ~100ms 等量样本内忽略所有 trigger 上升沿，
+    // 避免 DAW 重放参数时意外启动 Print。
+    //  - 之前用墙钟（juce::Time::currentTimeMillis）计时，在【离线导出/渲染】场景下
+    //    宿主推进 audio block 远快于实时，墙钟 100~120ms 内可能已渲染了好几秒音频，
+    //    导致自动化曲线开头的第一次上升沿被误吞掉 → 水印缺失。
+    //  - 改为 sample-clock：在 processBlock 入口按 numSamples 扣减，与音频时间锚定，
+    //    实时与离线行为一致。
     if (printTriggerParam != nullptr)
         lastPrintTriggerState.store (printTriggerParam->get());
     automationPrintRequest.store (false);
-    triggerSuppressEndTimeMs = juce::Time::currentTimeMillis() + 120;
+
+    const double sr = getSampleRate();
+    const int suppressSamples = juce::jmax (1024,
+        (int) std::round ((sr > 1000.0 ? sr : 44100.0) * 0.10));
+    triggerSuppressSamplesRemaining.store (suppressSamples, std::memory_order_release);
+    triggerSuppressEndTimeMs = juce::Time::currentTimeMillis() + 120; // 兼容字段（不再使用）
 }
 
 // ===== APVTS::Listener =====
@@ -1442,7 +1484,8 @@ void SpectrumTagAudioProcessor::parameterChanged (const juce::String& parameterI
     const bool prev  = lastPrintTriggerState.exchange (nowOn);
 
     // 加载抑制窗口内：不产生请求，仅同步状态。
-    if (juce::Time::currentTimeMillis() < triggerSuppressEndTimeMs) return;
+    // 用 sample-clock：只要 processBlock 还没把窗口扣减到 0 就视作"加载抑制中"。
+    if (triggerSuppressSamplesRemaining.load (std::memory_order_acquire) > 0) return;
 
     // 上升沿：false → true
     if (nowOn && ! prev)
@@ -1452,6 +1495,156 @@ void SpectrumTagAudioProcessor::parameterChanged (const juce::String& parameterI
 bool SpectrumTagAudioProcessor::consumeAutomationPrintRequest()
 {
     return automationPrintRequest.exchange (false);
+}
+
+void SpectrumTagAudioProcessor::notifyEditorAttached()
+{
+    editorAttachCount.fetch_add (1, std::memory_order_acq_rel);
+}
+
+void SpectrumTagAudioProcessor::notifyEditorDetached()
+{
+    int prev = editorAttachCount.fetch_sub (1, std::memory_order_acq_rel);
+    if (prev <= 0)
+        editorAttachCount.store (0, std::memory_order_release); // 防御性归零
+}
+
+// ----------------------------------------------------------------------------
+//  triggerPrintFromAutomationInternal
+//   离线导出（isNonRealtime）或宿主未创建 Editor 时由 processBlock 入口调用。
+//   完整复现 Editor::onPrintClicked 中的 mask 生成与 startPrint 逻辑，
+//   但所有数据来源都改为 Processor 自身（EditorState 镜像 + APVTS）。
+//
+//   注意：此函数会做文件 I/O（juce::ImageFileFormat::loadFrom），
+//   因此仅在以下两种场景调用是安全/可接受的：
+//     1) isNonRealtime() == true：宿主导出/冻结，本身就不要求实时；
+//     2) editorAttachCount == 0：实时模式下用户没打开过 UI，极小概率，
+//        I/O 影响有限且必要；用户关心的"声音不卡"前提下打印也才有意义。
+//   返回 true = 成功调起 startPrint；false = 未启动（mask/图片不可用等）。
+// ----------------------------------------------------------------------------
+bool SpectrumTagAudioProcessor::triggerPrintFromAutomationInternal()
+{
+    if (printRunning.load()) return false;
+
+    // 1) 取 EditorState 镜像（图片路径 + 归一化矩形）
+    EditorState state = getEditorState();
+    if (! state.hasValidValues || state.imagePath.isEmpty()) return false;
+
+    juce::File imgFile (state.imagePath);
+    if (! imgFile.existsAsFile()) return false;
+
+    juce::Image src = juce::ImageFileFormat::loadFrom (imgFile);
+    if (! src.isValid()) return false;
+
+    // 2) 与 ImageBoxComponent::preprocessImage 完全一致的二值化逻辑
+    //    （独立复现，避免 Processor 反向依赖 Editor）
+    const int maxDim = 2048;
+    int w = src.getWidth();
+    int h = src.getHeight();
+    if (juce::jmax (w, h) > maxDim)
+    {
+        const float scale = (float) maxDim / (float) juce::jmax (w, h);
+        w = juce::jmax (1, juce::roundToInt (w * scale));
+        h = juce::jmax (1, juce::roundToInt (h * scale));
+    }
+    juce::Image scaled (juce::Image::ARGB, w, h, true);
+    {
+        juce::Graphics g (scaled);
+        g.drawImage (src, 0.0f, 0.0f, (float) w, (float) h,
+                     0, 0, src.getWidth(), src.getHeight());
+    }
+
+    juce::Image::BitmapData srcBmp (scaled, juce::Image::BitmapData::readOnly);
+    int countTransparent = 0;
+    int countOpaque      = 0;
+    double sumBrightness = 0.0;
+    const int totalPx    = w * h;
+    for (int yy = 0; yy < h; ++yy)
+        for (int xx = 0; xx < w; ++xx)
+        {
+            const auto px = srcBmp.getPixelColour (xx, yy);
+            if (px.getAlpha() < 128) ++countTransparent; else ++countOpaque;
+            sumBrightness += px.getBrightness();
+        }
+    const bool useAlphaMode    = (countTransparent > totalPx / 20);
+    const float meanBrightness = (float) (sumBrightness / juce::jmax (1, totalPx));
+
+    juce::Image binary (juce::Image::ARGB, w, h, true);
+    {
+        juce::Image::BitmapData dst (binary, juce::Image::BitmapData::readWrite);
+        for (int yy = 0; yy < h; ++yy)
+            for (int xx = 0; xx < w; ++xx)
+            {
+                const auto px = srcBmp.getPixelColour (xx, yy);
+                const bool inShape = useAlphaMode
+                    ? (px.getAlpha() >= 128)
+                    : (px.getBrightness() < meanBrightness);
+                dst.setPixelColour (xx, yy, inShape ? juce::Colour (0xff111111)
+                                                    : juce::Colour (0x00000000));
+            }
+    }
+
+    // 3) 计算 rows / cols / 频率范围 / duration
+    const int fftSizeIdx = (int) *apvts.getRawParameterValue (ParameterIDs::fftSize);
+    const int fftSize    = (fftSizeIdx == 0 ? 1024 : fftSizeIdx == 1 ? 2048
+                          : fftSizeIdx == 2 ? 4096 : 8192);
+    const int rows = fftSize / 2 + 1;
+
+    // 离线/无 UI 场景下没有真实组件像素宽度。约定：
+    //  - cols 取一个稳定的"图片像素宽度"参考：min(图片像素宽度, 4096)；
+    //  - duration 退化为：以 1.0x speed 视角下大约 1s（合理的中间值）。
+    //    UI 模式下 duration = boxWidthPx / (30*speedPx)，box ≈ 600px、speedPx=2 时
+    //    刚好 ≈ 10s；这里离线模式没有"box 宽度"概念，统一以 5s 作为默认时长，
+    //    既能让水印充分写入、又不会无谓拉长导出时间。
+    int cols = juce::jmax (4, juce::jmin (4096, w));
+
+    constexpr double kOfflinePrintSeconds = 5.0;
+    const double seconds = kOfflinePrintSeconds;
+
+    // 频率范围：把 imgRect Y 区间通过 yNorm→Hz 反推。这里用线性映射的实现就够了——
+    //  log/linear 仅影响显示坐标系，对最终 STFT 处理没区别（Processor 端按 lowNorm/highNorm
+    //  两个比例值在 [0, Nyquist] 区间反推 bin 范围）。
+    constexpr float kMinDisplayHz = 20.0f;
+    constexpr float kMaxDisplayHz = 22000.0f;
+    const double sr = getSampleRate() > 1000.0 ? getSampleRate() : 44100.0;
+    const float maxHz = (float) (sr * 0.5);
+    const float topHz = juce::jmax (kMinDisplayHz + 1.0f, juce::jmin (kMaxDisplayHz, maxHz));
+
+    const float yTop = juce::jlimit (0.0f, 1.0f, state.imgRectYNorm);
+    const float yBot = juce::jlimit (0.0f, 1.0f, state.imgRectYNorm + state.imgRectHNorm);
+    auto yNormToHzLinear = [&] (float y) {
+        const float t = juce::jlimit (0.0f, 1.0f, 1.0f - y);
+        return kMinDisplayHz + t * (topHz - kMinDisplayHz);
+    };
+    const float fHz_top    = yNormToHzLinear (yTop);
+    const float fHz_bottom = yNormToHzLinear (yBot);
+    const float fLow  = juce::jmin (fHz_top, fHz_bottom);
+    const float fHigh = juce::jmax (fHz_top, fHz_bottom);
+    const float lowNorm  = juce::jlimit (0.0f, 1.0f, fLow  / juce::jmax (1.0f, maxHz));
+    const float highNorm = juce::jlimit (0.0f, 1.0f, fHigh / juce::jmax (1.0f, maxHz));
+
+    // 4) 把 binary 渲成 mask（与 ImageBoxComponent::generateMask 完全一致）
+    std::vector<float> mask ((size_t) (rows * cols), 0.0f);
+    {
+        juce::Image::BitmapData bmp (binary, juce::Image::BitmapData::readOnly);
+        for (int row = 0; row < rows; ++row)
+        {
+            const float ny = rows > 1 ? (float) (rows - 1 - row) / (float) (rows - 1) : 0.0f;
+            const int   imgY = juce::jlimit (0, h - 1, juce::roundToInt (ny * (h - 1)));
+            for (int col = 0; col < cols; ++col)
+            {
+                const float nx = cols > 1 ? (float) col / (float) (cols - 1) : 0.0f;
+                const int   imgX = juce::jlimit (0, w - 1, juce::roundToInt (nx * (w - 1)));
+                const auto px = bmp.getPixelColour (imgX, imgY);
+                mask[(size_t) (row * cols + col)] = (px.getAlpha() > 128) ? 1.0f : 0.0f;
+            }
+        }
+    }
+
+    // 5) 标记数学日志（与 UI 路径行为一致）并启动
+    markPrintClickAndBeginMathLog();
+    startPrint (std::move (mask), rows, cols, lowNorm, highNorm, seconds);
+    return true;
 }
 
 // ===== 参数布局 =====

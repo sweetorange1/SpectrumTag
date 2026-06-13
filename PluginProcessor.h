@@ -114,6 +114,13 @@ public:
     bool consumeAutomationPrintRequest();   // Editor timer 调用：取走一次自动化触发请求
     juce::AudioParameterBool* getPrintTriggerParam() const noexcept { return printTriggerParam; }
 
+    // ===== Editor 出现/消失通知 =====
+    //  Processor 用它判断"是否有可消费 automationPrintRequest 的 UI"。
+    //  当 Editor 不存在（典型场景：DAW 离线渲染/导出，绝大多数宿主不会创建 Editor），
+    //  Processor 就会在 processBlock 入口由音频线程自行消费触发请求并启动 Print。
+    void notifyEditorAttached();
+    void notifyEditorDetached();
+
 private:
     // =========================================================================
     //  STFT / OLA 状态（每通道独立）
@@ -204,8 +211,10 @@ private:
     // ===== Print Trigger 自动化状态 =====
     juce::AudioParameterBool* printTriggerParam = nullptr;     // 在 createParameterLayout 中保留指针
     std::atomic<bool> lastPrintTriggerState { false };         // 上一次观察到的参数布尔值（用于检测上升沿）
-    std::atomic<bool> automationPrintRequest { false };        // 上升沿置位 → 由 Editor timer 消费
-    juce::int64       triggerSuppressEndTimeMs = 0;            // 加载抑制窗口结束的绝对 ms 时刻
+    std::atomic<bool> automationPrintRequest { false };        // 上升沿置位 → 由 Editor timer 或音频线程消费
+    juce::int64       triggerSuppressEndTimeMs = 0;            // [DEPRECATED] 旧的墙钟版加载抑制窗口（保留以避免大改）
+    std::atomic<int>  triggerSuppressSamplesRemaining { 0 };   // sample-clock 加载抑制窗口（在 processBlock 入口扣减）
+    std::atomic<int>  editorAttachCount { 0 };                 // 当前活跃 Editor 数量（>0 表示 UI 在场）
 
     // ===== STFT 参数 =====
     int  stftSize = 4096;
@@ -327,6 +336,15 @@ private:
                             bool isPost, int64_t startSample,
                             float prevTailSample, BlockStats& outStats) const;
     void pushBlockStats (const BlockStats& s);
+
+    // 离线/无 UI 场景下，由音频线程自行启动 Print：
+    //  - 读取已镜像到 Processor 的 EditorState（imagePath + 归一化矩形）；
+    //  - 读取 APVTS 当前参数（fftSize / fftScale / speed）；
+    //  - 加载图片、二值化、生成 mask；
+    //  - 调用 startPrint。
+    //  调用方应保证：当前 !printRunning，且 automationPrintRequest 已被置位。
+    //  返回是否成功启动。
+    bool triggerPrintFromAutomationInternal();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumTagAudioProcessor)
 };

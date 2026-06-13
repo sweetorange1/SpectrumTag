@@ -16,7 +16,7 @@ FetchContent_MakeAvailable(juce)
 juce_add_plugin(
         SpectrumTag
         PRODUCT_NAME "SpectrumTag"
-VERSION 1.2.0
+        VERSION 1.2.0
         COMPANY_NAME "iisaacbeas.cn"
         BUNDLE_ID "cn.iisaacbeas.SpectrumTag"
         PLUGIN_MANUFACTURER_CODE Pupo

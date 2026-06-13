@@ -873,6 +873,12 @@ private:
 SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAudioProcessor& p)
     : juce::AudioProcessorEditor (&p), processor (p)
 {
+    // 通知 Processor：有 UI 在场。
+    //  Processor 会据此决定 automationPrintRequest 由谁消费：
+    //    - 有 Editor 且实时模式：由 Editor timer（消息线程）消费 → onPrintClicked；
+    //    - 无 Editor 或离线导出：由音频线程消费 → triggerPrintFromAutomationInternal。
+    processor.notifyEditorAttached();
+
     basementTypeface = juce::Typeface::createSystemTypefaceFor (
         BinaryData::BasementGrotesqueBlack_v1_202_otf,
         BinaryData::BasementGrotesqueBlack_v1_202_otfSize);
@@ -971,6 +977,7 @@ SpectrumTagAudioProcessorEditor::~SpectrumTagAudioProcessorEditor()
     setConstrainer (nullptr);
     stopTimer();
     setLookAndFeel (nullptr);
+    processor.notifyEditorDetached();
 }
 
 // ============================================================================
