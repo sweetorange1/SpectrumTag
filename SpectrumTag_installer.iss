@@ -1,6 +1,8 @@
 #define MyAppName "SpectrumTag"
-#define MyAppVersion "1.1.7"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "iisaacbeats.cn"
+#define MyAppURL "https://iisaacbeats.cn"
+#define MyAppCopyright "Copyright (C) 2026 iisaacbeats.cn"
 #define MyPluginBundle "SpectrumTag.vst3"
 
 [Setup]
@@ -9,6 +11,16 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
+AppCopyright={#MyAppCopyright}
+VersionInfoVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} VST3 Audio Plug-in Setup
+VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion={#MyAppVersion}
+UninstallDisplayName={#MyAppName} {#MyAppVersion}
 DefaultDirName={commoncf}\VST3\iisaacbeats.cn
 DirExistsWarning=no
 OutputDir=dist
@@ -29,7 +41,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "cmake-build-release\SpectrumTag_artefacts\Release\VST3\{#MyPluginBundle}\*"; DestDir: "{app}\{#MyPluginBundle}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "presents\*"; DestDir: "{userdocs}\spectrumtagpreset"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Code]
 var

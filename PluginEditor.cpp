@@ -17,7 +17,9 @@ namespace
 
     // 调色板（取自 UI.png）
     const juce::Colour kBgColour       { 0xff1a1c1f };
-    const juce::Colour kPanelColour    { 0xff111315 };
+const juce::Colour kPanelColour    { 0xff111315 };
+// 频谱图（瀑布图）专用背景：纯黑，确保未绘制频谱数据时为黑底而非面板灰底。
+const juce::Colour kSpectrogramBgColour { 0xff000000 };
     const juce::Colour kTextWhite      { 0xfff2f2f2 };
     const juce::Colour kTextSub        { 0xffbfbfbf };
     const juce::Colour kComboBg        { 0xffe9e9e9 };
@@ -623,7 +625,8 @@ public:
             waterfall = juce::Image (juce::Image::RGB, contentBounds.getWidth(),
                                                        contentBounds.getHeight(), true);
             juce::Graphics gg (waterfall);
-            gg.fillAll (kPanelColour);
+            // 频谱图初始背景统一使用纯黑，避免显示软件面板灰底。
+            gg.fillAll (kSpectrogramBgColour);
         }
 
         if (imageBox != nullptr)
@@ -633,25 +636,48 @@ public:
     // 由 Editor 定时调用：把最新一帧的幅度谱滚到 waterfall 的最右边
     void pushFrame (const std::vector<float>& mags, float sampleRate, int speedPxPerTick)
     {
-        if (waterfall.isNull() || mags.empty() || speedPxPerTick <= 0) return;
+        if (waterfall.isNull() || speedPxPerTick <= 0) return;
 
         const int W = waterfall.getWidth();
         const int H = waterfall.getHeight();
 
         speedPxPerTick = juce::jmin (speedPxPerTick, W);
 
-        // ---- 过期检测：display FFT 未产生新数据时保持上一帧，避免黑线 ----
+        // ---- 解耦 FFT 帧率与水平滚动速度 ----
+        // 关键修复：滚动节奏由 timer (30Hz) + speed 参数共同决定，
+        // 与 display FFT 帧率无关，从而保证不同 FFT Size 下水平滚动速度恒定。
+        // 当 display FFT 暂未产生新帧时（FFT Size 越大越频繁），
+        // 用上一次缓存的幅度谱继续填充新滚出的列：
+        // 视觉上同一帧光谱被"拉宽"到多个像素列，符合"FFT 大 → 时间分辨率低"的物理含义，
+        // 而不会让滚动速度本身变慢。
         const int currentCounter = processor.getDisplayUpdateCounter();
-        if (currentCounter == lastDisplayCounter)
+        const bool hasNewFrame = (currentCounter != lastDisplayCounter);
+        if (hasNewFrame)
         {
+            lastDisplayCounter = currentCounter;
+            if (! mags.empty())
+                lastMags = mags;
+        }
+
+        // 若至今从未收到任何幅度数据，保持纯黑底，仅滚动
+        const std::vector<float>& useMags = lastMags.empty() ? mags : lastMags;
+        if (useMags.empty())
+        {
+            // 仍然按 timer 节奏滚动，最右侧填充黑色，避免重复同一像素列
+            if (speedPxPerTick > 0)
+            {
+                waterfall.moveImageSection (0, 0, speedPxPerTick, 0, W - speedPxPerTick, H);
+                juce::Graphics gg (waterfall);
+                gg.setColour (kSpectrogramBgColour);
+                gg.fillRect (W - speedPxPerTick, 0, speedPxPerTick, H);
+            }
             repaint();
             return;
         }
-        lastDisplayCounter = currentCounter;
 
         // ---- 幅度映射：固定参考，不做硬门限清屏 ----
         const float maxHz   = sampleRate * 0.5f;
-        const int   numBins = (int) mags.size();
+        const int   numBins = (int) useMags.size();
 
         // 1) 整体向左滚动 speedPxPerTick 个像素
         if (speedPxPerTick > 0)
@@ -677,7 +703,7 @@ public:
             const int b0 = juce::jlimit (0, numBins - 1, (int) std::floor (binF));
             const int b1 = juce::jlimit (0, numBins - 1, b0 + 1);
             const float t = juce::jlimit (0.0f, 1.0f, binF - (float) b0);
-            const float mag = mags[(size_t) b0] + (mags[(size_t) b1] - mags[(size_t) b0]) * t;
+            const float mag = useMags[(size_t) b0] + (useMags[(size_t) b1] - useMags[(size_t) b0]) * t;
 
             const float db = juce::Decibels::gainToDecibels (juce::jmax (1e-9f, mag));
             const float dbNorm = juce::jlimit (0.0f, 1.0f, (db - dbFloor) / (-dbFloor));
@@ -695,8 +721,8 @@ public:
         // 频率刻度
         drawFrequencyAxis (g);
 
-        // 主面板
-        g.setColour (kPanelColour);
+        // 主面板：频谱图未生成数据时直接显示纯黑底（替代旧的面板灰）
+        g.setColour (kSpectrogramBgColour);
         g.fillRect (contentBounds);
 
         if (! waterfall.isNull())
@@ -834,6 +860,9 @@ private:
     juce::Image                waterfall;
     int                        scaleMode = 0;  // 0 linear / 1 mel
     int                        lastDisplayCounter = -1;
+    // 缓存最近一次拿到的幅度谱：用于 FFT 帧率低于 timer 时
+    // 仍然按 timer 节奏滚动并填充列，保证滚动速度与 FFT Size 解耦。
+    std::vector<float>         lastMags;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumView)
 };
@@ -1095,6 +1124,29 @@ void SpectrumTagAudioProcessorEditor::resized()
 // ----------------------------------------------------------------------------
 void SpectrumTagAudioProcessorEditor::timerCallback()
 {
+    // === Print Trigger 自动化 ↔ UI 同步 ===
+    //  1) host 写入 trigger=true 且产生了上升沿 → Processor 会置位
+    //     automationPrintRequest；这里消费它并调用 onPrintClicked。
+    //  2) print 已结束，但参数仍为 true → 自动复位为 false，给下一次
+    //     上升沿让出空间。
+    if (auto* trig = processor.getPrintTriggerParam())
+    {
+        if (processor.consumeAutomationPrintRequest())
+            onPrintClicked();   // 内部会走状态 / 资源守门
+
+        const bool nowOn = trig->get();
+        if (nowOn && ! processor.isPrintRunning())
+        {
+            // print 已结束（或从未启动）但参数还是 true → 复位
+            // 这里多加一个微小的延迟阈值：只有上一次 timer 看到的也是
+            // "true & !running"时才干，避免 onPrintClicked() 刚返回、print 尚未
+            // 实际进入 running 状态的瞬间被误复位。
+            if (lastSeenTrigger)
+                trig->setValueNotifyingHost (0.0f);
+        }
+        lastSeenTrigger = nowOn;
+    }
+
     // 更新 Print 按钮启用状态
     if (! processor.isPrintRunning() && ! printButton.isEnabled())
         printButton.setEnabled (true);
@@ -1121,19 +1173,39 @@ void SpectrumTagAudioProcessorEditor::onPrintClicked()
     if (processor.isPrintRunning() || spectrumView == nullptr) return;
     auto& imgBox = spectrumView->getImageBox();
     if (! imgBox.hasImage()) return;
+
+    // UI 点击路径：同步通知 host 记录下这次点击（并且让外部看到 Print 参数变为 true）。
+    // 反正 parameterChanged 会被调用，但上升沿产生的 automationPrintRequest 会被下一
+    // 个 timer tick 消费 —— 当时 isPrintRunning 已为 true，offPrintClicked 会出“资源守门”
+    // 直接返回，不会重复启动。
+    if (auto* trig = processor.getPrintTriggerParam())
+    {
+        if (! trig->get())
+            trig->setValueNotifyingHost (1.0f);
+    }
+
     processor.markPrintClickAndBeginMathLog();
 
     // 1) 计算 mask 维度
-    //   rows = fft bins = fftSize/2 + 1
-    //   cols = 图片框宽度（像素）/ speedPx * 1帧像素？这里用 STFT 帧数表达：
-    //         cols = imgBoxWidthPx * (sampleRate / hopSize) / speedPxPerSecond
-    //   为简单：让 cols = 图片框宽度 px / speedPxPerTick * (timer 频率)
-    //   timer=30Hz, speedPxPerTick = max(1, round(speed*2))
-    //   每个 timer tick 滚动 speedPxPerTick px → 持续帧数 = imgBoxW / speedPxPerTick
-    //   STFT 帧数 = sampleRate / hopSize 每秒 → 这里我们让 mask 的列数 = STFT 帧数：
-    //   持续秒数 = imgBoxWidthPx / (30 * speedPxPerTick)
-    //   STFT帧/秒 = sampleRate / (fftSize/2)
-    //   cols = 持续秒数 * STFT帧每秒
+    //   rows = fft bins = fftSize/2 + 1   （仍然必须匹配 STFT bin 数，否则
+    //          Processor 端按 hz→row 索引会越界/降采样）
+    //
+    //   cols：与 FFT Size 完全解耦！
+    //   ----------------------------------------------------------------
+    //   旧实现把 cols 绑定到 STFT 帧率：cols = seconds * (sr / hop)，hop=N/4。
+    //   这导致 N=8192 时 cols 比 N=4096 少一半（每秒约 5.4 列 vs 10.8 列），
+    //   图片在水平方向被严重下采样 → 边缘模糊；而 N=4096 恰好命中
+    //   "cols ≈ 图片像素宽度"的甜点，看起来"最清晰"——这是巧合而非设计。
+    //
+    //   新策略：cols 直接 = 图片框像素宽度。
+    //   - 与 FFT Size 无关，所有 N 下都做 1:1 像素采样，水平细节保留一致；
+    //   - 时间上的"模糊"只剩 STFT 窗本身的时频不确定性（不可避免）；
+    //   - cols 不再"很小"，N=8192 时也能精细呈现图像列内容。
+    //
+    //   Processor 的 cursor 推进基于 cols / (duration * sr) col/sample，
+    //   STFT 每帧推进 hop 个 sample → 每帧推进 cols * hop / (duration * sr) 列。
+    //   该值可能 <1（同列被多帧采样，时间方向自然平滑）也可能 >1（跳列，
+    //   但图像横向已 1:1 对齐像素，无下采样损失）。
     const int fftSizeIdx = fftSizeCombo.getSelectedItemIndex();
     const int fftSize    = (fftSizeIdx == 0 ? 1024 : fftSizeIdx == 1 ? 2048
                           : fftSizeIdx == 2 ? 4096 : 8192);
@@ -1151,11 +1223,9 @@ void SpectrumTagAudioProcessorEditor::onPrintClicked()
     const int speedPxPerTick = juce::jmax (1, juce::roundToInt (speed * 2.0f));
     const float seconds = boxWidthPx / juce::jmax (1.0f, 30.0f * (float) speedPxPerTick);
 
-    // 关键：Processor 的 STFT hop = fftSize / 4，这里必须与之保持一致。
-    // 若误用 fftSize/2，会导致 mask 列数偏少，Print 提前结束（表现为按钮很快恢复可点）。
-    const int hopSize = juce::jmax (1, fftSize / 4);
-    const float framesPerSec = (float) (sr / (double) hopSize);
-    int cols = juce::jmax (4, juce::roundToInt (seconds * framesPerSec));
+    // cols = 图片框像素宽度（向上取整，至少 4 列，安全上限 4096）。
+    // 注意：framesPerSec/hopSize 在新策略下不再参与 cols 计算，仅供调试参考。
+    int cols = juce::jmax (4, juce::roundToInt (boxWidthPx));
     cols = juce::jmin (cols, 4096);  // 安全上限
 
     // 2) 计算图片框对应的归一化频率范围
@@ -1217,6 +1287,16 @@ void SpectrumTagAudioProcessorEditor::restoreEditorStateFromProcessor()
     {
         juce::File f (s.imagePath);
         if (f.existsAsFile())
+        {
             imgBox.loadImageFromFile (f);
+            missingImageNotified = false;
+        }
+        else if (! missingImageNotified)
+        {
+            // 非阻塞提示：不弹出模态框（避免阻塞 DAW 加载），只在状态栏临时带过。
+            // 后续实际在 ImageBox 占位区会仍然显示 "Choose picture"。
+            missingImageNotified = true;
+            juce::Logger::writeToLog ("[SpectrumTag] Saved image not found: " + s.imagePath);
+        }
     }
 }

@@ -1,159 +1,196 @@
-## SpectrumTag v1.1.0
+# SpectrumTag v1.2.0
 
-`SpectrumTag` 是一个基于 JUCE 的音频效果插件（VST3 / AU / Standalone），核心能力是将图片轮廓映射为频域掩码，并在实时音频上执行 STFT 频谱“印章”（Print）处理。
+**SpectrumTag** 是一款基于 [JUCE](https://juce.com) 框架的音频效果插件（VST3 / AU / Standalone），核心能力是把 **图片轮廓** 实时映射为 **频域掩码**，并通过 STFT/OLA 在音频信号上"印章"（Print）出对应的频谱图形。
 
-项目目标是：
-- 在不影响正常播放体验的前提下，把视觉形状稳定地“刻”进声音频谱；
-- 在实时场景中尽可能避免点击噪声、音量突变和时序错位；
-- 让后续开发者能快速理解并扩展算法链路与工程结构。
+> v1.2.0 为本插件的 **首个正式发布版本**。
 
 ---
 
-## 功能概览
+## 1. 核心特性
 
-- **实时频谱可视化（瀑布图）**
-  - 独立显示 FFT 路径，不直接参与音频处理。
-  - 可选 `FFT Size` 与显示刻度模式（linear / mel）。
+### 1.1 实时频谱可视化（瀑布图）
+- 独立的 FFT 显示路径，不参与音频处理；调整显示参数不会影响音质。
+- 可选 `FFT Size`（1024 / 2048 / 4096 / 8192）与显示刻度（线性 / Mel）。
+- 频谱区域**初始即填充纯黑背景**，避免加载初期出现宿主软件灰色底色。
+- 频谱**水平滚动速度与 FFT Size 解耦**：调整 FFT Size 仅改变频率分辨率，时间轴滚动速率保持稳定。
 
-- **图片驱动频谱印章（Print）**
-  - 用户在频谱视图中放置图片框（支持拖拽与等比缩放）。
-  - 图片经预处理生成二值/灰度掩码后，映射到目标频段与时间列。
-  - Print 按下后，按时间推进掩码列，对 STFT bin 增益做逐帧调制。
+### 1.2 图片驱动频谱印章（Print）
+- 在频谱视图中放置图片框，支持**鼠标拖拽**与**等比缩放**。
+- 图片经预处理生成掩码后，沿时间列推进、对 STFT bin 增益做逐帧调制。
+- Print 启动具有**预热机制**，先填充 OLA 管线再消费掩码列，避免"从中间开始绘制"的问题。
+- 不同 FFT Size 下图像边缘均保持清晰，图像首字符不再出现"半截绘制"。
 
-- **参数控制**
-  - `FFT Size`：窗口长度（影响时频分辨率与处理延迟）。
-  - `FFT scale`：显示坐标（线性/Mel，主要影响 UI 显示）。
-  - `Speed`：图片在时间轴推进速度。
-  - `Amplitude Ratio`：掩码作用强度（映射到频域增益）。
-  - `Invert`：掩码反相映射逻辑。
+### 1.3 参数控制
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `FFT Size` | Choice | 1024 / 2048 / 4096 / 8192，影响时频分辨率与算法延迟 |
+| `FFT scale` | Choice | 频谱显示刻度：linear / mel（仅影响 UI） |
+| `Speed` | Float | 图片沿时间轴推进的速度 |
+| `Amplitude Ratio` | Float | 掩码作用强度（频域增益映射），范围 0.0 – 1.5 |
+| `Invert` | Bool | 掩码反相 |
+| `Print Trigger` | Bool | **可被 DAW 自动化、MIDI Learn 控制** 的 Print 触发器（v1.2.0 新增） |
 
-- **平滑与切换机制（v1.1.0）**
-  - 逐 bin 增益平滑，降低频域突变带来的粗糙感。
-  - Dry/Wet 交叉渐变（crossfade），覆盖 Print 进入与退出。
-  - Dry 路径延迟对齐到 Wet 延迟基准，降低切换时序错位风险。
+### 1.4 平滑与切换机制
+- **逐 bin 增益平滑**：降低频域突变带来的粗糙感。
+- **Dry/Wet 交叉渐变**：覆盖 Print 进入与退出，避免硬切换。
+- **Dry 路径延迟对齐**：dry 信号通过延迟环对齐到 `N - hop`，与 wet 共享时间基准，消除切换瞬间的相位错位与点击声。
+- **WOLA 重建归一化**：输出叠加时同步累计窗平方能量、逐样本归一化，减少整体增益漂移。
 
----
+### 1.5 工程持久化（v1.2.0 新增）
+- **图片选择状态自动保存**：DAW 工程保存时会一并记录当前选中的图片路径与图片框位置；重新加载工程时自动恢复。
+- **图片文件丢失保护**：若工程迁移到其它机器或图片被移动，加载工程不会阻塞，会在日志中给出非阻塞提示，UI 自动回退到"Choose picture"占位状态。
 
-## 算法与音频链路
+### 1.6 Print 自动化与 MIDI Learn（v1.2.0 新增）
+插件向宿主软件暴露布尔类型自动化参数 **`Print Trigger`**，支持：
+- DAW **自动化曲线录制 / 回放**；
+- DAW **MIDI Learn**（用 MIDI 控制器物理触发 Print）；
+- 与 UI Print 按钮**双向同步**：手动点击会回写参数，外部触发会同步到按钮状态。
 
-### 1) 总体处理流程
+为保证可靠性，触发链路设计了 **五层防误触保护**：
 
-1. 输入音频进入每通道独立的 STFT 状态机。
-2. 以 `N` 点窗口、`hop = N/4`（75% overlap）分帧。
-3. 对每帧执行 FFT，得到复频谱（保留相位）。
-4. 根据当前 Print 列与频率映射计算每个 bin 的目标增益。
-5. 目标增益与历史增益做平滑后，作用于频谱幅度。
-6. IFFT 回时域并进行 WOLA（窗函数重叠相加 + 归一化）。
-7. 输出进入 wet FIFO，并与延迟对齐的 dry 信号做 crossfade。
-
-### 2) 关键设计要点
-
-- **相位保留**
-  - 仅调整幅度，不直接篡改相位，降低重建伪影。
-
-- **WOLA 归一化**
-  - 输出叠加时同步累计窗平方能量，逐样本归一化，减少整体增益漂移。
-
-- **预热机制（warmup）**
-  - Print 刚开始时先填充 OLA 管线，预热期间不消费掩码列，避免“从中间开始绘制”的观感。
-
-- **列游标单次推进**
-  - 在 sample-major 逻辑中统一推进，避免多通道重复推进导致时间轴跳变。
-
-- **切换时序控制（v1.1.0）**
-  - `dryWetMix` 在进入/退出 Print 时向目标值平滑过渡（默认约 8ms）。
-  - Dry 信号通过延迟环对齐到 `N - hop`，与 wet 共享时间基准，减少瞬态点击与错位。
+| 层级 | 机制 | 作用 |
+| --- | --- | --- |
+| L1 | **边缘触发** | 仅在 `false → true` 上升沿响应，忽略保持态与下降沿 |
+| L2 | **状态守门** | Print 进行中再次触发会被忽略，杜绝重复启动 |
+| L3 | **资源守门** | 未选择图片时触发不生效 |
+| L4 | **自动复位** | Print 结束后自动把参数复位为 `false`，下一次上升沿才能再次触发 |
+| L5 | **加载抑制** | 工程加载完成后约 120 ms 内忽略所有上升沿，避免 DAW 参数回放产生伪触发 |
 
 ---
 
-## 主要代码结构
+## 2. 算法与音频链路
 
-- [PluginProcessor.h](D:/SpectrumTag/PluginProcessor.h)
-  - 处理器状态定义：参数、Print 状态、STFT 通道状态、crossfade 状态。
+### 2.1 总体处理流程
 
-- [PluginProcessor.cpp](D:/SpectrumTag/PluginProcessor.cpp)
-  - 核心 DSP 实现：
-    - `prepareToPlay` / `rebuildStft`
-    - `processBlock`
-    - STFT 帧处理与 OLA 重建
-    - Print 掩码列推进与增益映射
+```
+Input PCM
+   │
+   ├──▶ STFT 分帧 (N-point, hop = N/4, 75% overlap)
+   │      │
+   │      ├──▶ FFT  ─▶  保留相位，仅调制幅度
+   │      │              │
+   │      │              ▼
+   │      │         图像列 → bin 目标增益
+   │      │              │
+   │      │              ▼
+   │      │         逐 bin 平滑
+   │      │              │
+   │      │              ▼
+   │      │           IFFT
+   │      │              │
+   │      │              ▼
+   │      └────▶  WOLA 重建（窗平方能量归一化）
+   │                     │
+   │                     ▼
+   │                   Wet FIFO
+   │                     │
+   ├──▶ Dry 延迟环 (N - hop) ─────▶  Crossfade  ──▶ Output
+   │                                     ▲
+   └──── Print 状态 / Trigger ───────────┘
+```
 
-- [PluginEditor.h](D:/SpectrumTag/PluginEditor.h)
-- [PluginEditor.cpp](D:/SpectrumTag/PluginEditor.cpp)
-  - UI 交互：参数控件、频谱视图、图片框、Print 按钮与状态联动。
-
-- [CMakeLists.txt](D:/SpectrumTag/CMakeLists.txt)
-  - JUCE 工程配置与插件版本号源（当前 `1.1.0`）。
-
-- [SpectrumTag_installer.iss](D:/SpectrumTag/SpectrumTag_installer.iss)
-  - Windows 安装包脚本。
-
-- [build_macos_installer.sh](D:/SpectrumTag/build_macos_installer.sh)
-  - macOS `pkg/dmg` 打包脚本。
-
----
-
-## 参数与行为说明（开发视角）
-
-- **FFT Size**
-  - 影响：频率分辨率、时间分辨率、算法延迟（`latency = N - hop`）。
-  - 建议：处理中避免频繁切换；当前实现仅在非 Print 时允许重建，减少爆音风险。
-
-- **Amplitude Ratio**
-  - 通过内部映射转成频域目标增益（非线性/线性取决于实现）。
-  - 与 `Invert` 组合决定掩码亮暗区域的“抑制/保留”方向。
-
-- **Speed + Duration**
-  - 决定 `printColPerSample`，间接决定图片从左到右“写入”频谱的速度。
-
----
-
-## 构建与打包
-
-### 本地构建（示例）
-
-- 依赖：CMake 3.22+、支持 C++17 的编译器。
-- JUCE：由 `FetchContent` 自动拉取（见 [CMakeLists.txt](D:/SpectrumTag/CMakeLists.txt)）。
-
-常规流程（按你的本地 IDE/CMake 工作流执行）：
-- 配置生成项目；
-- 构建 `SpectrumTag` 目标；
-- 在 `SpectrumTag_artefacts/Release` 下获取 VST3/AU/Standalone 产物。
-
-### 安装包
-
-- Windows：使用 [SpectrumTag_installer.iss](D:/SpectrumTag/SpectrumTag_installer.iss) 生成安装程序。
-- macOS：使用 [build_macos_installer.sh](D:/SpectrumTag/build_macos_installer.sh) 生成 `.pkg` 与 `.dmg`。
+### 2.2 关键设计要点
+- **相位保留**：仅修改幅度，不重写相位，避免重建伪影。
+- **WOLA 归一化**：每帧叠加时维护窗平方累加器，逐样本除以归一化因子，输出能量稳定。
+- **预热机制（warmup）**：Print 开启时先填充管线再开始消费掩码列，防止首字符被"截断"。
+- **列游标单次推进**：sample-major 逻辑中统一推进，多通道不会重复推进时间轴。
+- **dry/wet 交叉渐变**：进入 / 退出 Print 时 `dryWetMix` 向目标值平滑过渡（默认约 8 ms），消除点击噪声。
+- **OLA 帧切换连续性**：归一化与累加器在帧边界保持连续，避免每个 hop 产生周期性冲激（频谱图上的"竖直细线"）。
 
 ---
 
-## 后续开发建议（重要）
+## 3. 工程结构
 
-- **先看处理器链路再改 UI**
-  - 涉及音频行为问题时，优先阅读 [PluginProcessor.cpp](D:/SpectrumTag/PluginProcessor.cpp) 的 `processBlock` 与 STFT/WOLA 相关实现。
-
-- **改动切换逻辑时的最小回归清单**
-  - Print 快速连点是否有点击声；
-  - Print 开始/结束是否有波形错位；
-  - 掩码绘制起点是否稳定（不“从中间开始”）；
-  - `Amplitude Ratio=0` 时是否仍出现异常增益抬升。
-
-- **性能注意**
-  - 避免在音频线程中引入大对象频繁分配；
-  - 频繁重建 FFT 状态应限制在安全时机（当前为非 Print）。
-
-- **可扩展方向**
-  - 更平滑的参数自动化（跨 block 插值）；
-  - 多种窗函数/重建策略切换；
-  - 更细粒度的频段映射与 psychoacoustic weighting；
-  - 离线渲染模式（非实时）以获得更高质量印章效果。
+| 路径 | 作用 |
+| --- | --- |
+| [PluginProcessor.h](D:/SpectrumTag/PluginProcessor.h) | 处理器声明：参数 ID、Print 状态、STFT 通道状态、crossfade 状态、Print Trigger 自动化接口 |
+| [PluginProcessor.cpp](D:/SpectrumTag/PluginProcessor.cpp) | DSP 主体：`prepareToPlay` / `processBlock` / STFT / OLA / 掩码列推进 / 自动化监听 |
+| [PluginEditor.h](D:/SpectrumTag/PluginEditor.h) | 编辑器声明：UI 组件、Print Trigger 同步状态 |
+| [PluginEditor.cpp](D:/SpectrumTag/PluginEditor.cpp) | UI 实现：参数控件、频谱视图、图片框、Print 按钮、自动化 ↔ UI 双向同步 |
+| [CMakeLists.txt](D:/SpectrumTag/CMakeLists.txt) | JUCE 工程配置与版本号源（**当前 1.2.0**） |
+| [SpectrumTag_installer.iss](D:/SpectrumTag/SpectrumTag_installer.iss) | Windows 安装包脚本（Inno Setup 6） |
+| [build_installer.bat](D:/SpectrumTag/build_installer.bat) | Windows 一键打包脚本 |
+| [build_macos_installer.sh](D:/SpectrumTag/build_macos_installer.sh) | macOS `.pkg` / `.dmg` 一键打包脚本 |
 
 ---
 
-## 版本信息
+## 4. 构建
 
-- 当前版本：`v1.1.0`
-- 本版本重点：
-  - 统一工程与安装脚本版本号；
-  - 文档化 DSP 架构与开发规则；
-  - dry/wet 切换与时序对齐策略说明完善。
+### 4.1 依赖
+- CMake 3.22+
+- 支持 C++17 的编译器（MSVC 19.30+ / Clang 13+ / GCC 10+）
+- JUCE：通过 `FetchContent` 自动拉取，无需手动安装
+
+### 4.2 通用流程
+```bash
+cmake -S . -B cmake-build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build cmake-build-release --config Release --target SpectrumTag
+```
+构建产物：`cmake-build-release/SpectrumTag_artefacts/Release/{VST3,AU,Standalone}/`。
+
+---
+
+## 5. 安装包
+
+### 5.1 Windows
+1. 安装 Inno Setup 6（`winget install --id JRSoftware.InnoSetup -e`）。
+2. 先完成 Release 构建（产物输出到 `cmake-build-release\SpectrumTag_artefacts\Release\VST3\SpectrumTag.vst3`）。
+3. 双击运行 [build_installer.bat](D:/SpectrumTag/build_installer.bat)，安装包将输出到 `dist\SpectrumTag_Setup_1.2.0_x64.exe`。
+
+默认安装路径：`%CommonProgramFiles%\VST3\iisaacbeats.cn\SpectrumTag.vst3`；预设安装到 `%UserProfile%\Documents\spectrumtagpreset`。
+
+### 5.2 macOS
+完成 Release 构建后运行 [build_macos_installer.sh](D:/SpectrumTag/build_macos_installer.sh) 即可生成 `.pkg` 与 `.dmg`。
+
+---
+
+## 6. 参数与行为说明（开发视角）
+
+- **FFT Size**：影响频率分辨率、时间分辨率、算法延迟（`latency = N - hop`）。当前实现仅允许在**非 Print 状态**下重建 FFT，避免重建瞬间产生爆音。
+- **Amplitude Ratio**：经内部映射转成频域目标增益；与 `Invert` 组合决定掩码亮暗区域的"抑制/保留"方向。
+- **Speed**：决定 `printColPerSample`，间接决定图像沿时间轴的推进速度。
+- **Print Trigger**：仅响应上升沿；Print 流程结束后插件会自动把它写回 `false`（DAW 会录到这一次复位）。
+
+---
+
+## 7. 后续维护指引
+
+### 7.1 改动切换逻辑时的最小回归清单
+- [ ] Print 快速连点是否有点击声；
+- [ ] Print 开始 / 结束是否有波形错位；
+- [ ] 掩码绘制起点是否稳定（不"从中间开始"）；
+- [ ] `Amplitude Ratio = 0` 时是否仍出现异常增益抬升；
+- [ ] DAW 工程加载瞬间是否触发了非用户预期的 Print；
+- [ ] 自动化曲线 0→1 的上升沿是否稳定触发一次 Print；
+- [ ] Print 结束后参数是否被复位为 0。
+
+### 7.2 性能注意
+- 音频线程中**禁止**任何动态分配、文件 I/O、锁竞争；
+- 频谱日志（math log）默认关闭，仅在调试时打开；
+- FFT 重建限制在非 Print 状态进行。
+
+### 7.3 可扩展方向
+- 更平滑的参数自动化（跨 block 插值）；
+- 多种窗函数 / 重建策略切换；
+- 更细粒度的频段映射与心理声学加权；
+- 离线渲染模式（非实时）以获得更高质量印章效果；
+- 工程迁移时的图片 fallback 查找（按文件名在用户预设目录搜索）。
+
+---
+
+## 8. 版本信息
+
+- **当前版本**：`v1.2.0`（首个正式发布版本）
+- 发布要点：
+  - 完整的 STFT / OLA / WOLA 归一化与平滑切换机制；
+  - 频谱可视化背景修复与时间轴解耦；
+  - 图片打印起始完整性修复，多 FFT Size 下图像质量一致；
+  - 工程持久化（图片路径与图片框位置自动保存 / 恢复）；
+  - Print 自动化与 MIDI Learn 支持，五层防误触保护；
+  - Windows / macOS 一键打包脚本完善。
+
+---
+
+## 9. 版权
+
+© iisaacbeats.cn — 保留所有权利。

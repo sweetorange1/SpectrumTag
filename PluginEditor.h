@@ -229,6 +229,12 @@ private:
     // ---- 等比缩放约束 ----
     juce::ComponentBoundsConstrainer resizeConstrainer;
 
+    // ---- Print Trigger 自动化 ↔ UI 同步 ----
+    // 用于在 timer 中检测自动化曲线对 printTrigger 的写入：当 trigger 已经被 host
+    // 写为 true，但 print 流程结束后我们要负责自动复位回 false（避免"卡 true"）。
+    bool lastSeenTrigger = false;
+    bool missingImageNotified = false;   // 工程加载时图片文件丢失的非阻塞提示节流
+
     // ---- 工具：给 Label 应用 BasementGrotesque 字体 ----
     void styleHeaderLabel (juce::Label& l, float height, juce::Colour colour);
     void styleControlLabel (juce::Label& l);

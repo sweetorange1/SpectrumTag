@@ -62,6 +62,11 @@ void SpectrumTagAudioProcessor::markPrintClickAndBeginMathLog()
     mathLog.frozenPreEvents.clear();
     mathLog.frozenPreEvents.assign (mathLog.preEvents.begin(), mathLog.preEvents.end());
     mathLog.postEvents.clear();
+    // block 级日志：同样冻结点击前的滚动窗口，并清空 post 容器
+    mathLog.frozenPreBlockStats.clear();
+    mathLog.frozenPreBlockStats.assign (mathLog.preBlockStatsRolling.begin(),
+                                        mathLog.preBlockStatsRolling.end());
+    mathLog.postBlockStats.clear();
     mathLog.requestFlush = false;
     mathLog.active = true;
 }
@@ -92,8 +97,168 @@ void SpectrumTagAudioProcessor::pushMathLogEvent (const MathLogEvent& e)
     }
 }
 
+// ----------------------------------------------------------------------------
+//  Block 级数学统计
+// ----------------------------------------------------------------------------
+//  对一段连续采样做"定性 + 定量"的快速分析。
+//  采集的指标为定位以下三个 bug 提供决定性证据：
+//   (1) 点击 Print 后音量瞬时跳变  → rms/peak/energy 的 block 级阶跃
+//   (2) Print 结束回到干声的跳变   → 同上，且 boundaryDiff 会高亮
+//   (3) 处理过程中竖直细线（电流声/冲激）
+//       → maxAbsDiff 与 slewSpikeCount 是冲激/阶跃噪声的最直接指标
+//         （单样本 100us 级别的突跳，在频谱图上即为竖直细线）
+// ----------------------------------------------------------------------------
+void SpectrumTagAudioProcessor::computeBlockStats (const float* data,
+                                                    int numSamples,
+                                                    int channel,
+                                                    bool isPost,
+                                                    int64_t startSample,
+                                                    float prevTailSample,
+                                                    BlockStats& s) const
+{
+    s.numSamples = numSamples;
+    s.channel = channel;
+    s.isPost = isPost;
+    s.startSample = startSample;
+    s.prevBlockLastSample = prevTailSample;
+
+    if (numSamples <= 0 || data == nullptr)
+    {
+        s.minVal = 0.0f;
+        s.maxVal = 0.0f;
+        s.peakAbs = 0.0f;
+        s.peakAbsPos = -1;
+        s.mean = 0.0;
+        s.rms = 0.0;
+        s.energy = 0.0;
+        s.maxAbsDiff = 0.0f;
+        s.maxAbsDiffPos = -1;
+        s.slewSpikeCount = 0;
+        s.zeroCrossings = 0;
+        s.clipCount = 0;
+        s.nonFiniteCount = 0;
+        s.boundaryDiff = 0.0f;
+        return;
+    }
+
+    // 阈值：单样本相邻差超过 0.25 视为可疑冲激（人耳对此类阶跃极敏感，
+    // 频谱图上呈现为竖直细线/click）；可按需调整。
+    constexpr float kSlewThresh = 0.25f;
+    constexpr float kClipThresh = 1.0f;
+
+    float minV = data[0];
+    float maxV = data[0];
+    float peakAbs = std::abs (data[0]);
+    int   peakPos = 0;
+    double sum = 0.0;
+    double sumSq = 0.0;
+    float maxDiff = 0.0f;
+    int   maxDiffPos = -1;
+    int   slewSpikes = 0;
+    int   zeroX = 0;
+    int   clips = 0;
+    int   nonFinite = 0;
+
+    // 跨 block 边界：把上一个 block 的最后一个样本作为 x[-1]，纳入相邻差计算
+    {
+        const float v = data[0];
+        if (! std::isfinite (v) || ! std::isfinite (prevTailSample))
+        {
+            // 不计入差值，单独累计 nonFinite
+        }
+        else
+        {
+            const float d = std::abs (v - prevTailSample);
+            if (d > maxDiff) { maxDiff = d; maxDiffPos = 0; }
+            if (d > kSlewThresh) ++slewSpikes;
+        }
+    }
+    s.boundaryDiff = std::isfinite (data[0]) && std::isfinite (prevTailSample)
+                       ? std::abs (data[0] - prevTailSample)
+                       : 0.0f;
+
+    float prev = data[0];
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float v = data[i];
+        if (! std::isfinite (v))
+        {
+            ++nonFinite;
+            continue;
+        }
+
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+        const float a = std::abs (v);
+        if (a > peakAbs) { peakAbs = a; peakPos = i; }
+        sum   += (double) v;
+        sumSq += (double) v * (double) v;
+        if (a >= kClipThresh) ++clips;
+
+        if (i > 0)
+        {
+            const float d = std::abs (v - prev);
+            if (d > maxDiff) { maxDiff = d; maxDiffPos = i; }
+            if (d > kSlewThresh) ++slewSpikes;
+            // 过零点（不含 0->0 持平）
+            if ((prev <= 0.0f && v > 0.0f) || (prev >= 0.0f && v < 0.0f))
+                ++zeroX;
+        }
+        prev = v;
+    }
+
+    s.minVal = minV;
+    s.maxVal = maxV;
+    s.peakAbs = peakAbs;
+    s.peakAbsPos = peakPos;
+    s.mean = sum / (double) numSamples;
+    s.energy = sumSq;
+    s.rms = std::sqrt (sumSq / (double) numSamples);
+    s.maxAbsDiff = maxDiff;
+    s.maxAbsDiffPos = maxDiffPos;
+    s.slewSpikeCount = slewSpikes;
+    s.zeroCrossings = zeroX;
+    s.clipCount = clips;
+    s.nonFiniteCount = nonFinite;
+}
+
+void SpectrumTagAudioProcessor::pushBlockStats (const BlockStats& s)
+{
+#if ! SPECTRUMTAG_PRINT_MATH_LOG_ENABLED
+    // 临时禁用：跳过 mutex 与 deque/vector 累加，避免实时线程任何额外开销。
+    juce::ignoreUnused (s);
+    return;
+#else
+    std::lock_guard<std::mutex> lk (mathLogMutex);
+
+    const int64_t sr = juce::jmax ((int64_t) 8000, mathLog.sampleRateRounded);
+    const int channels = juce::jmax (1, getTotalNumInputChannels());
+    // 估算每秒 block 数量：使用一个保守的 64 samples/block 上限来限制滚动窗口大小
+    // 也按 channel × pre/post(=2) 翻倍，以保证容纳"前1秒"完整数据
+    const size_t maxRolling = (size_t) juce::jmax ((int64_t) 2048,
+                                                    (sr / 32) * (int64_t) channels * 2);
+    mathLog.preBlockStatsRolling.push_back (s);
+    while (mathLog.preBlockStatsRolling.size() > maxRolling)
+        mathLog.preBlockStatsRolling.pop_front();
+
+    if (mathLog.collectingPost)
+    {
+        mathLog.postBlockStats.push_back (s);
+    }
+#endif
+}
+
 void SpectrumTagAudioProcessor::flushPrintMathLogToFile()
 {
+#if ! SPECTRUMTAG_PRINT_MATH_LOG_ENABLED
+    // 临时禁用：直接返回，跳过 CSV 文件生成开销。
+    // 同时清掉可能积累的请求标志，避免开关切回时一次性 flush 残留旧数据。
+    {
+        std::lock_guard<std::mutex> lk (mathLogMutex);
+        mathLog.requestFlush = false;
+    }
+    return;
+#else
     MathLogSession snap;
     {
         std::lock_guard<std::mutex> lk (mathLogMutex);
@@ -103,7 +268,7 @@ void SpectrumTagAudioProcessor::flushPrintMathLogToFile()
         snap = mathLog;
     }
 
-    juce::File logDir ("G:\\SpectrumTag\\Log");
+    juce::File logDir ("D:\\SpectrumTag\\Log");
     if (! logDir.exists())
         logDir.createDirectory();
 
@@ -164,7 +329,66 @@ void SpectrumTagAudioProcessor::flushPrintMathLogToFile()
     for (const auto& e : snap.frozenPreEvents) writeEvent ("pre", e);
     for (const auto& e : snap.postEvents)      writeEvent ("post", e);
 
+    // ------------------------------------------------------------------
+    //  Block 级别统计（pre = 处理前输入；post = 处理后输出）
+    //  与 sample 级日志写入同一 CSV，方便后续脚本统一加载分析。
+    //  每个 block 在 pre 和 post 路径上各产生一条记录（每通道一条），
+    //  通过 block_index + channel + is_post 可以将它们对齐起来对比。
+    //  关键列：
+    //    rms / peak_abs / energy / mean(=DC) → 音量与能量层级
+    //    max_abs_diff / slew_spike_count    → 冲激/竖直细线（相邻样本突跳）
+    //    boundary_diff                      → 跨 block 边界的衔接突跳
+    //    zero_crossings                     → 频率特征
+    //    clip_count / non_finite_count      → 削波 / 数值异常
+    // ------------------------------------------------------------------
+    os << "\n";
+    os << "section,type,block_index,start_sample,delta_to_click,channel,is_post,num_samples,"
+          "print_requested,stft_path_active,mix_snapshot,mix_target_snapshot,"
+          "fade_samples_remaining,fade_delay_samples,accum_count_snapshot,out_fifo_count_snapshot,"
+          "min,max,peak_abs,peak_abs_pos,mean_dc,rms,energy,"
+          "max_abs_diff,max_abs_diff_pos,slew_spike_count,zero_crossings,"
+          "clip_count,non_finite_count,boundary_diff,prev_block_last_sample\n";
+
+    auto writeBlockStats = [&] (const char* section, const BlockStats& b)
+    {
+        os << section << ","
+           << "block" << ","
+           << b.blockIndex << ","
+           << b.startSample << ","
+           << (b.startSample - snap.printClickSample) << ","
+           << b.channel << ","
+           << (b.isPost ? 1 : 0) << ","
+           << b.numSamples << ","
+           << (b.printRequested ? 1 : 0) << ","
+           << (b.stftPathActive ? 1 : 0) << ","
+           << b.dryWetMixSnapshot << ","
+           << b.dryWetTargetSnapshot << ","
+           << b.fadeSamplesRemaining << ","
+           << b.fadeDelaySamples << ","
+           << b.accumCountSnapshot << ","
+           << b.outFifoCountSnapshot << ","
+           << std::setprecision (9) << b.minVal << ","
+           << b.maxVal << ","
+           << b.peakAbs << ","
+           << b.peakAbsPos << ","
+           << b.mean << ","
+           << b.rms << ","
+           << b.energy << ","
+           << b.maxAbsDiff << ","
+           << b.maxAbsDiffPos << ","
+           << b.slewSpikeCount << ","
+           << b.zeroCrossings << ","
+           << b.clipCount << ","
+           << b.nonFiniteCount << ","
+           << b.boundaryDiff << ","
+           << b.prevBlockLastSample << "\n";
+    };
+
+    for (const auto& b : snap.frozenPreBlockStats) writeBlockStats ("pre",  b);
+    for (const auto& b : snap.postBlockStats)      writeBlockStats ("post", b);
+
     os.flush();
+#endif // SPECTRUMTAG_PRINT_MATH_LOG_ENABLED
 }
 
 // ----------------------------------------------------------------------------
@@ -179,9 +403,16 @@ SpectrumTagAudioProcessor::SpectrumTagAudioProcessor()
     ),
       apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
 {
+    // 缓存 printTrigger 参数指针，后续复位/读值都走它。
+    printTriggerParam = dynamic_cast<juce::AudioParameterBool*> (apvts.getParameter (ParameterIDs::printTrigger));
+    lastPrintTriggerState.store (printTriggerParam != nullptr && printTriggerParam->get());
+    apvts.addParameterListener (ParameterIDs::printTrigger, this);
 }
 
-SpectrumTagAudioProcessor::~SpectrumTagAudioProcessor() = default;
+SpectrumTagAudioProcessor::~SpectrumTagAudioProcessor()
+{
+    apvts.removeParameterListener (ParameterIDs::printTrigger, this);
+}
 
 bool SpectrumTagAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
@@ -338,15 +569,24 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
     }
 
     // ---- 6) 输出就绪 → 推送 hop 个全累积采样到 FIFO ----
-    // 前 N/hop 帧是预热期；之后每帧放出 hop 个全累积采样。
-    // 关键：从 outputRing 复制后立即清零该位置，这样下一轮 OLA 从此位置开始时不会叠加旧值。
+    //
+    //  推导（关键，影响电流声/竖直细线的产生）：
+    //   - 当前帧 frame_i 写入区间 [frameStart, frameStart + N)
+    //   - 下一帧 frame_{i+1} 写入区间 [frameStart + hop, frameStart + hop + N)
+    //   - 因此 frame_i 写完后，下一帧不会再覆盖的"最老"区间是
+    //         [frameStart, frameStart + hop)
+    //     这一段在 frame_i 时刚好被 N/hop = 4 帧累加完成，∑w² 也已到稳态。
+    //   - 旧实现取 fifoStart = (frameStart + hop) % N 是错误的：它推出的
+    //     [frameStart + hop, frameStart + 2*hop) 还会被 frame_{i+1} 再写一次，
+    //     此时 olaNormRing 只累计了 3 帧 w²（≈1.125 vs 稳态 1.5），归一化分母
+    //     偏小 → 输出幅度偏高 ~33%；下一帧从已被清零的累加器再加新贡献，
+    //     在帧切换处产生单样本阶跃 = 频谱图竖直细线 + 电流声。
+    //
+    //  前 N/hop 帧是预热期；从第 N/hop 帧起每帧放出 hop 个稳态归一化的样本。
     ++st.frameCount;
     if (st.frameCount >= N / hop)
     {
-        // 循环找到"最老"的 hop 个全累积采样位置
-        // 当前帧 frameStart 是最新的写入起点，往前 3 帧（3*hop = N - hop）的起点最老。
-        // 即：fifoStart = (frameStart + N - 3*hop) % N = (frameStart + hop) % N
-        const int fifoStart = (frameStart + hop) % N;
+        const int fifoStart = frameStart;          // ← 修正：必须从 frameStart 开始
         constexpr float kNormEps = 1.0e-8f;
         for (int i = 0; i < hop; ++i)
         {
@@ -357,15 +597,15 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
                 : st.outputRing[(size_t) pos];
 
             st.outFifo[(size_t) st.outFifoWrite] = y;
-            st.outputRing[(size_t) pos] = 0.0f;
-            st.olaNormRing[(size_t) pos] = 0.0f;
+            st.outputRing[(size_t) pos]   = 0.0f;
+            st.olaNormRing[(size_t) pos]  = 0.0f;
             st.outFifoWrite = (st.outFifoWrite + 1) % (N * 2);
             ++st.outFifoCount;
         }
     }
 
     st.lastIfftProbe = st.fftWork[(size_t) juce::jlimit (0, N - 1, N / 2)];
-    const int normProbePos = (frameStart + hop) % N;
+    const int normProbePos = frameStart;
     st.lastOlaNormProbe = st.olaNormRing[(size_t) normProbePos];
     st.lastProcessedFrame = st.frameCount;
 }
@@ -416,9 +656,15 @@ void SpectrumTagAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     prevPrintActive = false;
     dryWetMix = 0.0f;
     dryWetTarget = 0.0f;
+    dryWetFadeStartMix = 0.0f;
     dryWetFadeSamplesRemaining = 0;
     dryWetFadeTotalSamples = juce::jmax (1, (int) std::round (0.2 * sampleRate)); // 200ms，覆盖 OLA 8 帧预热期
     printFadeDelaySamples = 0;
+
+    // block 级日志：跨 block 衔接样本初始化（每通道一份）
+    lastBlockTailSamplePre.assign  ((size_t) juce::jmax (1, numCh), 0.0f);
+    lastBlockTailSamplePost.assign ((size_t) juce::jmax (1, numCh), 0.0f);
+    blockCounter = 0;
 }
 
 void SpectrumTagAudioProcessor::releaseResources() {}
@@ -442,6 +688,62 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     const bool printActive = printRunning.load();
     const double sr        = getSampleRate();
+
+    // ------------------------------------------------------------------
+    //  Block 级日志：在【处理前】采集每通道的输入信号统计快照。
+    //  统计指标专为定位"音量跳变 + 竖直细线（冲激式电流声）"设计：
+    //    rms / peak_abs / mean(=DC) → 音量层级阶跃
+    //    max_abs_diff / slew_spike_count → 单样本突跳（频谱图竖直细线）
+    //    boundary_diff → 与上一 block 末尾样本的衔接突跳
+    // ------------------------------------------------------------------
+    int64_t blockStartGlobalSample = 0;
+    {
+        std::lock_guard<std::mutex> lk (mathLogMutex);
+        blockStartGlobalSample = mathLog.globalSampleCounter;
+    }
+    const int64_t thisBlockIndex = blockCounter;
+
+    if (numCh > 0 && numSamps > 0)
+    {
+#if SPECTRUMTAG_PRINT_MATH_LOG_ENABLED
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            const float prevTail = (ch < (int) lastBlockTailSamplePre.size())
+                                       ? lastBlockTailSamplePre[(size_t) ch]
+                                       : 0.0f;
+            BlockStats s;
+            s.blockIndex = thisBlockIndex;
+            s.printRequested = printActive;
+            s.stftPathActive = printActive
+                              || (dryWetMix > 1.0e-4f)
+                              || (dryWetFadeSamplesRemaining > 0);
+            s.dryWetMixSnapshot = dryWetMix;
+            s.dryWetTargetSnapshot = dryWetTarget;
+            s.fadeSamplesRemaining = dryWetFadeSamplesRemaining;
+            s.fadeDelaySamples = printFadeDelaySamples;
+            s.accumCountSnapshot = (ch < (int) stftStates.size())
+                                       ? stftStates[(size_t) ch].accumCount : 0;
+            s.outFifoCountSnapshot = (ch < (int) stftStates.size())
+                                       ? stftStates[(size_t) ch].outFifoCount : 0;
+
+            computeBlockStats (buffer.getReadPointer (ch), numSamps, ch,
+                               /*isPost*/ false, blockStartGlobalSample,
+                               prevTail, s);
+            pushBlockStats (s);
+
+            // 更新衔接尾样本（处理前路径）
+            if (ch < (int) lastBlockTailSamplePre.size())
+                lastBlockTailSamplePre[(size_t) ch] = buffer.getReadPointer (ch)[numSamps - 1];
+        }
+#else
+        // 日志禁用：仅维护衔接尾样本（成本极低，保留以便开关切回时数据连续）
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            if (ch < (int) lastBlockTailSamplePre.size())
+                lastBlockTailSamplePre[(size_t) ch] = buffer.getReadPointer (ch)[numSamps - 1];
+        }
+#endif
+    }
 
     // ---- 1) 检查参数变化 ----
     const int desiredScale = (int) *apvts.getRawParameterValue (ParameterIDs::fftScale);
@@ -587,10 +889,39 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                     const float fHigh = printFreqHighNorm * maxHz;
                     const float denom = juce::jmax (1.0e-6f, fHigh - fLow);
 
+                    // ----------------------------------------------------------------
+                    //  Fade-in 期间冻结 mask 列推进，避免"图像首字符画一半"。
+                    //
+                    //  根因（日志 print_math_2026-06-13_22-23-29 验证）：
+                    //   - click 后 ~441 samples 才发生 print_state_flipped；
+                    //   - 翻转瞬间设置 fade_delay=2N，再走 8 帧 OLA warmup；
+                    //   - warmup 一结束 cursor 就开始推进，但此时 dryWetMix 仍在
+                    //     从 0 渐变到 1 的 200ms ramp 中（fade_total=8820 samples）；
+                    //   - 而 mask 增益已被 mix 系数缩小（g_eff = 1 + (g-1)*mix）→
+                    //     前若干列以 mix∈(0,1) 的部分强度施加 → 视觉上首字符
+                    //     "只画一半"或"模糊起步"。
+                    //
+                    //  修复：cursor 推进改由 "fade 已基本完成" 触发；fade 期间
+                    //  退化为 unity gain，等同于让 OLA 多空转一会儿。这样图像
+                    //  第 0 列必然在 mix≈1 时刻才被消费，强度完整。
+                    //  退出时（dryWetTarget=0 → fade-out）则由 print_requested=false
+                    //  分支兜底，cursor 已停止推进，不会"末尾被淡化"。
+                    // ----------------------------------------------------------------
+                    constexpr float kFadeDoneThreshold = 0.999f;
+                    const bool fadeInComplete = (dryWetMix >= kFadeDoneThreshold)
+                                             || (dryWetTarget < 0.5f); // 退出 print 也算"无需冻结"
+                    const bool warmingUp = (printWarmupFramesRemaining > 0);
+
                     // 启动预热期：仅让 OLA 管线填满，不消费图片列，避免“从中间开始绘制”。
-                    if (printWarmupFramesRemaining > 0)
+                    if (warmingUp)
                     {
                         --printWarmupFramesRemaining;
+                        std::fill (targetBinGains.begin(), targetBinGains.end(), 1.0f);
+                    }
+                    else if (! fadeInComplete)
+                    {
+                        // Fade-in 仍在进行：保持 unity gain，cursor 暂不推进，
+                        // 等待 mix 到达稳态后再正式开始绘制第 0 列。
                         std::fill (targetBinGains.begin(), targetBinGains.end(), 1.0f);
                     }
                     else
@@ -714,6 +1045,26 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                 gainMean = 1.0f;
             }
 
+            // ---- 增益与 fade 协同：把 mask 增益向 unity 插值（系数 = 当前 mix）。
+            //
+            //  动机（修复 wet 路径 -0.84 dB 能量塌陷）：
+            //    - 旧实现下，fade 一启动 mask 立即以完整强度施加到 STFT bin，但
+            //      时域 mix 仍很小，OLA 累加缓冲中已带入 mask 衰减后的能量。
+            //    - 当 mix 增大、最终全 wet 时，wet 信号本身已损失部分能量 →
+            //      表现为 RMS 单调下降（日志：0.270 → 0.245，-0.84 dB）。
+            //    - 协同插值：g_eff(k) = 1 + (g_target(k) - 1) * mix
+            //      mix=0 时 wet 完整保留输入（与 dry 一致，零损失）；
+            //      mix=1 时严格等于 mask 设计值。
+            //      期间 wet 与 dry 的能量差线性渐变，不再出现 OLA 蓄积的"能量缺口"。
+            {
+                const float blend = juce::jlimit (0.0f, 1.0f, dryWetMix);
+                if (blend < 1.0f - 1.0e-4f)
+                {
+                    for (auto& g : targetBinGains)
+                        g = 1.0f + (g - 1.0f) * blend;
+                }
+            }
+
             // 所有通道处理同一个 STFT 帧
             for (int ch = 0; ch < numCh; ++ch)
             {
@@ -803,15 +1154,23 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             --printFadeDelaySamples;
             if (printFadeDelaySamples <= 0)
             {
-                // 延迟结束，启动实际 crossfade（目标值在状态翻转时已设定）
-                dryWetFadeSamplesRemaining = juce::jmax (1, dryWetFadeTotalSamples);
+                // 延迟结束，启动实际 crossfade（目标值在状态翻转时已设定）。
+                // 记录 fade 起点 mix，使后续推进可基于"已走样本数 / 总样本数"做精确线性 ramp，
+                // 杜绝指数 IIR 收尾残差导致的硬切（旧实现末段会从 ~0.62 一次性跳到 1.0）。
+                dryWetFadeTotalSamples       = juce::jmax (1, dryWetFadeTotalSamples);
+                dryWetFadeSamplesRemaining   = dryWetFadeTotalSamples;
+                dryWetFadeStartMix           = dryWetMix;
             }
         }
 
         if (dryWetFadeSamplesRemaining > 0)
         {
-            const float step = 1.0f / (float) juce::jmax (1, dryWetFadeTotalSamples);
-            dryWetMix += (dryWetTarget - dryWetMix) * step;
+            // 精确线性 ramp：mix(t) = startMix + (target - startMix) * t / total
+            //   t = total - remaining + 1（先消耗 1 sample 再赋值，确保 remaining=0 时 mix 严格命中 target）
+            const int total = juce::jmax (1, dryWetFadeTotalSamples);
+            const int t     = total - dryWetFadeSamplesRemaining + 1; // 1..total
+            const float frac = juce::jlimit (0.0f, 1.0f, (float) t / (float) total);
+            dryWetMix = dryWetFadeStartMix + (dryWetTarget - dryWetFadeStartMix) * frac;
             --dryWetFadeSamplesRemaining;
             if (dryWetFadeSamplesRemaining <= 0)
                 dryWetMix = dryWetTarget;
@@ -821,6 +1180,53 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             dryWetMix = dryWetTarget;
         }
     }
+
+    // ------------------------------------------------------------------
+    //  Block 级日志：在【处理后】采集每通道的输出信号统计快照。
+    //  通过对比同一 block_index 下 pre vs post，可量化插件本身对信号
+    //  引入的能量阶跃 / 冲激 / DC 偏移。
+    // ------------------------------------------------------------------
+    if (numCh > 0 && numSamps > 0)
+    {
+#if SPECTRUMTAG_PRINT_MATH_LOG_ENABLED
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            const float prevTail = (ch < (int) lastBlockTailSamplePost.size())
+                                       ? lastBlockTailSamplePost[(size_t) ch]
+                                       : 0.0f;
+            BlockStats s;
+            s.blockIndex = thisBlockIndex;
+            s.printRequested = printRunning.load();
+            s.stftPathActive = s.printRequested
+                              || (dryWetMix > 1.0e-4f)
+                              || (dryWetFadeSamplesRemaining > 0);
+            s.dryWetMixSnapshot = dryWetMix;
+            s.dryWetTargetSnapshot = dryWetTarget;
+            s.fadeSamplesRemaining = dryWetFadeSamplesRemaining;
+            s.fadeDelaySamples = printFadeDelaySamples;
+            s.accumCountSnapshot = (ch < (int) stftStates.size())
+                                       ? stftStates[(size_t) ch].accumCount : 0;
+            s.outFifoCountSnapshot = (ch < (int) stftStates.size())
+                                       ? stftStates[(size_t) ch].outFifoCount : 0;
+
+            computeBlockStats (buffer.getReadPointer (ch), numSamps, ch,
+                               /*isPost*/ true, blockStartGlobalSample,
+                               prevTail, s);
+            pushBlockStats (s);
+
+            if (ch < (int) lastBlockTailSamplePost.size())
+                lastBlockTailSamplePost[(size_t) ch] = buffer.getReadPointer (ch)[numSamps - 1];
+        }
+#else
+        // 日志禁用：仅维护衔接尾样本
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            if (ch < (int) lastBlockTailSamplePost.size())
+                lastBlockTailSamplePost[(size_t) ch] = buffer.getReadPointer (ch)[numSamps - 1];
+        }
+#endif
+    }
+    ++blockCounter;
 
     // ---- 显示用 FFT（读处理后的 buffer）----
     if (displayFft != nullptr && displayFftSize > 0)
@@ -1017,6 +1423,35 @@ void SpectrumTagAudioProcessor::setStateInformation (const void* data, int sizeI
         const juce::SpinLock::ScopedLockType sl (editorStateLock);
         editorState = s;
     }
+
+    // 工程加载后的伪边沿抑制：在接下来的 ~120ms 内忽略所有 trigger 上升沿，
+    // 避免 DAW 重放参数时意外启动 Print。同时同步 lastPrintTriggerState，
+    // 下一次 false→true 才会被认为算一个"新"边沿。
+    if (printTriggerParam != nullptr)
+        lastPrintTriggerState.store (printTriggerParam->get());
+    automationPrintRequest.store (false);
+    triggerSuppressEndTimeMs = juce::Time::currentTimeMillis() + 120;
+}
+
+// ===== APVTS::Listener =====
+void SpectrumTagAudioProcessor::parameterChanged (const juce::String& parameterID, float newValue)
+{
+    if (parameterID != ParameterIDs::printTrigger) return;
+
+    const bool nowOn = newValue >= 0.5f;
+    const bool prev  = lastPrintTriggerState.exchange (nowOn);
+
+    // 加载抑制窗口内：不产生请求，仅同步状态。
+    if (juce::Time::currentTimeMillis() < triggerSuppressEndTimeMs) return;
+
+    // 上升沿：false → true
+    if (nowOn && ! prev)
+        automationPrintRequest.store (true);
+}
+
+bool SpectrumTagAudioProcessor::consumeAutomationPrintRequest()
+{
+    return automationPrintRequest.exchange (false);
 }
 
 // ===== 参数布局 =====
@@ -1052,6 +1487,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumTagAudioProcessor::c
 
     layout.add (std::make_unique<juce::AudioParameterBool>(
         ParameterIDs::invert, "Invert", false));
+
+    // Print Trigger：布尔自动化参数，仅在 false→true 上升沿触发一次打印。
+    // host 在工程中看到名为 "Print" 的布尔参数，可以录制自动化 / MIDI Learn。
+    layout.add (std::make_unique<juce::AudioParameterBool>(
+        ParameterIDs::printTrigger, "Print Trigger", false));
 
     return layout;
 }
