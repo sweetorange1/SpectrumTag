@@ -1275,6 +1275,11 @@ void SpectrumTagAudioProcessorEditor::persistEditorStateToProcessor()
     s.imgRectYNorm = n.getY();
     s.imgRectWNorm = n.getWidth();
     s.imgRectHNorm = n.getHeight();
+
+    // 保存图片框的实际屏幕像素宽度，确保离线导出路径能精确复现预览效果
+    const auto contentR = spectrumView->getContentBounds();
+    s.imgBoxWidthPx = juce::jmax (1.0f, n.getWidth() * (float) juce::jmax (1, contentR.getWidth()));
+
     s.hasValidValues = true;
     processor.setEditorState (s);
 }

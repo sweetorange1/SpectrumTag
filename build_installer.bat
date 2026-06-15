@@ -8,7 +8,7 @@ REM  Output  : dist\SpectrumTag_Setup_1.2.0_x64.exe
 REM ============================================================
 
 set "APP_NAME=SpectrumTag"
-set "APP_VERSION=1.2.0"
+set "APP_VERSION=1.2.3"
 set "SCRIPT_DIR=%~dp0"
 set "ISS_FILE=%SCRIPT_DIR%SpectrumTag_installer.iss"
 set "VST3_DIR=%SCRIPT_DIR%cmake-build-release\SpectrumTag_artefacts\Release\VST3"

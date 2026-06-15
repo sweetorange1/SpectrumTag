@@ -74,6 +74,7 @@ public:
         float imgRectYNorm = 0.20f;
         float imgRectWNorm = 0.40f;
         float imgRectHNorm = 0.50f;
+        float imgBoxWidthPx = 600.0f;   // UI 图片框的实际像素宽度（离线导出时用于对齐 cols/duration）
         bool  hasValidValues = false;
     };
 

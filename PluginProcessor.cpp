@@ -1590,16 +1590,16 @@ bool SpectrumTagAudioProcessor::triggerPrintFromAutomationInternal()
                           : fftSizeIdx == 2 ? 4096 : 8192);
     const int rows = fftSize / 2 + 1;
 
-    // 离线/无 UI 场景下没有真实组件像素宽度。约定：
-    //  - cols 取一个稳定的"图片像素宽度"参考：min(图片像素宽度, 4096)；
-    //  - duration 退化为：以 1.0x speed 视角下大约 1s（合理的中间值）。
-    //    UI 模式下 duration = boxWidthPx / (30*speedPx)，box ≈ 600px、speedPx=2 时
-    //    刚好 ≈ 10s；这里离线模式没有"box 宽度"概念，统一以 5s 作为默认时长，
-    //    既能让水印充分写入、又不会无谓拉长导出时间。
-    int cols = juce::jmax (4, juce::jmin (4096, w));
+    // 离线/无 UI 场景下没有真实组件像素宽度。
+    // 从 EditorState 镜像中读取 UI 持久化时保存的实际 boxWidthPx，
+    // 使离线路径的 cols 和 duration 与预览路径完全一致，
+    // 从而 printColPerSample = 30*speedPxPerTick/sr 在两边完全相同。
+    const float boxWidthPx = juce::jmax (1.0f, state.imgBoxWidthPx);
+    int cols = juce::jmax (4, juce::jmin (4096, juce::roundToInt (boxWidthPx)));
 
-    constexpr double kOfflinePrintSeconds = 5.0;
-    const double seconds = kOfflinePrintSeconds;
+    const float speed = (float) *apvts.getRawParameterValue (ParameterIDs::speed);
+    const int speedPxPerTick = juce::jmax (1, juce::roundToInt (speed * 2.0f));
+    const double seconds = (double) boxWidthPx / juce::jmax (1.0, 30.0 * (double) speedPxPerTick);
 
     // 频率范围：把 imgRect Y 区间通过 yNorm→Hz 反推。这里用线性映射的实现就够了——
     //  log/linear 仅影响显示坐标系，对最终 STFT 处理没区别（Processor 端按 lowNorm/highNorm
