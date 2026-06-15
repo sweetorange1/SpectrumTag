@@ -1,8 +1,8 @@
-# SpectrumTag v1.2.0
+# SpectrumTag v1.2.3
 
 **SpectrumTag** 是一款基于 [JUCE](https://juce.com) 框架的音频效果插件（VST3 / AU / Standalone），核心能力是把 **图片轮廓** 实时映射为 **频域掩码**，并通过 STFT/OLA 在音频信号上"印章"（Print）出对应的频谱图形。
 
-> v1.2.0 为本插件的 **首个正式发布版本**。
+> v1.2.0 为本插件的 **首个正式发布版本**，v1.2.3 为当前最新版本。
 
 ---
 
@@ -56,6 +56,16 @@
 | L4 | **自动复位** | Print 结束后自动把参数复位为 `false`，下一次上升沿才能再次触发 |
 | L5 | **加载抑制** | 工程加载完成后约 120 ms 内忽略所有上升沿，避免 DAW 参数回放产生伪触发 |
 
+### 1.7 离线渲染 / 导出自动化支持（v1.2.3 新增）
+v1.2.0 的 Print Trigger 依赖 Editor timer（消息线程）消费触发请求，在 DAW **离线渲染**（bounce / freeze / 导出）时 Editor 通常不会被创建，导致自动化曲线触发的 Print 水印**不会写入输出音频**。v1.2.3 彻底解决了这一问题：
+
+- **双路径触发分发**：
+  - **实时模式（UI 在场）**：保持原有行为，由 Editor 30Hz timer 在消息线程取走 `automationPrintRequest`，可复用 UI 当前的实时参数状态；
+  - **离线/导出 / 无 UI**：Processor 在 `processBlock` 入口由**音频线程自行消费**触发请求，内部完成图片加载 → 二值化 → mask 生成 → `startPrint` 全流程，确保导出音频中水印正确写入。
+- **Editor 感知机制**：Processor 通过 `notifyEditorAttached()` / `notifyEditorDetached()` 获知当前是否有活跃 Editor，据此切换触发消费路径。
+- **像素宽度精确对齐**：`EditorState` 新增 `imgBoxWidthPx` 字段，持久化图片框的**实际屏幕像素宽度**，使离线路径的 `cols` 和 `duration` 计算与预览路径完全一致，导出效果与 UI 所见一模一样。
+- **加载抑制窗口改用 sample-clock**：L5 保护机制从基于墙钟（`juce::Time::currentTimeMillis`）改为 `triggerSuppressSamplesRemaining`（在 `processBlock` 入口按 `numSamples` 扣减），确保实时与离线场景下抑制窗口时长等价，避免离线导出时误吞自动化曲线的首次上升沿。
+
 ---
 
 ## 2. 算法与音频链路
@@ -107,7 +117,7 @@ Input PCM
 | [PluginProcessor.cpp](D:/SpectrumTag/PluginProcessor.cpp) | DSP 主体：`prepareToPlay` / `processBlock` / STFT / OLA / 掩码列推进 / 自动化监听 |
 | [PluginEditor.h](D:/SpectrumTag/PluginEditor.h) | 编辑器声明：UI 组件、Print Trigger 同步状态 |
 | [PluginEditor.cpp](D:/SpectrumTag/PluginEditor.cpp) | UI 实现：参数控件、频谱视图、图片框、Print 按钮、自动化 ↔ UI 双向同步 |
-| [CMakeLists.txt](D:/SpectrumTag/CMakeLists.txt) | JUCE 工程配置与版本号源（**当前 1.2.0**） |
+| [CMakeLists.txt](D:/SpectrumTag/CMakeLists.txt) | JUCE 工程配置与版本号源（**当前 1.2.3**） |
 | [SpectrumTag_installer.iss](D:/SpectrumTag/SpectrumTag_installer.iss) | Windows 安装包脚本（Inno Setup 6） |
 | [build_installer.bat](D:/SpectrumTag/build_installer.bat) | Windows 一键打包脚本 |
 | [build_macos_installer.sh](D:/SpectrumTag/build_macos_installer.sh) | macOS `.pkg` / `.dmg` 一键打包脚本 |
@@ -180,8 +190,14 @@ cmake --build cmake-build-release --config Release --target SpectrumTag
 
 ## 8. 版本信息
 
-- **当前版本**：`v1.2.0`（首个正式发布版本）
-- 发布要点：
+- **当前版本**：`v1.2.3`
+- v1.2.3 更新要点：
+  - 离线渲染 / 导出自动化支持：双路径触发分发（实时由 Editor timer 消费，离线由音频线程自行消费），确保导出音频中 Print 水印正确写入；
+  - 加载抑制窗口改用 sample-clock，实时与离线行为一致；
+  - `EditorState` 新增 `imgBoxWidthPx` 字段，离线路径 cols/duration 与预览精确对齐；
+  - Processor 新增 Editor 感知机制（`notifyEditorAttached/Detached`）。
+
+- v1.2.0 发布要点：
   - 完整的 STFT / OLA / WOLA 归一化与平滑切换机制；
   - 频谱可视化背景修复与时间轴解耦；
   - 图片打印起始完整性修复，多 FFT Size 下图像质量一致；
