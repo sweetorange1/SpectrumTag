@@ -1,0 +1,41 @@
+﻿diff --git a/rubberband/RubberBandLiveShifter.h b/rubberband/RubberBandLiveShifter.h
+index e809666..a1d3f9d 100644
+--- a/rubberband/RubberBandLiveShifter.h
++++ b/rubberband/RubberBandLiveShifter.h
+@@ -99,6 +99,11 @@ public:
+         OptionWindowShort          = 0x00000000,
+         OptionWindowMedium         = 0x00100000,
+ 
++        // Resampler quality selector (mapped to BQResampler::Quality)
++        OptionResamplerFastestTolerable = 0x00000000,
++        OptionResamplerBest             = 0x00010000,
++        OptionResamplerFastest          = 0x00020000,
++
+         OptionFormantShifted       = 0x00000000,
+         OptionFormantPreserved     = 0x01000000,
+ 
+diff --git a/src/finer/R3LiveShifter.cpp b/src/finer/R3LiveShifter.cpp
+index 80e8bd5..ddffe35 100644
+--- a/src/finer/R3LiveShifter.cpp
++++ b/src/finer/R3LiveShifter.cpp
+@@ -205,7 +205,19 @@ R3LiveShifter::createResamplers()
+     Profiler profiler("R3LiveShifter::createResamplers");
+     
+     Resampler::Parameters resamplerParameters;
+-    resamplerParameters.quality = Resampler::FastestTolerable;
++    {
++        int qmask = (RubberBandLiveShifter::OptionResamplerFastestTolerable |
++                     RubberBandLiveShifter::OptionResamplerBest |
++                     RubberBandLiveShifter::OptionResamplerFastest);
++        int qopts = m_parameters.options & qmask;
++        if (qopts == RubberBandLiveShifter::OptionResamplerBest) {
++            resamplerParameters.quality = Resampler::Best;
++        } else if (qopts == RubberBandLiveShifter::OptionResamplerFastest) {
++            resamplerParameters.quality = Resampler::Fastest;
++        } else {
++            resamplerParameters.quality = Resampler::FastestTolerable;
++        }
++    }
+     resamplerParameters.initialSampleRate = m_parameters.sampleRate;
+     resamplerParameters.maxBufferSize = m_guideConfiguration.longestFftSize;
+     resamplerParameters.dynamism = Resampler::RatioOftenChanging;
