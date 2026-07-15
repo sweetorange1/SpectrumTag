@@ -1,5 +1,5 @@
 #define MyAppName "SpectrumTag"
-#define MyAppVersion "1.2.4"
+#define MyAppVersion \"1.2.9\"
 #define MyAppPublisher "iisaacbeats.cn"
 #define MyAppURL "https://iisaacbeats.cn"
 #define MyAppCopyright "Copyright (C) 2026 iisaacbeats.cn"

@@ -1,16 +1,18 @@
->>>>>>> b9a45be4657a9fe8522524f7e1ac190396465ab4
+# Build directories
+cmake-build-*/
+build/
+Builds/
+dist/
+Log/
+
 # IDE files
 .idea/
 .vscode/
+.codebuddy/
 *.swp
 *.swo
 *~
 
-# OS files
-.DS_Store
-Thumbs.db
-
-<<<<<<< HEAD
 # Visual Studio
 *.suo
 *.user
@@ -23,68 +25,15 @@ CMakeCache.txt
 cmake_install.cmake
 install_manifest.txt
 Makefile
-
-# VST3 artefacts
-*.vst3/
-*.component/
-*.app/
-=======
-# JUCE generated files
-JuceLibraryCode/
-.gradle/
-
-# Binary files
-*.exe
-*.dll
-*.so
-*.dylib
-*.vst3
-*.component
-*.app
-
-# Temporary files
-*.log
-*.tmp
->>>>>>> b9a45be4657a9fe8522524f7e1ac190396465ab4
-=======
-# Build directories
-cmake-build-*/
-build/
-Builds/
 
 # JUCE generated files
 JuceLibraryCode/
 juce_*_Artefacts/
 .gradle/
 
-# IDE files
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
 # OS files
 .DS_Store
 Thumbs.db
-
-# Visual Studio
-*.suo
-*.user
-*.sln.docstates
-.vs/
-
-# CMake
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-install_manifest.txt
-Makefile
-
-# VST3 artefacts
-*.vst3/
-*.component/
-*.app/
 
 # Binary files
 *.exe
@@ -95,55 +44,11 @@ Makefile
 *.component
 *.app
 
-# Temporary files
-*.log
-*.tmp
-=======
->>>>>>> b9a45be4657a9fe8522524f7e1ac190396465ab4
-# IDE files
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# OS files
-.DS_Store
-Thumbs.db
-
-<<<<<<< HEAD
-# Visual Studio
-*.suo
-*.user
-*.sln.docstates
-.vs/
-
-# CMake
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-install_manifest.txt
-Makefile
-
-# VST3 artefacts
-*.vst3/
-*.component/
-*.app/
-=======
-# JUCE generated files
-JuceLibraryCode/
-.gradle/
-
-# Binary files
-*.exe
-*.dll
-*.so
-*.dylib
-*.vst3
-*.component
-*.app
+# Test assets (large audio/render fixtures, keep out of repo)
+test/
+*.wav
+*.pkf
 
 # Temporary files
 *.log
 *.tmp
->>>>>>> b9a45be4657a9fe8522524f7e1ac190396465ab4
