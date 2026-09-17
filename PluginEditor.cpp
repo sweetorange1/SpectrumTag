@@ -970,10 +970,15 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     restoreEditorStateFromProcessor();
 
     startTimerHz (30);
+
+    telemetrySession = std::make_unique<iisaac::telemetry::Session> (
+        iisaac::telemetry::forPlugin ("spectrumtag", JucePlugin_VersionString,
+                                     JucePlugin_VersionString, processor.wrapperType));
 }
 
 SpectrumTagAudioProcessorEditor::~SpectrumTagAudioProcessorEditor()
 {
+    telemetrySession.reset();
     setConstrainer (nullptr);
     stopTimer();
     setLookAndFeel (nullptr);

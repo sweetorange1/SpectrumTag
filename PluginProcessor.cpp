@@ -1,6 +1,8 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "source/network/UpdateChecker.h"
+#include <atomic>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -48,6 +50,32 @@ namespace
         s = s.replaceCharacter ('.', '-');
         s = s.removeCharacters ("+");
         return s;
+    }
+
+    // 平台标识（与遥测口径一致，<os>-<arch>）
+    juce::String getUpdatePlatformString()
+    {
+    #if defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__aarch64__) || defined(__arm64__)
+        const juce::String arch = "arm64";
+    #elif defined(_M_X64) || defined(__x86_64__) || defined(__amd64__)
+        const juce::String arch = "x64";
+    #else
+        const juce::String arch = "x86";
+    #endif
+
+    #if JUCE_WINDOWS
+        const juce::String os = "win";
+    #elif JUCE_MAC
+        const juce::String os = "mac";
+    #elif JUCE_LINUX
+        const juce::String os = "linux";
+    #elif JUCE_BSD
+        const juce::String os = "bsd";
+    #else
+        const juce::String os = "unknown";
+    #endif
+
+        return os + "-" + arch;
     }
 }
 
@@ -407,6 +435,24 @@ SpectrumTagAudioProcessor::SpectrumTagAudioProcessor()
     printTriggerParam = dynamic_cast<juce::AudioParameterBool*> (apvts.getParameter (ParameterIDs::printTrigger));
     lastPrintTriggerState.store (printTriggerParam != nullptr && printTriggerParam->get());
     apvts.addParameterListener (ParameterIDs::printTrigger, this);
+
+    // 启动时延迟 5 秒检查一次更新（进程级去重，避免多实例重复触发）
+    static std::atomic<bool> updateOnceFlag { false };
+    if (! updateOnceFlag.exchange (true, std::memory_order_acquire))
+    {
+        juce::Timer::callAfterDelay (5000, []
+        {
+            spectrumtag::network::CheckForUpdatesAsync (
+                "spectrumtag",
+                juce::String (JucePlugin_VersionString),
+                getUpdatePlatformString(),
+                [] (const spectrumtag::network::UpdateInfo& info)
+                {
+                    if (info.has_update)
+                        spectrumtag::network::ShowUpdateDialog (info);
+                });
+        });
+    }
 }
 
 SpectrumTagAudioProcessor::~SpectrumTagAudioProcessor()

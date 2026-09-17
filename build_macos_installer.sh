@@ -3,6 +3,7 @@ set -euo pipefail
 
 # SpectrumTag macOS packaging script
 # - Builds an installer .pkg containing VST3 + AU
+#   (plus the standalone app when SpectrumTagStandalone has been built)
 # - Wraps the .pkg into a distributable .dmg
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +19,8 @@ PRODUCT_NAME="SpectrumTag"
 PKG_IDENTIFIER="cn.iisaacbeats.spectrumtag"
 VST3_BUNDLE="${ARTEFACTS_DIR}/VST3/${PRODUCT_NAME}.vst3"
 AU_BUNDLE="${ARTEFACTS_DIR}/AU/${PRODUCT_NAME}.component"
+STANDALONE_APP="${BUILD_DIR}/SpectrumTagStandalone_artefacts/Release/${PRODUCT_NAME}.app"
+HAVE_STANDALONE=0
 
 DO_SIGN=1
 VERSION=""
@@ -29,7 +32,7 @@ usage() {
 Usage:
   ./build_macos_installer.sh
   ./build_macos_installer.sh --no-sign
-  ./build_macos_installer.sh --version 1.2.3
+  ./build_macos_installer.sh --version 1.3.0
 
 Options:
   --no-sign       Skip ad-hoc codesign for plugin bundles before packaging.
@@ -109,6 +112,15 @@ fi
 log "  - VST3: ${VST3_BUNDLE}"
 log "  - AU  : ${AU_BUNDLE}"
 
+# Standalone 是可选的：没构建就只打包插件，不报错
+if [[ -d "${STANDALONE_APP}" ]]; then
+  HAVE_STANDALONE=1
+  log "  - App : ${STANDALONE_APP}"
+else
+  log "  - App : NOT FOUND (skipped)"
+  log "[HINT] Build Release target SpectrumTagStandalone to include the standalone app."
+fi
+
 if [[ "${DO_SIGN}" -eq 1 ]]; then
   log "Step 2/5 Ad-hoc sign plugin bundles"
   sign_bundle() {
@@ -118,6 +130,9 @@ if [[ "${DO_SIGN}" -eq 1 ]]; then
   }
   sign_bundle "${VST3_BUNDLE}"
   sign_bundle "${AU_BUNDLE}"
+  if [[ "${HAVE_STANDALONE}" -eq 1 ]]; then
+    sign_bundle "${STANDALONE_APP}"
+  fi
 else
   log "Step 2/5 Skip signing (--no-sign)"
 fi
@@ -131,6 +146,11 @@ mkdir -p "${DIST_DIR}"
 # Payload: system plugin locations
 /usr/bin/ditto "${VST3_BUNDLE}" "${PKG_ROOT_DIR}/Library/Audio/Plug-Ins/VST3/${PRODUCT_NAME}.vst3"
 /usr/bin/ditto "${AU_BUNDLE}" "${PKG_ROOT_DIR}/Library/Audio/Plug-Ins/Components/${PRODUCT_NAME}.component"
+
+if [[ "${HAVE_STANDALONE}" -eq 1 ]]; then
+  mkdir -p "${PKG_ROOT_DIR}/Applications"
+  /usr/bin/ditto "${STANDALONE_APP}" "${PKG_ROOT_DIR}/Applications/${PRODUCT_NAME}.app"
+fi
 
 log "Step 4/5 Build .pkg"
 rm -f "${PKG_PATH}"
@@ -146,6 +166,12 @@ rm -rf "${DMG_STAGE_DIR}"
 mkdir -p "${DMG_STAGE_DIR}"
 /usr/bin/ditto "${PKG_PATH}" "${DMG_STAGE_DIR}/${PKG_NAME}"
 
+if [[ "${HAVE_STANDALONE}" -eq 1 ]]; then
+  STANDALONE_LINE="  - ${PRODUCT_NAME}.app      -> /Applications/"
+else
+  STANDALONE_LINE=""
+fi
+
 cat > "${DMG_STAGE_DIR}/README.txt" <<EOF
 ${PRODUCT_NAME} ${VERSION} macOS installer
 ========================================
@@ -153,6 +179,7 @@ ${PRODUCT_NAME} ${VERSION} macOS installer
 This package installs:
   - ${PRODUCT_NAME}.vst3      -> /Library/Audio/Plug-Ins/VST3/
   - ${PRODUCT_NAME}.component -> /Library/Audio/Plug-Ins/Components/
+${STANDALONE_LINE}
 
 After installation, reopen your DAW and rescan plugins if needed.
 EOF

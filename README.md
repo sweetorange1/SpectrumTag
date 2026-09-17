@@ -1,209 +1,166 @@
-# SpectrumTag v1.2.3
+# SpectrumTag v1.3.0
 
-**SpectrumTag** 是一款基于 [JUCE](https://juce.com) 框架的音频效果插件（VST3 / AU / Standalone），核心能力是把 **图片轮廓** 实时映射为 **频域掩码**，并通过 STFT/OLA 在音频信号上"印章"（Print）出对应的频谱图形。
+**SpectrumTag** 把 **图片轮廓** 变成 **频域掩码**，再用 STFT / OLA 把它"印章"（Print）到音频的频谱上 —— 于是你的音频里会真的"长出"这张图的形状，在任意频谱分析软件里都能看到它。
 
-> v1.2.0 为本插件的 **首个正式发布版本**，v1.2.3 为当前最新版本。
+> **先用哪个？**
+> SpectrumTag 有两个形态：**独立程序（`SpectrumTag.exe` / `SpectrumTag.app`，推荐）** 和 **VST3 / AU 插件（补充）**。
+> 日常使用请直接用独立程序：拖进音频 → 拖进图片 → 点 Print → 得到 WAV，全程离线、一次成型。
+> 插件形态需要在宿主里实时播放、并用自动化曲线去控制 Print 的触发时机，只在"想在 DAW 工程内做实时/自动化处理"时才用。
+
+![SpectrumTag 独立程序界面](readme_1.png)
 
 ---
 
-## 1. 核心特性
+## 1. 两种形态怎么选
 
-### 1.1 实时频谱可视化（瀑布图）
-- 独立的 FFT 显示路径，不参与音频处理；调整显示参数不会影响音质。
-- 可选 `FFT Size`（1024 / 2048 / 4096 / 8192）与显示刻度（线性 / Mel）。
-- 频谱区域**初始即填充纯黑背景**，避免加载初期出现宿主软件灰色底色。
-- 频谱**水平滚动速度与 FFT Size 解耦**：调整 FFT Size 仅改变频率分辨率，时间轴滚动速率保持稳定。
-
-### 1.2 图片驱动频谱印章（Print）
-- 在频谱视图中放置图片框，支持**鼠标拖拽**与**等比缩放**。
-- 图片经预处理生成掩码后，沿时间列推进、对 STFT bin 增益做逐帧调制。
-- Print 启动具有**预热机制**，先填充 OLA 管线再消费掩码列，避免"从中间开始绘制"的问题。
-- 不同 FFT Size 下图像边缘均保持清晰，图像首字符不再出现"半截绘制"。
-
-### 1.3 参数控制
-| 参数 | 类型 | 说明 |
+| | **独立程序（Standalone）** | **VST3 / AU 插件** |
 | --- | --- | --- |
-| `FFT Size` | Choice | 1024 / 2048 / 4096 / 8192，影响时频分辨率与算法延迟 |
-| `FFT scale` | Choice | 频谱显示刻度：linear / mel（仅影响 UI） |
-| `Speed` | Float | 图片沿时间轴推进的速度 |
-| `Amplitude Ratio` | Float | 掩码作用强度（频域增益映射），范围 0.0 – 1.5 |
-| `Invert` | Bool | 掩码反相 |
-| `Print Trigger` | Bool | **可被 DAW 自动化、MIDI Learn 控制** 的 Print 触发器（v1.2.0 新增） |
-
-### 1.4 平滑与切换机制
-- **逐 bin 增益平滑**：降低频域突变带来的粗糙感。
-- **Dry/Wet 交叉渐变**：覆盖 Print 进入与退出，避免硬切换。
-- **Dry 路径延迟对齐**：dry 信号通过延迟环对齐到 `N - hop`，与 wet 共享时间基准，消除切换瞬间的相位错位与点击声。
-- **WOLA 重建归一化**：输出叠加时同步累计窗平方能量、逐样本归一化，减少整体增益漂移。
-
-### 1.5 工程持久化（v1.2.0 新增）
-- **图片选择状态自动保存**：DAW 工程保存时会一并记录当前选中的图片路径与图片框位置；重新加载工程时自动恢复。
-- **图片文件丢失保护**：若工程迁移到其它机器或图片被移动，加载工程不会阻塞，会在日志中给出非阻塞提示，UI 自动回退到"Choose picture"占位状态。
-
-### 1.6 Print 自动化与 MIDI Learn（v1.2.0 新增）
-插件向宿主软件暴露布尔类型自动化参数 **`Print Trigger`**，支持：
-- DAW **自动化曲线录制 / 回放**；
-- DAW **MIDI Learn**（用 MIDI 控制器物理触发 Print）；
-- 与 UI Print 按钮**双向同步**：手动点击会回写参数，外部触发会同步到按钮状态。
-
-为保证可靠性，触发链路设计了 **五层防误触保护**：
-
-| 层级 | 机制 | 作用 |
-| --- | --- | --- |
-| L1 | **边缘触发** | 仅在 `false → true` 上升沿响应，忽略保持态与下降沿 |
-| L2 | **状态守门** | Print 进行中再次触发会被忽略，杜绝重复启动 |
-| L3 | **资源守门** | 未选择图片时触发不生效 |
-| L4 | **自动复位** | Print 结束后自动把参数复位为 `false`，下一次上升沿才能再次触发 |
-| L5 | **加载抑制** | 工程加载完成后约 120 ms 内忽略所有上升沿，避免 DAW 参数回放产生伪触发 |
-
-### 1.7 离线渲染 / 导出自动化支持（v1.2.3 新增）
-v1.2.0 的 Print Trigger 依赖 Editor timer（消息线程）消费触发请求，在 DAW **离线渲染**（bounce / freeze / 导出）时 Editor 通常不会被创建，导致自动化曲线触发的 Print 水印**不会写入输出音频**。v1.2.3 彻底解决了这一问题：
-
-- **双路径触发分发**：
-  - **实时模式（UI 在场）**：保持原有行为，由 Editor 30Hz timer 在消息线程取走 `automationPrintRequest`，可复用 UI 当前的实时参数状态；
-  - **离线/导出 / 无 UI**：Processor 在 `processBlock` 入口由**音频线程自行消费**触发请求，内部完成图片加载 → 二值化 → mask 生成 → `startPrint` 全流程，确保导出音频中水印正确写入。
-- **Editor 感知机制**：Processor 通过 `notifyEditorAttached()` / `notifyEditorDetached()` 获知当前是否有活跃 Editor，据此切换触发消费路径。
-- **像素宽度精确对齐**：`EditorState` 新增 `imgBoxWidthPx` 字段，持久化图片框的**实际屏幕像素宽度**，使离线路径的 `cols` 和 `duration` 计算与预览路径完全一致，导出效果与 UI 所见一模一样。
-- **加载抑制窗口改用 sample-clock**：L5 保护机制从基于墙钟（`juce::Time::currentTimeMillis`）改为 `triggerSuppressSamplesRemaining`（在 `processBlock` 入口按 `numSamples` 扣减），确保实时与离线场景下抑制窗口时长等价，避免离线导出时误吞自动化曲线的首次上升沿。
+| 典型用途 | 把一整段音频文件一次性处理完并导出 | 在 DAW 工程里做实时效果 / 自动化 |
+| 输入 | 本地音频文件（WAV / MP3 / FLAC / AIFF / OGG） | 宿主轨道的实时音频流 |
+| 频谱显示 | 整段音频的**静态完整时频图**，可缩放、可拖动 | 随播放**实时滚动**的瀑布图 |
+| 触发方式 | 点一次 **Print**，后台离线合成 | 手动点按钮，或用 `Print Trigger` 自动化 / MIDI Learn |
+| 输出 | 导出 `<原文件名>_tagged.wav` 到指定目录 | 走宿主播放 / bounce 输出 |
+| 需要宿主 | 不需要 | 需要 |
+| 推荐度 | **推荐（主用法）** | 补充用法 |
 
 ---
 
-## 2. 算法与音频链路
+## 2. 独立程序：三步上手
 
-### 2.1 总体处理流程
+1. **拖入音频**：把音频文件拖到窗口任意位置（或点击频谱空白区选择文件）。左侧会立刻画出整段音频的时频图。
+2. **拖入图片**：把 `png / jpg / jpeg / bmp / gif` 图片拖进来。频谱上会出现一个可拖动、可缩放的**图片框**。
+3. **点 Print**：右下角圆形按钮 → 选择输出目录 → 后台渲染 → 得到 `<原文件名>_tagged.wav`。
 
-```
-Input PCM
-   │
-   ├──▶ STFT 分帧 (N-point, hop = N/4, 75% overlap)
-   │      │
-   │      ├──▶ FFT  ─▶  保留相位，仅调制幅度
-   │      │              │
-   │      │              ▼
-   │      │         图像列 → bin 目标增益
-   │      │              │
-   │      │              ▼
-   │      │         逐 bin 平滑
-   │      │              │
-   │      │              ▼
-   │      │           IFFT
-   │      │              │
-   │      │              ▼
-   │      └────▶  WOLA 重建（窗平方能量归一化）
-   │                     │
-   │                     ▼
-   │                   Wet FIFO
-   │                     │
-   ├──▶ Dry 延迟环 (N - hop) ─────▶  Crossfade  ──▶ Output
-   │                                     ▲
-   └──── Print 状态 / Trigger ───────────┘
-```
-
-### 2.2 关键设计要点
-- **相位保留**：仅修改幅度，不重写相位，避免重建伪影。
-- **WOLA 归一化**：每帧叠加时维护窗平方累加器，逐样本除以归一化因子，输出能量稳定。
-- **预热机制（warmup）**：Print 开启时先填充管线再开始消费掩码列，防止首字符被"截断"。
-- **列游标单次推进**：sample-major 逻辑中统一推进，多通道不会重复推进时间轴。
-- **dry/wet 交叉渐变**：进入 / 退出 Print 时 `dryWetMix` 向目标值平滑过渡（默认约 8 ms），消除点击噪声。
-- **OLA 帧切换连续性**：归一化与累加器在帧边界保持连续，避免每个 hop 产生周期性冲激（频谱图上的"竖直细线"）。
+图片框**框住哪里，印章就盖在哪里**：横向 = 音频时间位置，纵向 = 频率位置（顶部高频、底部低频）。
 
 ---
 
-## 3. 工程结构
+## 3. 界面与操作
 
-| 路径 | 作用 |
+### 3.1 频谱区（左侧）
+
+- 载入音频后立即计算并缓存整段时频图，不再滚动。
+- **Speed** 滑杆 / 鼠标按住频谱**横向拖动**：缩放和平移时间轴，用来精确对齐图片框的位置。
+- **FFT scale = mel** 时，左侧频率轴显示对数刻度并附带**钢琴键盘**（C1–C8 标注），方便把印章对准音高。
+- 顶部标题栏右侧显示当前文件信息：文件名 / 时长 / 采样率 / 声道数。
+
+### 3.2 图片框（右侧频谱上的黄框）
+
+| 操作 | 说明 |
 | --- | --- |
-| [PluginProcessor.h](D:/SpectrumTag/PluginProcessor.h) | 处理器声明：参数 ID、Print 状态、STFT 通道状态、crossfade 状态、Print Trigger 自动化接口 |
-| [PluginProcessor.cpp](D:/SpectrumTag/PluginProcessor.cpp) | DSP 主体：`prepareToPlay` / `processBlock` / STFT / OLA / 掩码列推进 / 自动化监听 |
-| [PluginEditor.h](D:/SpectrumTag/PluginEditor.h) | 编辑器声明：UI 组件、Print Trigger 同步状态 |
-| [PluginEditor.cpp](D:/SpectrumTag/PluginEditor.cpp) | UI 实现：参数控件、频谱视图、图片框、Print 按钮、自动化 ↔ UI 双向同步 |
-| [CMakeLists.txt](D:/SpectrumTag/CMakeLists.txt) | JUCE 工程配置与版本号源（**当前 1.2.3**） |
-| [SpectrumTag_installer.iss](D:/SpectrumTag/SpectrumTag_installer.iss) | Windows 安装包脚本（Inno Setup 6） |
-| [build_installer.bat](D:/SpectrumTag/build_installer.bat) | Windows 一键打包脚本 |
-| [build_macos_installer.sh](D:/SpectrumTag/build_macos_installer.sh) | macOS `.pkg` / `.dmg` 一键打包脚本 |
+| 未选图时**单击**框内 | 弹出图片选择对话框 |
+| **拖动**框体 | 移动位置（改变印章的时间 / 频率落点） |
+| **拖动**右下角小方块 | 等比缩放（改变印章的大小） |
+
+图片载入后会自动做预处理：缩放到最长边 2048 px → 按亮度（或 Alpha 通道，透明像素占比高时自动切到 Alpha 模式）**二值化**，框内显示的就是最终用于生成掩码的黑白图。
+
+### 3.3 参数区（右侧）
+
+| 参数 | 取值 | 说明 |
+| --- | --- | --- |
+| `FFT Size` | 1024 / 2048 / 4096（默认）/ 8192 | 时频分辨率。越大频率越细、时间越粗；印章细节也随之变化 |
+| `FFT scale` | `linear` / `mel` | 频率轴映射方式。**mel 时图片框的纵向位置按对数频率解释**，适合对准音高 |
+| `Speed` | 0.1 – 4.0（默认 1.0） | 时频图横向缩放。放大后图片框覆盖的**音频时长变短**（印章更短促），缩小则覆盖更长时间 |
+| `Amplitude Ratio` | 0.0 – 1.5 | 印章强度。见下方说明 |
+| `Invert` | 开 / 关 | 掩码反相（图形区域与背景区域互换处理） |
+
+**Amplitude Ratio 怎么理解**（`gain = 1 → ratio` 映射到掩码亮暗）：
+
+- `0.0`：图形轮廓区域被**完全抹掉**（在频谱上挖出一个"图形形状的洞"，最直观的效果）；
+- `1.0`：无变化（等于没盖章）；
+- `1.0 – 1.5`：图形轮廓区域被**提升**；
+- `0.0 – 1.0` 之间：轮廓区域按比例**衰减**；
+- 勾上 `Invert` 后，图形区域与背景区域的处理方向互换。
+
+### 3.4 Print 按钮（右下角）
+
+- 没有音频时点击 → 直接弹出音频选择器（不报错）。
+- 没有图片时点击 → 提示先载入图片。
+- 有音频有图片 → 弹出**输出目录**选择框 → 后台线程离线合成 → 完成后弹窗告知输出路径。
+- 输出为 **WAV**，保持原音频的采样率、位深（16 / 24 / 32）与声道数；文件名 `<原名>_tagged.wav`，若已存在则自动追加 `_1`、`_2` …
 
 ---
 
-## 4. 构建
+## 4. VST3 / AU 插件形态（补充用法）
 
-### 4.1 依赖
-- CMake 3.22+
-- 支持 C++17 的编译器（MSVC 19.30+ / Clang 13+ / GCC 10+）
-- JUCE：通过 `FetchContent` 自动拉取，无需手动安装
+插件形态是**实时流式**的：把 SpectrumTag 挂到轨道上，播放时频谱才会滚动，印章也只在 Print 被触发的那段时间写入。
 
-### 4.2 通用流程
-```bash
-cmake -S . -B cmake-build-release -DCMAKE_BUILD_TYPE=Release
-cmake --build cmake-build-release --config Release --target SpectrumTag
-```
-构建产物：`cmake-build-release/SpectrumTag_artefacts/Release/{VST3,AU,Standalone}/`。
+- **Print 触发有三种方式**：
+  1. 直接点 UI 上的 Print 按钮；
+  2. DAW **自动化曲线**写 `Print Trigger`（布尔参数，仅在 `false → true` 上升沿响应一次）；
+  3. DAW **MIDI Learn** 绑定 `Print Trigger`，用 MIDI 控制器物理触发。
+- **离线导出（bounce / freeze）同样有效**：宿主不创建插件界面时，由音频线程自行消费触发请求，导出音频里也会有印章。
+- **工程持久化**：工程会记录当前图片路径与图片框位置，重新打开自动恢复；图片文件丢失时不阻塞，仅回退到"Choose picture"占位。
+- 参数除 `Print Trigger` 外与独立程序一致（`FFT Size` / `FFT scale` / `Speed` / `Amplitude Ratio` / `Invert`）。
+
+> 也就是说：如果你只是想"给一个音频文件盖章"，用独立程序；只有在需要实时听、或用自动化精确编排触发时机时，才用插件。
 
 ---
 
-## 5. 安装包
+## 5. 安装
 
 ### 5.1 Windows
-1. 安装 Inno Setup 6（`winget install --id JRSoftware.InnoSetup -e`）。
-2. 先完成 Release 构建（产物输出到 `cmake-build-release\SpectrumTag_artefacts\Release\VST3\SpectrumTag.vst3`）。
-3. 双击运行 [build_installer.bat](D:/SpectrumTag/build_installer.bat)，安装包将输出到 `dist\SpectrumTag_Setup_1.2.4_x64.exe`。
 
-默认安装路径：`%CommonProgramFiles%\VST3\iisaacbeats.cn\SpectrumTag.vst3`；预设安装到 `%UserProfile%\Documents\spectrumtagpreset`。
+运行 `SpectrumTag_Setup_1.3.0_x64.exe`，安装时可选组件：
+
+- **VST3 plug-in** → 默认装到 `%CommonProgramFiles%\VST3\iisaacbeats.cn\SpectrumTag.vst3`
+- **standalone application** → 装到 `C:\Program Files\iisaacbeats.cn\SpectrumTag\SpectrumTag.exe`（开始菜单有快捷方式，可勾选创建桌面快捷方式）
+
+> 若把 VST3 装到非默认目录，安装后会提示你需要在 DAW 中手动添加该目录并重新扫描插件。
 
 ### 5.2 macOS
-完成 Release 构建后运行 [build_macos_installer.sh](D:/SpectrumTag/build_macos_installer.sh) 即可生成 `.pkg` 与 `.dmg`。
+
+打开 `.dmg`，运行其中的 `.pkg`，会安装：
+
+- `SpectrumTag.vst3` → `/Library/Audio/Plug-Ins/VST3/`
+- `SpectrumTag.component`（AU）→ `/Library/Audio/Plug-Ins/Components/`
+- `SpectrumTag.app`（独立程序）→ `/Applications/`
 
 ---
 
-## 6. 参数与行为说明（开发视角）
+## 6. 从源码构建
 
-- **FFT Size**：影响频率分辨率、时间分辨率、算法延迟（`latency = N - hop`）。当前实现仅允许在**非 Print 状态**下重建 FFT，避免重建瞬间产生爆音。
-- **Amplitude Ratio**：经内部映射转成频域目标增益；与 `Invert` 组合决定掩码亮暗区域的"抑制/保留"方向。
-- **Speed**：决定 `printColPerSample`，间接决定图像沿时间轴的推进速度。
-- **Print Trigger**：仅响应上升沿；Print 流程结束后插件会自动把它写回 `false`（DAW 会录到这一次复位）。
+依赖：CMake 3.22+、支持 C++17 的编译器（MSVC 19.30+ / Clang 13+ / GCC 10+）。JUCE 通过 `FetchContent` 自动拉取，无需手动安装。
 
----
+```bash
+# 一次性构建插件 + 独立程序
+cmake -S . -B cmake-build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build cmake-build-release --config Release --target SpectrumTag_All
+```
 
-## 7. 后续维护指引
+产物：
 
-### 7.1 改动切换逻辑时的最小回归清单
-- [ ] Print 快速连点是否有点击声；
-- [ ] Print 开始 / 结束是否有波形错位；
-- [ ] 掩码绘制起点是否稳定（不"从中间开始"）；
-- [ ] `Amplitude Ratio = 0` 时是否仍出现异常增益抬升；
-- [ ] DAW 工程加载瞬间是否触发了非用户预期的 Print；
-- [ ] 自动化曲线 0→1 的上升沿是否稳定触发一次 Print；
-- [ ] Print 结束后参数是否被复位为 0。
+- 独立程序：`cmake-build-release/SpectrumTagStandalone_artefacts/Release/SpectrumTag.exe`（macOS 为 `SpectrumTag.app`）
+- VST3：`cmake-build-release/SpectrumTag_artefacts/Release/VST3/SpectrumTag.vst3`
 
-### 7.2 性能注意
-- 音频线程中**禁止**任何动态分配、文件 I/O、锁竞争；
-- 频谱日志（math log）默认关闭，仅在调试时打开；
-- FFT 重建限制在非 Print 状态进行。
+打包：
 
-### 7.3 可扩展方向
-- 更平滑的参数自动化（跨 block 插值）；
-- 多种窗函数 / 重建策略切换；
-- 更细粒度的频段映射与心理声学加权；
-- 离线渲染模式（非实时）以获得更高质量印章效果；
-- 工程迁移时的图片 fallback 查找（按文件名在用户预设目录搜索）。
+- Windows：`build_installer.bat`（需 Inno Setup 6），输出到 `dist\`
+- macOS：`build_macos_installer.sh`，输出 `.pkg` 与 `.dmg`
 
 ---
 
-## 8. 版本信息
+## 7. 常见问题
 
-- **当前版本**：`v1.2.3`
-- v1.2.3 更新要点：
-  - 离线渲染 / 导出自动化支持：双路径触发分发（实时由 Editor timer 消费，离线由音频线程自行消费），确保导出音频中 Print 水印正确写入；
-  - 加载抑制窗口改用 sample-clock，实时与离线行为一致；
-  - `EditorState` 新增 `imgBoxWidthPx` 字段，离线路径 cols/duration 与预览精确对齐；
-  - Processor 新增 Editor 感知机制（`notifyEditorAttached/Detached`）。
+**Q：图片盖上去没反应 / 效果很弱？**
+检查 `Amplitude Ratio` 是否为 0 附近（0 = 图形被抹除，1 = 无变化，>1 = 提升），以及是否误勾了 `Invert`。
 
-- v1.2.0 发布要点：
-  - 完整的 STFT / OLA / WOLA 归一化与平滑切换机制；
-  - 频谱可视化背景修复与时间轴解耦；
-  - 图片打印起始完整性修复，多 FFT Size 下图像质量一致；
-  - 工程持久化（图片路径与图片框位置自动保存 / 恢复）；
-  - Print 自动化与 MIDI Learn 支持，五层防误触保护；
-  - Windows / macOS 一键打包脚本完善。
+**Q：印章出现在了错误的时间点？**
+图片框的横向位置决定时间。用 `Speed` 放大时间轴后再精确定位，会更准。
+
+**Q：切换 FFT scale 后频谱没变？**
+v1.3.0 起切换 `linear / mel` 会立即重新计算时频图。若仍无变化，请确认使用的是最新构建。
+
+**Q：支持哪些文件？**
+音频：`.wav .mp3 .flac .aif .aiff .ogg`；图片：`.png .jpg .jpeg .bmp .gif`；输出固定为 `.wav`。
+
+---
+
+## 8. 版本历史
+
+- **v1.3.0**：新增启动后自动检查更新（延迟 5 秒、异步、失败静默，插件与独立程序均生效）；修复切换 `FFT scale` 后频谱未实时重算的问题；安装包同时包含 **独立程序** 与 VST3 插件。
+- **v1.2.3**：离线渲染 / 导出自动化支持（实时路径由 Editor timer 消费触发，离线路径由音频线程消费）；加载抑制窗口改用 sample-clock；`imgBoxWidthPx` 持久化，离线与预览结果精确对齐。
+- **v1.2.0**：首个正式发布版本。完整 STFT / OLA / WOLA 归一化、图片打印起始完整性、工程持久化（图片路径与图片框位置）、Print 自动化与 MIDI Learn（五层防误触保护）、Windows / macOS 一键打包。
 
 ---
 
@@ -211,29 +168,27 @@ cmake --build cmake-build-release --config Release --target SpectrumTag
 
 ### 9.1 许可协议
 
-本项目采用 **GNU Affero General Public License v3.0（AGPL-3.0）** —— 这是目前公认最严格的开源 Copyleft 协议。完整条款见项目根目录下的 [LICENSE](LICENSE) 文件。
-
-**核心约束（摘要）**：
+本项目采用 **GNU Affero General Public License v3.0（AGPL-3.0）**，完整条款见 [LICENSE](LICENSE)。
 
 | 条款 | 说明 |
 | --- | --- |
 | **源码强制公开** | 任何分发（含二进制 / 编译产物）必须随附完整源代码，或提供可获取源码的书面承诺 |
-| **衍生作品必须继承** | 任何基于本项目的修改、衍生或二次开发，无论以源代码还是目标码形式发布，**必须同样以 AGPL-3.0 协议开源** |
-| **网络交互触发 Copyleft** | 即使通过远程网络服务（SaaS / 云端）提供本软件的功能，也**必须向所有使用者提供完整源代码**（AGPL 第 13 条，这正是 AGPL 区别于 GPL 的关键） |
-| **禁止附加限制** | 不允对 AGPL 授予的权利施加额外收费、授权费或其它限制条件 |
-| **无担保** | 本软件不提供任何形式的明示或默示担保，使用者自行承担全部风险 |
+| **衍生作品必须继承** | 任何基于本项目的修改、衍生或二次开发，无论以源码还是目标码发布，**必须同样以 AGPL-3.0 开源** |
+| **网络交互触发 Copyleft** | 即使通过远程网络服务（SaaS / 云端）提供本软件功能，也**必须向所有使用者提供完整源代码**（AGPL 第 13 条） |
+| **禁止附加限制** | 不得对 AGPL 授予的权利施加额外收费、授权费或其它限制 |
+| **无担保** | 不提供任何明示或默示担保，使用者自行承担风险 |
 
-> ⚠️ **简要理解**：你可以自由使用、修改、学习本项目代码，但 —— **任何形式的再分发（包括直接销售、打包进商业产品、或通过云服务提供），都必须将你的全部修改以 AGPL-3.0 协议完整开源**。这是法律强制要求，不是道德建议。
+> 简要理解：可以自由使用、修改、学习本项目代码，但**任何形式的再分发（销售、打包进商业产品、云服务提供），都必须将你的全部修改以 AGPL-3.0 完整开源**。这是法律强制要求。
 
 ### 9.2 反商业化滥用声明
 
-本项目的源代码公开发布，旨在促进音频 DSP 技术社区的学习、交流与进步。**我们明确保留追究以下行为的法律权利**：
+源代码公开旨在促进音频 DSP 技术社区的学习与交流。**我们明确保留追究以下行为的法律权利**：
 
-- ✗ 未经授权将本项目编译产物打包为商业软件并**收取授权费用**；
-- ✗ 在未遵守 AGPL-3.0 完整义务（包括公开衍生源代码）的情况下，将本项目或其衍生作品投入**商业分发渠道**（如应用商店、付费插件平台等）；
-- ✗ 去除、隐藏或篡改本项目的版权声明、许可证声明以掩盖来源。
+- 未经授权将本项目编译产物打包为商业软件并收取授权费用；
+- 在未遵守 AGPL-3.0 完整义务（包括公开衍生源代码）的情况下投入商业分发渠道（应用商店、付费插件平台等）；
+- 去除、隐藏或篡改版权与许可证声明以掩盖来源。
 
-如果你希望通过商业授权方式使用本项目（即不在 AGPL-3.0 约束下发布你的修改），请联系作者协商**双许可证（Dual Licensing）**事宜。
+如需商业授权（不在 AGPL-3.0 下公开你的修改），请联系作者协商 **双许可证（Dual Licensing）**。
 
 ### 9.3 版权
 

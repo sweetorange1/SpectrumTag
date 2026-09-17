@@ -519,7 +519,7 @@ SpectrumTagMainComponent::SpectrumTagMainComponent()
     styleHeaderLabel (titleLabel, 32.0f, kTextWhite);
     addAndMakeVisible (titleLabel);
 
-    versionLabel.setText ("v1.2.9", juce::dontSendNotification);
+    versionLabel.setText (juce::String ("v") + ProjectInfo::versionString, juce::dontSendNotification);
     styleHeaderLabel (versionLabel, 18.0f, kTextWhite);
     addAndMakeVisible (versionLabel);
 
@@ -602,10 +602,15 @@ SpectrumTagMainComponent::SpectrumTagMainComponent()
     setSize (kDefaultWidth, kDefaultHeight);
 
     startTimerHz (10);
+
+    telemetrySession = std::make_unique<iisaac::telemetry::Session> (
+        iisaac::telemetry::forStandalone ("spectrumtag", ProjectInfo::versionString,
+                                         ProjectInfo::versionString));
 }
 
 SpectrumTagMainComponent::~SpectrumTagMainComponent()
 {
+    telemetrySession.reset();
     stopTimer();
     if (renderJob != nullptr)
     {

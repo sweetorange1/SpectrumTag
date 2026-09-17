@@ -6,6 +6,7 @@
 #include <atomic>
 #include "SharedUI.h"
 #include "OfflineRenderer.h"
+#include "../shared/IisaacTelemetry.h"
 
 // ============================================================================
 //  SpectrumTagStandaloneWindow
@@ -90,6 +91,8 @@ private:
     std::atomic<bool>             renderRunning { false };
     std::atomic<float>            renderProgress { 0.0f };
 
+    std::unique_ptr<iisaac::telemetry::Session> telemetrySession;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumTagMainComponent)
 };
 
@@ -119,7 +122,16 @@ public:
     void rebuildSpectrogram (int fftSize);
 
     // 显示相关参数
-    void setScaleMode (int m)       { if (m != scaleMode) { scaleMode = m; repaint(); } }
+    // 注意：linear/mel 决定"频率 → 时频图像素行"的映射，而时频图是预先烘焙好的
+    // Image。只 repaint() 重画的是旧图，必须重新烘焙，否则切换后画面不变，
+    // 只有重新载入音频（触发 setAudio → 烘焙）才生效。
+    void setScaleMode (int m)
+    {
+        if (m == scaleMode) return;
+        scaleMode = m;
+        computeSpectrogramImage();
+        repaint();
+    }
     void setSpeed     (float speed) { horizontalStretch = juce::jmax (0.05f, speed); repaint(); }
     float getSpeed() const          { return horizontalStretch; }
 

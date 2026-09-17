@@ -1,5 +1,39 @@
 #include <JuceHeader.h>
 #include "StandaloneWindow.h"
+#include "../source/network/UpdateChecker.h"
+
+#include <atomic>
+
+// ============================================================================
+//  平台标识（与遥测 / 插件侧口径一致，<os>-<arch>）
+// ============================================================================
+namespace
+{
+    juce::String getUpdatePlatformString()
+    {
+    #if defined(_M_ARM64) || defined(_M_ARM64EC) || defined(__aarch64__) || defined(__arm64__)
+        const juce::String arch = "arm64";
+    #elif defined(_M_X64) || defined(__x86_64__) || defined(__amd64__)
+        const juce::String arch = "x64";
+    #else
+        const juce::String arch = "x86";
+    #endif
+
+    #if JUCE_WINDOWS
+        const juce::String os = "win";
+    #elif JUCE_MAC
+        const juce::String os = "mac";
+    #elif JUCE_LINUX
+        const juce::String os = "linux";
+    #elif JUCE_BSD
+        const juce::String os = "bsd";
+    #else
+        const juce::String os = "unknown";
+    #endif
+
+        return os + "-" + arch;
+    }
+}
 
 // ============================================================================
 //  SpectrumTagStandaloneApplication
@@ -14,12 +48,31 @@ public:
     SpectrumTagStandaloneApplication() = default;
 
     const juce::String getApplicationName() override       { return "SpectrumTag"; }
-    const juce::String getApplicationVersion() override    { return "1.2.9"; }
+    const juce::String getApplicationVersion() override    { return ProjectInfo::versionString; }
     bool moreThanOneInstanceAllowed() override             { return true; }
 
     void initialise (const juce::String&) override
     {
         mainWindow = std::make_unique<MainWindow> ("SpectrumTag");
+
+        // 启动后延迟 5 秒检查一次更新（进程级去重；Standalone 不创建 Processor，
+        // 因此在应用入口单独触发一次）
+        static std::atomic<bool> updateOnceFlag { false };
+        if (! updateOnceFlag.exchange (true, std::memory_order_acquire))
+        {
+            juce::Timer::callAfterDelay (5000, []
+            {
+                spectrumtag::network::CheckForUpdatesAsync (
+                    "spectrumtag",
+                    juce::String (ProjectInfo::versionString),
+                    getUpdatePlatformString(),
+                    [] (const spectrumtag::network::UpdateInfo& info)
+                    {
+                        if (info.has_update)
+                            spectrumtag::network::ShowUpdateDialog (info);
+                    });
+            });
+        }
     }
 
     void shutdown() override

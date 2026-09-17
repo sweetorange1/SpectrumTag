@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include "PluginProcessor.h"
+#include "shared/IisaacTelemetry.h"
 
 // ============================================================================
 //  SpectrumTagAudioProcessorEditor
@@ -238,6 +239,8 @@ private:
     // ---- 工具：给 Label 应用 BasementGrotesque 字体 ----
     void styleHeaderLabel (juce::Label& l, float height, juce::Colour colour);
     void styleControlLabel (juce::Label& l);
+
+    std::unique_ptr<iisaac::telemetry::Session> telemetrySession;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumTagAudioProcessorEditor)
 };
