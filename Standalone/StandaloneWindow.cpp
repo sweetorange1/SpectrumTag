@@ -280,6 +280,17 @@ void StandaloneAudioSpectrogramView::drawFrequencyAxis (juce::Graphics& g)
     g.setFont (f);
     g.setColour (kAxisColour);
 
+    // 刻度文字矩形高度。最顶部（yNorm = 0）与最底部（yNorm = 1）两个刻度若直接按
+    // "y - 6" 起画，会有一半落在组件边界之外被裁掉 —— linear 模式下表现为
+    // 最上方的 22k 和最下方的 20 只能看到半行。这里把文字矩形夹进内容区范围。
+    constexpr int kLabelH = 12;
+    auto labelTopFor = [this] (int y)
+    {
+        const int top    = juce::jmax (0, contentBounds.getY());
+        const int bottom = juce::jmax (top, contentBounds.getBottom() - kLabelH);
+        return juce::jlimit (top, bottom, y - kLabelH / 2);
+    };
+
     if (scaleMode == 1)
     {
         drawPianoKeys (g, maxHz);
@@ -292,7 +303,7 @@ void StandaloneAudioSpectrogramView::drawFrequencyAxis (juce::Graphics& g)
             const int y = contentBounds.getY() + juce::roundToInt (yNorm * (contentBounds.getHeight() - 1));
             juce::String label = (hz >= 1000.0f) ? (juce::String (hz / 1000.0f, 0) + "k")
                                                  : juce::String ((int) hz);
-            g.drawText (label, textX, y - 6, 30, 12, juce::Justification::centredRight);
+            g.drawText (label, textX, labelTopFor (y), 30, kLabelH, juce::Justification::centredRight);
         }
     }
     else
@@ -305,8 +316,8 @@ void StandaloneAudioSpectrogramView::drawFrequencyAxis (juce::Graphics& g)
             const float hz = FreqMap::yNormToFrequencyLinear (yNorm, maxHz);
             juce::String label = (hz >= 1000.0f) ? (juce::String (hz / 1000.0f, hz >= 10000.0f ? 0 : 1) + "k")
                                                  : juce::String ((int) std::round (hz));
-            g.drawText (label, axisBounds.getX() + 4, y - 6,
-                        axisBounds.getWidth() - 8, 12, juce::Justification::centredRight);
+            g.drawText (label, axisBounds.getX() + 4, labelTopFor (y),
+                        axisBounds.getWidth() - 8, kLabelH, juce::Justification::centredRight);
         }
     }
 }
@@ -535,7 +546,11 @@ SpectrumTagMainComponent::SpectrumTagMainComponent()
     addAndMakeVisible (*spectrumView);
 
     spectrumView->getImageBox().onChanged = [this] { repaint(); };
-    spectrumView->getImageBox().onImagePicked = [this] (const juce::File&) { repaint(); };
+    spectrumView->getImageBox().onImagePicked = [this] (const juce::File&)
+    {
+        repaint();
+        updateStatusLabel();
+    };
     spectrumView->onEmptyClicked = [this] { pickAudioFile(); };
 
     // ---- 标签 ----
@@ -600,6 +615,8 @@ SpectrumTagMainComponent::SpectrumTagMainComponent()
     resizeConstrainer.setFixedAspectRatio (aspect);
     resizeConstrainer.setSizeLimits (kMinWidth, kMinHeight, 4096, 4096);
     setSize (kDefaultWidth, kDefaultHeight);
+
+    updateStatusLabel();
 
     startTimerHz (10);
 
@@ -753,7 +770,8 @@ void SpectrumTagMainComponent::filesDropped (const juce::StringArray& files,
         if (ext == ".png" || ext == ".jpg" || ext == ".jpeg"
             || ext == ".bmp" || ext == ".gif")
         {
-            loadImage (file);
+            if (loadImage (file))
+                updateStatusLabel();
         }
         else if (ext == ".wav" || ext == ".mp3" || ext == ".flac"
                  || ext == ".aif" || ext == ".aiff" || ext == ".ogg")
@@ -820,12 +838,7 @@ void SpectrumTagMainComponent::loadAudioFile (const juce::File& file)
     currentFormatName = reader->getFormatName();
     currentChannelLayout = juce::AudioChannelSet::canonicalChannelSet (numChannels);
 
-    audioFileLabel.setText ("Loaded: " + file.getFileName()
-                            + juce::String::formatted ("   |   %.2f s   |   %.1f kHz   |   %d ch",
-                                                       (double) currentAudio.getNumSamples() / currentSampleRate,
-                                                       currentSampleRate / 1000.0,
-                                                       numChannels),
-                            juce::dontSendNotification);
+    updateStatusLabel();
 
     if (spectrumView != nullptr)
     {
@@ -833,6 +846,45 @@ void SpectrumTagMainComponent::loadAudioFile (const juce::File& file)
         const int N = (idx == 0 ? 1024 : idx == 1 ? 2048 : idx == 2 ? 4096 : 8192);
         spectrumView->setAudio (currentAudio, currentSampleRate, N);
     }
+}
+
+// ============================================================================
+//  顶部状态提示
+// ----------------------------------------------------------------------------
+//  三个状态：
+//   1) 已有音频        → 显示文件名 / 时长 / 采样率 / 声道数
+//   2) 有图片、无音频  → 高亮提示"下一步请拖入音频文件"（此时 Print 也不可用）
+//   3) 两者都没有      → 常规起始提示
+// ============================================================================
+void SpectrumTagMainComponent::updateStatusLabel()
+{
+    const bool hasAudio = currentAudio.getNumSamples() > 0;
+    const bool hasImage = spectrumView != nullptr && spectrumView->getImageBox().hasImage();
+
+    if (hasAudio)
+    {
+        audioFileLabel.setColour (juce::Label::textColourId, kTextSub);
+        audioFileLabel.setText ("Loaded: " + currentAudioFile.getFileName()
+            + juce::String::formatted ("   |   %.2f s   |   %.1f kHz   |   %d ch",
+                                       (double) currentAudio.getNumSamples() / currentSampleRate,
+                                       currentSampleRate / 1000.0,
+                                       currentAudio.getNumChannels()),
+            juce::dontSendNotification);
+        return;
+    }
+
+    if (hasImage)
+    {
+        // 图片已就位，缺的是音频：用高亮色把注意力引到"拖入音频"
+        audioFileLabel.setColour (juce::Label::textColourId, kImgBoxYellow);
+        audioFileLabel.setText ("Next: drop an audio file (WAV / MP3 / FLAC ...) here to continue",
+                                juce::dontSendNotification);
+        return;
+    }
+
+    audioFileLabel.setColour (juce::Label::textColourId, kTextSub);
+    audioFileLabel.setText ("Drop an audio file (WAV / MP3 / FLAC ...) to begin",
+                            juce::dontSendNotification);
 }
 
 // ============================================================================
@@ -960,16 +1012,8 @@ void SpectrumTagMainComponent::timerCallback()
     }
     else if (renderJob != nullptr && ! renderJob->isThreadRunning())
     {
-        // 清理已完成的 job
+        // 清理已完成的 job，并把状态提示恢复到"已载入音频"
         renderJob.reset();
-        if (currentAudio.getNumSamples() > 0)
-        {
-            audioFileLabel.setText ("Loaded: " + currentAudioFile.getFileName()
-                + juce::String::formatted ("   |   %.2f s   |   %.1f kHz   |   %d ch",
-                                            (double) currentAudio.getNumSamples() / currentSampleRate,
-                                            currentSampleRate / 1000.0,
-                                            currentAudio.getNumChannels()),
-                juce::dontSendNotification);
-        }
+        updateStatusLabel();
     }
 }

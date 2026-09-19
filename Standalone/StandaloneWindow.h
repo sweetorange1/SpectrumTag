@@ -48,6 +48,9 @@ private:
     void loadAudioFile (const juce::File& file);
     bool loadImage    (const juce::File& file);
 
+    // 刷新顶部状态提示：按"音频 / 图片"的加载情况给出下一步引导
+    void updateStatusLabel();
+
     void styleHeaderLabel (juce::Label& l, float height, juce::Colour colour);
     void styleControlLabel (juce::Label& l);
 
