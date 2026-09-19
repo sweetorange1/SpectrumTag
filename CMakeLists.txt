@@ -1,4 +1,29 @@
 cmake_minimum_required(VERSION 3.22)
+
+# ============================================================================
+#  macOS：默认产出 Apple Silicon + Intel 双架构（universal / fat）二进制
+# ----------------------------------------------------------------------------
+#  CMAKE_OSX_ARCHITECTURES 为空时（默认）自动填 "arm64;x86_64"，
+#  Standalone / VST3 / AU 三个产物都会是双架构，Intel 与 M 系列机器都能加载。
+#  只想出单架构时显式覆盖即可：
+#     -DCMAKE_OSX_ARCHITECTURES=arm64     （仅 Apple Silicon）
+#     -DCMAKE_OSX_ARCHITECTURES=x86_64    （仅 Intel）
+#  注意：该变量必须在 project() 之前设置，否则不生效。
+# ============================================================================
+if(APPLE)
+    if(NOT CMAKE_OSX_ARCHITECTURES)
+        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING
+            "macOS architectures (default: universal = Apple Silicon + Intel)" FORCE)
+    endif()
+    # arm64 的 deployment target 必须 >= 11.0（Big Sur）
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING
+            "Minimum macOS version (arm64 requires 11.0+)" FORCE)
+    endif()
+    message(STATUS "[SpectrumTag] macOS architectures : ${CMAKE_OSX_ARCHITECTURES}")
+    message(STATUS "[SpectrumTag] macOS deployment    : ${CMAKE_OSX_DEPLOYMENT_TARGET}")
+endif()
+
 project(SpectrumTag VERSION 1.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)

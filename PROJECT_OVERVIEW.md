@@ -42,7 +42,7 @@ SpectrumTag/
 ├── otf/                           # 标题字体，编译进 BinaryData
 ├── build_installer.bat            # Windows 打包（Inno Setup 6）
 ├── SpectrumTag_installer.iss      # Windows 安装脚本（VST3 + Standalone 组件）
-└── build_macos_installer.sh       # macOS pkg/dmg 打包（VST3 + AU + Standalone.app）
+└── build_macos_installer.sh       # macOS pkg/dmg 打包（Standalone.app 主 + VST3/AU 可选组件）
 ```
 
 ---
@@ -75,6 +75,15 @@ cmake -S . -B cmake-build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build cmake-build-release --config Release --target SpectrumTag_All
 ```
 
+**macOS 默认产出双架构 universal 二进制**（`CMakeLists.txt` 在 `project()` 前把 `CMAKE_OSX_ARCHITECTURES` 设为 `arm64;x86_64`，并把 `CMAKE_OSX_DEPLOYMENT_TARGET` 设为 11.0，arm64 的最低要求）。Standalone / VST3 / AU 三个产物都是 fat binary，Intel 与 Apple Silicon 均可加载。需要单架构时显式覆盖：
+
+```bash
+-DCMAKE_OSX_ARCHITECTURES=arm64     # 仅 Apple Silicon
+-DCMAKE_OSX_ARCHITECTURES=x86_64    # 仅 Intel
+```
+
+> 用 `lipo -archs <binary>` 校验；`build_macos_installer.sh` 在 Step 2/7 会打印各产物架构，非双架构时告警。
+
 产物：
 
 - `cmake-build-release/SpectrumTagStandalone_artefacts/Release/SpectrumTag.exe`（macOS：`SpectrumTag.app`）
@@ -85,7 +94,11 @@ cmake --build cmake-build-release --config Release --target SpectrumTag_All
 ### 3.4 打包
 
 - Windows：`build_installer.bat` 自动探测 VST3 bundle 与 `SpectrumTag.exe`，通过 `-DSTANDALONE_EXE=` 传给 `SpectrumTag_installer.iss`；有 exe 时安装包出现「VST3 plug-in / standalone application」两个组件，独立程序装到 `{autopf}\iisaacbeats.cn\SpectrumTag\`。未找到 exe 只告警并退化为纯插件包。
-- macOS：`build_macos_installer.sh` 打 VST3 + AU，若 `SpectrumTagStandalone_artefacts/Release/SpectrumTag.app` 存在则一并打进 `/Applications`（缺失则跳过）。
+- macOS：`build_macos_installer.sh` 打**组件式**安装包（`pkgbuild` 打 component → `productbuild` 合成带"自定义安装"页的 product pkg → 包成 dmg），形态与 Windows 一致：
+  - `SpectrumTag (Standalone Application)`：**主组件，必装**（`enabled="false" selected="true"`，勾选框置灰）→ `/Applications/SpectrumTag.app`。产物缺失直接报错退出。
+  - `SpectrumTag Plug-ins (VST3 + AU)`：**可选组件**，默认勾选，用户可取消 → 系统插件目录。VST3 / AU 产物缺失只告警并跳过该组件（两个都没有时自动退化为纯 Standalone 包）。
+  - 常用参数：`--version` / `--no-sign` / `--identity "Developer ID Application: ..."` / `--skip-plugins` / `--keep-work`。
+  - Standalone 组件附 `preinstall`（关闭正在运行的旧版本，对应 Windows 的 `CloseApplications=force`）与 `postinstall`（清 `com.apple.quarantine`，避免 ad-hoc 签名的 app 首次启动被 Gatekeeper 拦截）。
 
 ---
 
