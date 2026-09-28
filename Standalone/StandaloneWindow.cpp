@@ -288,7 +288,7 @@ void StandaloneAudioSpectrogramView::drawFrequencyAxis (juce::Graphics& g)
     // "y - 6" 起画，会有一半落在组件边界之外被裁掉 —— linear 模式下表现为
     // 最上方的 22k 和最下方的 20 只能看到半行。这里把文字矩形夹进内容区范围。
     constexpr int kLabelH = 12;
-    auto labelTopFor = [this] (int y)
+    auto labelTopFor = [this, kLabelH] (int y)
     {
         const int top    = juce::jmax (0, contentBounds.getY());
         const int bottom = juce::jmax (top, contentBounds.getBottom() - kLabelH);
