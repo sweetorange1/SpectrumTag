@@ -23,6 +23,7 @@
 // ============================================================================
 
 class StandaloneAudioSpectrogramView;
+class ExportResultOverlay;
 
 class SpectrumTagMainComponent : public juce::Component,
                                  public juce::FileDragAndDropTarget,
@@ -47,6 +48,7 @@ private:
     void pickAudioFile();  // 弹出音频文件选择器
     void loadAudioFile (const juce::File& file);
     bool loadImage    (const juce::File& file);
+    void showExportResult (const juce::File& file, bool ok);  // 自定义导出结果弹窗
 
     // 刷新顶部状态提示：按"音频 / 图片"的加载情况给出下一步引导
     void updateStatusLabel();
@@ -94,6 +96,9 @@ private:
     std::atomic<bool>             renderRunning { false };
     std::atomic<float>            renderProgress { 0.0f };
 
+    // ---- 导出结果自定义弹窗 ----
+    std::unique_ptr<ExportResultOverlay> exportOverlay;
+
     std::unique_ptr<iisaac::telemetry::Session> telemetrySession;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrumTagMainComponent)
@@ -116,6 +121,9 @@ public:
 
     // 当频谱内容区被点击（且没发生拖动）时触发；主窗口据此弹出音频选择器
     std::function<void()> onEmptyClicked;
+
+    // Ctrl+滚轮缩放时触发，通知主窗口同步 Speed 滑杆（参数为新的 speed 值）
+    std::function<void(float)> onSpeedChanged;
 
     // 由主窗口传入音频：立即（后台）计算整段时频图
     void setAudio (const juce::AudioBuffer<float>& audio, double sampleRate, int fftSize);
@@ -153,9 +161,10 @@ public:
 
     void resized() override;
     void paint (juce::Graphics&) override;
-    void mouseDown  (const juce::MouseEvent&) override;
-    void mouseDrag  (const juce::MouseEvent&) override;
-    void mouseUp    (const juce::MouseEvent&) override;
+    void mouseDown      (const juce::MouseEvent&) override;
+    void mouseDrag      (const juce::MouseEvent&) override;
+    void mouseUp        (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     // 供主窗口读取用户在频谱上通过鼠标的横向拖动状态（图片框位置由 ImageBox 自己保存）
     // 这里没有对外暴露 API：拖动只影响本组件内部的 viewOffsetPx 显示偏移。
@@ -163,7 +172,9 @@ public:
 private:
     void computeSpectrogramImage();
     void drawFrequencyAxis (juce::Graphics& g);
-    void drawPianoKeys (juce::Graphics& g, float maxHz);
+    void drawTimeAxis     (juce::Graphics& g);
+    void drawPianoKeys    (juce::Graphics& g, float maxHz);
+    void clampViewOffset();
 
     static juce::Colour mapHeatmap (float t);
 
@@ -172,6 +183,7 @@ private:
 
     juce::Rectangle<int> contentBounds;
     juce::Rectangle<int> axisBounds;
+    juce::Rectangle<int> timeAxisBounds;
 
     juce::Image spectrogram;   // 整段音频的时频图，宽度 = spectrogramNativeWidth 像素
     int         spectrogramNativeWidth  = 0;   // 原生（1x speed）下时频图宽度

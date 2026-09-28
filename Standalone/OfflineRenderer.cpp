@@ -291,48 +291,43 @@ bool OfflineRenderer::render (const juce::AudioBuffer<float>& input,
     const int64_t fadeOutStart = juce::jmax<int64_t> (
         endSample - crossfadeSamples, fadeInEnd);
 
-    // OLA 输出的整体延迟 = N - hop（与插件一致）
-    // 所以要读回"当前样本 n 对应的 STFT 输出"，实际上 outFifo 里存的是延迟 N-hop 的样本。
-    // 简化处理：我们把 wet 写回 output 时按"当前样本位置"对应写入，同时对 dry 侧做同等延迟。
-    // 具体做法：为每通道保留 dryDelay ring（长 N-hop），先写入再读出，与 outFifo 严格对齐。
-    const int dryDelaySamples = juce::jlimit (0, N - 1, N - hop);
-    std::vector<std::vector<float>> dryDelayRing ((size_t) numCh,
-        std::vector<float> ((size_t) juce::jmax (1, dryDelaySamples), 0.0f));
-    std::vector<int> dryDelayWritePos ((size_t) numCh, 0);
+    // STFT/OLA 的真实群延迟 = N - 1（见 processFrame：需 N/hop 帧、共 N 个输入样本的
+    // 预热后，首个输出批在循环下标 N-1 处产生，对应 input[0]）。dry 用同一延迟与 wet 对齐，
+    // 最终结果再整体左移该延迟写回：旁通区 output[m] = input[m]（零延迟），
+    // 印章区 output[m] = STFT_mask(input[m])（时间对齐）。
+    const int64_t latencySamples = (int64_t) (N - 1);
 
     const int64_t progressReportEvery = juce::jmax<int64_t> (2048, numSamps / 100);
     int64_t nextProgressReport = progressReportEvery;
 
-    for (int64_t n = 0; n < numSamps; ++n)
+    // 循环末尾多跑 latencySamples 个 flush 样本（输入按 0 处理），让文件尾部的印章
+    // 也能完整 flush 出来，覆盖到最后输出时间 numSamps-1。
+    const int64_t totalIters = (int64_t) numSamps + latencySamples;
+
+    for (int64_t n = 0; n < totalIters; ++n)
     {
-        // 1) 写入 inputRing / dryDelay
+        // 1) 写入 inputRing（flush 阶段输入取 0）
         bool frameReady = false;
         for (int ch = 0; ch < numCh; ++ch)
         {
             auto& st = channels[(size_t) ch];
-            const float inSample = input.getReadPointer (ch)[n];
+            const float inSample = (n < (int64_t) numSamps)
+                ? input.getReadPointer (ch)[n] : 0.0f;
             st.inputRing[(size_t) st.inputPos] = inSample;
             st.inputPos = (st.inputPos + 1) % N;
             ++st.accumCount;
             if (st.accumCount >= hop) frameReady = true;
-
-            if (dryDelaySamples > 0)
-            {
-                auto& ring = dryDelayRing[(size_t) ch];
-                int& pos = dryDelayWritePos[(size_t) ch];
-                ring[(size_t) pos] = inSample;
-                pos = (pos + 1) % (int) ring.size();
-            }
         }
 
         // 2) 帧就绪 → 计算目标增益并处理一帧（每通道）
         if (frameReady)
         {
-            // mask 列由"当前样本落在 [startSample, endSample) 的相对位置"决定
+            // 该帧 wet 对应输出时间 m = n - latencySamples；mask 列由 m 的相对位置决定
+            const int64_t m = n - latencySamples;
             std::vector<float>* gainsPtr = &unityGains;
-            if (n >= startSample && n < endSample)
+            if (m >= startSample && m < endSample)
             {
-                const double rel = (double) (n - startSample)
+                const double rel = (double) (m - startSample)
                                  / juce::jmax<double> (1.0, (double) (endSample - startSample));
                 const int col = juce::jlimit (0, params.maskCols - 1,
                                               (int) std::floor (rel * params.maskCols));
@@ -351,58 +346,52 @@ bool OfflineRenderer::render (const juce::AudioBuffer<float>& input,
             }
         }
 
-        // 3) 从 outFifo 取出 wet；若 FIFO 空则用延迟 dry 兜底
-        for (int ch = 0; ch < numCh; ++ch)
+        // 3) 从 outFifo 取出 wet；与延迟 dry 对齐后做 crossfade，再左移 latencySamples 写回
+        if (n >= latencySamples)
         {
-            auto& st = channels[(size_t) ch];
-
-            float delayedDry;
-            if (dryDelaySamples > 0)
+            const int64_t m = n - latencySamples;   // 输出时间
+            for (int ch = 0; ch < numCh; ++ch)
             {
-                auto& ring = dryDelayRing[(size_t) ch];
-                const int writePos = dryDelayWritePos[(size_t) ch];
-                const int readPos = (writePos + (int) ring.size() - dryDelaySamples) % (int) ring.size();
-                delayedDry = ring[(size_t) readPos];
-            }
-            else
-            {
-                delayedDry = input.getReadPointer (ch)[n];
-            }
+                auto& st = channels[(size_t) ch];
 
-            float wet = delayedDry;
-            if (st.outFifoCount > 0)
-            {
-                wet = st.outFifo[(size_t) st.outFifoRead];
-                st.outFifoRead = (st.outFifoRead + 1) % (int) st.outFifo.size();
-                --st.outFifoCount;
+                // 与 wet（延迟 latencySamples）同一基准对齐的 dry。
+                // flush 阶段（n >= numSamps）仍可读 input[m]（m = n - latencySamples < numSamps）。
+                const int64_t dryIdx = n - latencySamples;
+                const float delayedDry = (dryIdx >= 0 && dryIdx < (int64_t) numSamps)
+                    ? input.getReadPointer (ch)[dryIdx] : 0.0f;
+
+                float wet = delayedDry;
+                if (st.outFifoCount > 0)
+                {
+                    wet = st.outFifo[(size_t) st.outFifoRead];
+                    st.outFifoRead = (st.outFifoRead + 1) % (int) st.outFifo.size();
+                    --st.outFifoCount;
+                }
+
+                // 决定输出时间 m 处要 dry 还是 wet：
+                //  - [0, startSample): 完全 dry
+                //  - [startSample, fadeInEnd): 线性淡入 wet
+                //  - [fadeInEnd, fadeOutStart): 完全 wet
+                //  - [fadeOutStart, endSample): 线性淡出 wet
+                //  - [endSample, end]: 完全 dry
+                float mixWet;
+                if (m < startSample || m >= endSample)
+                    mixWet = 0.0f;
+                else if (m < fadeInEnd)
+                    mixWet = (float) (m - startSample) / (float) juce::jmax<int64_t> (1, fadeInEnd - startSample);
+                else if (m >= fadeOutStart)
+                    mixWet = (float) (endSample - 1 - m) / (float) juce::jmax<int64_t> (1, endSample - fadeOutStart);
+                else
+                    mixWet = 1.0f;
+                mixWet = juce::jlimit (0.0f, 1.0f, mixWet);
+
+                const float out = delayedDry * (1.0f - mixWet) + wet * mixWet;
+                output.getWritePointer (ch)[m] = out;
             }
-
-            // 决定当前样本要输出 dry 还是 wet：
-            //  - [0, startSample): 完全 dry（此时也没积攒到有意义的 wet，wet≈dry 亦可）
-            //  - [startSample, fadeInEnd): 线性淡入 wet
-            //  - [fadeInEnd, fadeOutStart): 完全 wet
-            //  - [fadeOutStart, endSample): 线性淡出 wet
-            //  - [endSample, end]: 完全 dry
-            //
-            //  注意：由于 STFT 延迟 = N-hop，实际"该样本 wet 的能量"来自过去若干帧的
-            //  累积。为了对齐，dry 侧也做同等延迟（delayedDry），这样两路时间对齐。
-            float mixWet;
-            if (n < startSample || n >= endSample)
-                mixWet = 0.0f;
-            else if (n < fadeInEnd)
-                mixWet = (float) (n - startSample) / (float) juce::jmax<int64_t> (1, fadeInEnd - startSample);
-            else if (n >= fadeOutStart)
-                mixWet = (float) (endSample - 1 - n) / (float) juce::jmax<int64_t> (1, endSample - fadeOutStart);
-            else
-                mixWet = 1.0f;
-            mixWet = juce::jlimit (0.0f, 1.0f, mixWet);
-
-            const float out = delayedDry * (1.0f - mixWet) + wet * mixWet;
-            output.getWritePointer (ch)[n] = out;
         }
 
-        // 4) 进度回调 / 取消检测
-        if (n >= nextProgressReport)
+        // 4) 进度回调 / 取消检测（flush 阶段不再推进进度）
+        if (n < (int64_t) numSamps && n >= nextProgressReport)
         {
             nextProgressReport += progressReportEvery;
             if (progress)

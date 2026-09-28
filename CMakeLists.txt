@@ -24,7 +24,7 @@ if(APPLE)
     message(STATUS "[SpectrumTag] macOS deployment    : ${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif()
 
-project(SpectrumTag VERSION 1.3.0 LANGUAGES C CXX)
+project(SpectrumTag VERSION 1.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,7 +41,7 @@ FetchContent_MakeAvailable(juce)
 juce_add_plugin(
         SpectrumTag
         PRODUCT_NAME "SpectrumTag"
-        VERSION 1.3.0
+        VERSION 1.4.0
         COMPANY_NAME "iisaacbeas.cn"
         BUNDLE_ID "cn.iisaacbeas.SpectrumTag"
         # 四字符码必须全局唯一：VST3 / AU 的 class ID 由
@@ -105,7 +105,7 @@ target_link_libraries(SpectrumTag PRIVATE juce::juce_audio_utils juce::juce_dsp 
 juce_add_gui_app(
         SpectrumTagStandalone
         PRODUCT_NAME "SpectrumTag"
-        VERSION 1.3.0
+        VERSION 1.4.0
         COMPANY_NAME "iisaacbeas.cn"
         BUNDLE_ID "cn.iisaacbeas.SpectrumTagStandalone"
         ICON_BIG "UI.png"

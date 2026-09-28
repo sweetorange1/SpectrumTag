@@ -131,6 +131,43 @@ void RoundPrintButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
 }
 
 // ============================================================================
+//  FlatButton
+// ============================================================================
+FlatButton::FlatButton (const juce::String& name, bool isPrimary)
+    : juce::Button (name), primary (isPrimary) {}
+
+void FlatButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
+{
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+
+    juce::Colour bg;
+    juce::Colour fg;
+    if (primary)
+    {
+        bg = juce::Colours::white;
+        if (isDown)       bg = juce::Colour (0xffcfcfcf);
+        else if (isOver)  bg = juce::Colour (0xffe9e9e9);
+        fg = juce::Colour (0xff111111);
+    }
+    else
+    {
+        bg = juce::Colour (0xff34373a);
+        if (isDown)       bg = juce::Colour (0xff26282a);
+        else if (isOver)  bg = juce::Colour (0xff404448);
+        fg = juce::Colours::white;
+    }
+
+    g.setColour (bg);
+    g.fillRoundedRectangle (r, 6.0f);
+
+    juce::Font f = (typeface != nullptr) ? juce::Font (typeface) : juce::Font();
+    f = f.withHeight (juce::jmin (16.0f, getHeight() * 0.5f));
+    g.setFont (f);
+    g.setColour (fg);
+    g.drawText (getButtonText(), getLocalBounds(), juce::Justification::centred, false);
+}
+
+// ============================================================================
 //  HyperlinkLabel
 // ============================================================================
 HyperlinkLabel::HyperlinkLabel (const juce::String& t, const juce::URL& u)
@@ -337,6 +374,13 @@ void ImageBoxComponent::mouseMove (const juce::MouseEvent& e)
     else                              setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 
+// 滚轮事件透传给父组件（频谱视图），保证鼠标落在图片框上时仍可平移/缩放频谱
+void ImageBoxComponent::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    if (auto* p = getParentComponent())
+        p->mouseWheelMove (e.getEventRelativeTo (p), wheel);
+}
+
 void ImageBoxComponent::mouseDown (const juce::MouseEvent& e)
 {
     dragMode = hitTest (e.getPosition());
@@ -447,21 +491,10 @@ void ImageBoxComponent::paint (juce::Graphics& g)
 
     if (hasImage() && binaryPreview.isValid())
     {
+        // 与 mask 生成（generateMask）保持一致：把整张二值图拉伸铺满整个图片框，
+        // 使界面所见即实际音频处理的结果（不再按宽高比居中留白）。
         auto innerR = r.reduced (6.0f);
-        const float imgAspect = (float) binaryPreview.getWidth() / juce::jmax (1, binaryPreview.getHeight());
-        const float boxAspect = innerR.getWidth() / juce::jmax (1.0f, innerR.getHeight());
-        juce::Rectangle<float> drawRect = innerR;
-        if (imgAspect > boxAspect)
-        {
-            const float h2 = innerR.getWidth() / imgAspect;
-            drawRect = innerR.withSizeKeepingCentre (innerR.getWidth(), h2);
-        }
-        else
-        {
-            const float w2 = innerR.getHeight() * imgAspect;
-            drawRect = innerR.withSizeKeepingCentre (w2, innerR.getHeight());
-        }
-        g.drawImage (binaryPreview, drawRect, juce::RectanglePlacement::centred, false);
+        g.drawImage (binaryPreview, innerR, juce::RectanglePlacement::stretchToFit, false);
     }
     else
     {

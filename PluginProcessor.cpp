@@ -696,8 +696,8 @@ void SpectrumTagAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
         latestMagnitudes.assign ((size_t) (dispSize / 2 + 1), 0.0f);
     }
 
-    // STFT/OLA 延迟 = stftSize - stftHop = 3*stftSize/4
-    setLatencySamples (stftSize - stftHop);
+    // STFT/OLA 的真实群延迟 = stftSize - 1（首帧输出在预热 N 个样本后，对应 input[0]）
+    setLatencySamples (stftSize - 1);
 
     prevPrintActive = false;
     dryWetMix = 0.0f;
@@ -856,7 +856,7 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             latestMagnitudes.assign ((size_t) (desiredSize / 2 + 1), 0.0f);
         }
 
-        setLatencySamples (desiredSize - desiredSize / 4);
+        setLatencySamples (desiredSize - 1);
 
         dryWetFadeTotalSamples = juce::jmax (1, (int) std::round (0.2 * sr));
     }
@@ -887,8 +887,8 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     std::vector<float> delayedDrySamples ((size_t) juce::jmax (1, numCh), 0.0f);
     std::vector<float> wetSamples ((size_t) juce::jmax (1, numCh), 0.0f);
 
-    // dry 与 wet 保持同一延迟基准（与插件 latency 一致），避免切换时相位/时序错位
-    const int dryDelaySamples = juce::jlimit (0, N - 1, N - hop);
+    // dry 与 wet 保持同一延迟基准（与 STFT/OLA 群延迟 stftSize-1 一致），避免切换时相位/时序错位
+    const int dryDelaySamples = N - 1;
 
     // ---- Sample-major 循环：每个采样点处理所有通道 ----
     for (int n = 0; n < numSamps; ++n)

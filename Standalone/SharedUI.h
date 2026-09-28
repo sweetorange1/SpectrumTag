@@ -124,6 +124,22 @@ private:
 };
 
 // ----------------------------------------------------------------------------
+//  FlatButton —— 自绘圆角按钮
+//   primary=true  ：白底黑字（主操作，如“Load new audio”）
+//   primary=false ：深灰底白字（次操作，如“Close”）
+// ----------------------------------------------------------------------------
+class FlatButton : public juce::Button
+{
+public:
+    FlatButton (const juce::String& name, bool primary = true);
+    void paintButton (juce::Graphics&, bool isMouseOverButton, bool isButtonDown) override;
+    void setTypeface (juce::Typeface::Ptr tf) { typeface = std::move (tf); }
+private:
+    bool               primary = true;
+    juce::Typeface::Ptr typeface;
+};
+
+// ----------------------------------------------------------------------------
 class HyperlinkLabel : public juce::Component
 {
 public:
@@ -172,10 +188,11 @@ public:
     std::function<void(const juce::File&)> onImagePicked;
 
     void paint (juce::Graphics&) override;
-    void mouseDown  (const juce::MouseEvent&) override;
-    void mouseDrag  (const juce::MouseEvent&) override;
-    void mouseUp    (const juce::MouseEvent&) override;
-    void mouseMove  (const juce::MouseEvent&) override;
+    void mouseDown      (const juce::MouseEvent&) override;
+    void mouseDrag      (const juce::MouseEvent&) override;
+    void mouseUp        (const juce::MouseEvent&) override;
+    void mouseMove      (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
     enum class DragMode { None, Move, ResizeBR };

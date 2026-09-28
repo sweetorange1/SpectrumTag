@@ -150,9 +150,9 @@ WavAudioFormat 写盘 → <原名>_tagged.wav（同采样率/位深/声道；重
 
 | 文件 | 职责 |
 | --- | --- |
-| `Standalone/StandaloneWindow.cpp` | 主组件：拖放分发、参数联动、Print 调度与 WAV 导出、静态频谱视图实现 |
+| `Standalone/StandaloneWindow.cpp` | 主组件：拖放分发、参数联动、Print 调度与 WAV 导出、静态频谱视图实现（含滚轮平移/缩放、底部时间轴、`ExportResultOverlay` 自定义导出弹窗） |
 | `Standalone/OfflineRenderer.cpp` | 离线 STFT/OLA 合成；`computeBinGainsForCol` 负责把 mask 行映射到 bin 增益 |
-| `Standalone/SharedUI.cpp` | `ImageBoxComponent`（拖动/等比缩放/二值化/生成 mask）、`StandaloneLookAndFeel`、圆形 Print 按钮、频率映射 `FreqMap` |
+| `Standalone/SharedUI.cpp` | `ImageBoxComponent`（拖动/缩放/二值化/生成 mask，界面显示与 mask 拉伸一致）、`StandaloneLookAndFeel`、圆形 Print 按钮、`FlatButton` 自绘按钮、频率映射 `FreqMap` |
 | `PluginProcessor.cpp` | 实时 DSP、Print 状态机、自动化触发、工程持久化 |
 | `PluginEditor.cpp` | 插件 UI（与独立程序视觉一致） |
 | `source/network/UpdateChecker.cpp` | 异步 HTTPS 更新检查（5s 超时、失败静默、本地 SemVer 复核） |
@@ -185,6 +185,8 @@ WavAudioFormat 写盘 → <原名>_tagged.wav（同采样率/位深/声道；重
 8. **导出文件命名**：`<原名>_tagged.wav`，同目录重名则追加 `_1`、`_2`…；位深 clamp 到 16–32。
 9. **算法双份实现**：`OfflineRenderer` 与 `PluginProcessor` 的 STFT/OLA 数学必须保持一致（加窗、平滑系数、WOLA 归一化、`ratioToGain`）。任一侧改动都应同步另一侧并对比导出结果。
 10. **Standalone 无 `AudioProcessor`**：`SharedUI.*` 被刻意写成不依赖 `juce::AudioProcessor`，以便在 `juce_add_gui_app` 目标中复用。
+11. **STFT/OLA 的真实群延迟是 `N - 1`（不是 `N - hop`）**：`processFrame` 需 `N/hop` 帧（共 N 个样本）预热后才放出首个输出，对应 `input[0]`，据此可得群延迟 `N - 1`。离线渲染的 dry 对齐、以及插件的 `setLatencySamples` / `dryDelaySamples` 都必须用 `N - 1`。此前误用 `N - hop`，导致独立程序导出整体延迟 0.07s（无宿主补偿）与印章区干/湿错位 `hop - 1` 样本；v1.4.0 已统一修正。
+12. **界面图片显示必须与 mask 生成一致**：`generateMask` 把整张二值图**拉伸**映射到 `rows × cols` 网格；因此 `ImageBoxComponent::paint` 也应用 `RectanglePlacement::stretchToFit` 拉伸铺满，而非按宽高比居中留白，否则左右留白大的图片会出现「所见非所得」。
 
 ---
 
