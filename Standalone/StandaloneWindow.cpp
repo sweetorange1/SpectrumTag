@@ -689,13 +689,17 @@ public:
             }
         }
 
-        // 通知主线程（用自定义弹窗替代系统 AlertWindow）
-        juce::MessageManager::callAsync ([this, ok] ()
-        {
-            const bool success = ok && resultOk;
-            ownerRef.renderRunning.store (false);
-            ownerRef.showExportResult (outputFile, success);
-        });
+        // 通知主线程（用自定义弹窗替代系统 AlertWindow）。
+        // 不要在异步闭包里按值捕获 this（RenderJob）：RenderJob 的释放时机由
+        // renderJob.reset() 控制，虽然当前流程能保证闭包先执行、job 后释放，但这是
+        // 脆弱的隐式依赖。这里把 outputFile 与 success 按值拷出，主组件按引用捕获
+        // （它拥有本 RenderJob，生命周期必然更长），彻底消除悬垂指针风险。
+        juce::MessageManager::callAsync (
+            [&owner = ownerRef, file = outputFile, success = (ok && resultOk)] ()
+            {
+                owner.renderRunning.store (false);
+                owner.showExportResult (file, success);
+            });
     }
 
 private:
@@ -999,14 +1003,26 @@ bool SpectrumTagMainComponent::loadImage (const juce::File& file)
 // 显示自定义导出结果弹窗（主线程调用）
 void SpectrumTagMainComponent::showExportResult (const juce::File& file, bool ok)
 {
+    // 注意：不能在按钮的回调里同步 delete 掉 exportOverlay。onLoadCb 这个闭包
+    // 本身是作为 exportOverlay 的成员（std::function）被持有并正在执行的，
+    // 若在闭包内部直接 exportOverlay.reset()，会先把闭包（连同捕获的 file）析构，
+    // 之后再读 file 就变成 use-after-free：Windows 上碰巧不崩，macOS 上会
+    // SIGSEGV（strlen(NULL)）。因此把“关闭弹窗 + 加载音频”延后到消息循环的
+    // 下一次迭代，同时让 file 按值捕获到内层闭包，避免悬垂。
     exportOverlay = std::make_unique<ExportResultOverlay> (
         basementTypeface, file, ok,
         [this, file]
         {
-            exportOverlay.reset();
-            loadAudioFile (file);          // 加载新导出的音频
+            juce::MessageManager::callAsync ([this, file]
+            {
+                exportOverlay.reset();
+                loadAudioFile (file);      // 加载新导出的音频
+            });
         },
-        [this] { exportOverlay.reset(); });
+        [this]
+        {
+            juce::MessageManager::callAsync ([this] { exportOverlay.reset(); });
+        });
 
     exportOverlay->setBounds (getLocalBounds());
     addAndMakeVisible (*exportOverlay);

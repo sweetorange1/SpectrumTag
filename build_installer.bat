@@ -3,12 +3,12 @@ setlocal
 
 REM ============================================================
 REM  SpectrumTag - Windows Release Installer Builder
-REM  Version : 1.4.0
-REM  Output  : dist\SpectrumTag_Setup_1.4.0_x64.exe
+REM  Version : 1.4.1
+REM  Output  : dist\SpectrumTag_Setup_1.4.1_x64.exe
 REM ============================================================
 
 set "APP_NAME=SpectrumTag"
-set "APP_VERSION=1.4.0"
+set "APP_VERSION=1.4.1"
 set "SCRIPT_DIR=%~dp0"
 set "ISS_FILE=%SCRIPT_DIR%SpectrumTag_installer.iss"
 set "DIST_DIR=%SCRIPT_DIR%dist"
