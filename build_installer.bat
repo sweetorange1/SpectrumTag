@@ -58,8 +58,9 @@ if not defined STANDALONE_EXE if exist "%SCRIPT_DIR%cmake-build-release\Spectrum
 )
 
 if not defined STANDALONE_EXE (
-  echo [WARN] 未找到 Standalone 产物 SpectrumTag.exe，安装包将只包含 VST3 插件。
-  echo [HINT] 先构建 SpectrumTagStandalone（或直接构建 SpectrumTag_All）再打包即可包含独立程序。
+  echo [ERROR] 未找到 Standalone 产物 SpectrumTag.exe。Standalone 是软件主体，安装包必须包含它。
+  echo [HINT] 请先以 Release 模式构建 SpectrumTagStandalone（或 SpectrumTag_All）后再打包。
+  exit /b 1
 ) else (
   echo [INFO] Standalone 产物: "%STANDALONE_EXE%"
 )

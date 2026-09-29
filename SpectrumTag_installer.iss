@@ -6,10 +6,12 @@
 #define MyPluginBundle "SpectrumTag.vst3"
 #define MyAppExe "SpectrumTag.exe"
 
-; Standalone（独立可执行程序）exe 的完整路径。
-; build_installer.bat 探测到产物时会用 -DSTANDALONE_EXE=<完整路径> 传入；
-; 未定义时安装包只包含 VST3 插件。
+; Standalone（独立可执行程序）exe 的完整路径 —— 软件主体，安装包必须包含。
+; build_installer.bat 探测到产物时会用 /DSTANDALONE_EXE=<完整路径> 传入。
 ;#define STANDALONE_EXE "cmake-build-release-visual-studio\SpectrumTagStandalone_artefacts\Release\SpectrumTag.exe"
+#ifndef STANDALONE_EXE
+  #error "STANDALONE_EXE 未定义：请先构建 Standalone 产物并通过 /DSTANDALONE_EXE=<完整路径> 传入"
+#endif
 
 ; VST3 顶层目录（即包含 SpectrumTag.vst3 bundle 的父目录）。
 ; 默认指向 Release 构建目录；build_installer.bat 会用 -DVST3_DIR 覆盖为实际探测到的路径。
@@ -29,11 +31,11 @@ AppUpdatesURL={#MyAppURL}
 AppCopyright={#MyAppCopyright}
 VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
-VersionInfoDescription={#MyAppName} VST3 Audio Plug-in Setup
+VersionInfoDescription={#MyAppName} Standalone Application and VST3 Plug-in Setup
 VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 UninstallDisplayName={#MyAppName} {#MyAppVersion}
-DefaultDirName={commoncf}\VST3\iisaacbeats.cn
+DefaultDirName={autopf}\{#MyAppPublisher}\{#MyAppName}
 DirExistsWarning=no
 OutputDir=dist
 OutputBaseFilename={#MyAppName}_Setup_{#MyAppVersion}_x64
@@ -51,46 +53,19 @@ DisableDirPage=no
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
-; 有 Standalone 产物时：拆成"插件 / 独立程序"两个可选组件，
-; 独立程序安装到 Program Files 下（不能塞进 VST3 目录），并给出开始菜单快捷方式。
-#ifdef STANDALONE_EXE
+; 软件主体是 Standalone 独立程序（必装）；VST3 插件作为补充，可选安装。
+; 目录页选择的是独立程序的安装位置；VST3 固定安装到系统标准目录，不提供自定义。
 [Components]
-Name: "plugin"; Description: "{#MyAppName} VST3 plug-in"; Types: full compact custom; Flags: fixed
-Name: "standalone"; Description: "{#MyAppName} standalone application"; Types: full compact custom
+Name: "standalone"; Description: "{#MyAppName} standalone application"; Types: full compact custom; Flags: fixed
+Name: "plugin"; Description: "{#MyAppName} VST3 plug-in"; Types: full compact custom
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut for the standalone app"; GroupDescription: "Additional icons:"; Flags: unchecked; Components: standalone
+Name: "desktopicon"; Description: "Create a &desktop shortcut for the standalone app"; GroupDescription: "Additional icons:"; Components: standalone
 
 [Files]
-Source: "{#VST3_DIR}\{#MyPluginBundle}\*"; DestDir: "{app}\{#MyPluginBundle}"; Components: plugin; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: {#STANDALONE_EXE}; DestDir: "{autopf}\{#MyAppPublisher}\{#MyAppName}"; DestName: "{#MyAppExe}"; Components: standalone; Flags: ignoreversion
+Source: {#STANDALONE_EXE}; DestDir: "{app}"; DestName: "{#MyAppExe}"; Components: standalone; Flags: ignoreversion
+Source: "{#VST3_DIR}\{#MyPluginBundle}\*"; DestDir: "{commoncf}\VST3\iisaacbeats.cn\{#MyPluginBundle}"; Components: plugin; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{autopf}\{#MyAppPublisher}\{#MyAppName}\{#MyAppExe}"; Components: standalone
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{autopf}\{#MyAppPublisher}\{#MyAppName}\{#MyAppExe}"; Components: standalone; Tasks: desktopicon
-#else
-[Files]
-Source: "{#VST3_DIR}\{#MyPluginBundle}\*"; DestDir: "{app}\{#MyPluginBundle}"; Flags: ignoreversion recursesubdirs createallsubdirs
-#endif
-
-[Code]
-var
-  InstallDirWarningShown: Boolean;
-
-function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  DefaultVst3Path: string;
-begin
-  Result := True;
-
-  if CurPageID = wpSelectDir then
-  begin
-    DefaultVst3Path := ExpandConstant('{commoncf}\VST3\iisaacbeats.cn');
-
-    if (CompareText(RemoveBackslashUnlessRoot(WizardDirValue), RemoveBackslashUnlessRoot(DefaultVst3Path)) <> 0) and (not InstallDirWarningShown) then
-    begin
-      MsgBox('你选择了非默认VST3目录。安装完成后，你可能需要在宿主软件(DAW)中手动添加该目录并重新扫描插件，才能正常识别并使用本插件。', mbInformation, MB_OK);
-      InstallDirWarningShown := True;
-    end;
-  end;
-end;
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Components: standalone
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Components: standalone; Tasks: desktopicon
