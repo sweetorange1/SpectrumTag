@@ -24,7 +24,7 @@ if(APPLE)
     message(STATUS "[SpectrumTag] macOS deployment    : ${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif()
 
-project(SpectrumTag VERSION 1.4.2 LANGUAGES C CXX)
+project(SpectrumTag VERSION 1.4.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,9 +41,9 @@ FetchContent_MakeAvailable(juce)
 juce_add_plugin(
         SpectrumTag
         PRODUCT_NAME "SpectrumTag"
-        VERSION 1.4.2
-        COMPANY_NAME "iisaacbeas.cn"
-        BUNDLE_ID "cn.iisaacbeas.SpectrumTag"
+        VERSION 1.4.3
+        COMPANY_NAME "iisaacbeats.cn"
+        BUNDLE_ID "cn.iisaacbeats.SpectrumTag"
         # 四字符码必须全局唯一：VST3 / AU 的 class ID 由
         # (ManufacturerCode, PluginCode) 唯一推导（见 JUCE 的
         # VST3Interface::jucePluginId）。此前误用 Pupon 的 Pupo/Pupn，
@@ -105,9 +105,9 @@ target_link_libraries(SpectrumTag PRIVATE juce::juce_audio_utils juce::juce_dsp 
 juce_add_gui_app(
         SpectrumTagStandalone
         PRODUCT_NAME "SpectrumTag"
-        VERSION 1.4.2
-        COMPANY_NAME "iisaacbeas.cn"
-        BUNDLE_ID "cn.iisaacbeas.SpectrumTagStandalone"
+        VERSION 1.4.3
+        COMPANY_NAME "iisaacbeats.cn"
+        BUNDLE_ID "cn.iisaacbeats.SpectrumTagStandalone"
         ICON_BIG "UI.png"
 )
 
