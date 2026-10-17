@@ -3,12 +3,12 @@ setlocal
 
 REM ============================================================
 REM  SpectrumTag - Windows Release Installer Builder
-REM  Version : 1.4.1
-REM  Output  : dist\SpectrumTag_Setup_1.4.1_x64.exe
+REM  Version : 1.4.2
+REM  Output  : dist\SpectrumTag_Setup_1.4.2_x64.exe
 REM ============================================================
 
 set "APP_NAME=SpectrumTag"
-set "APP_VERSION=1.4.1"
+set "APP_VERSION=1.4.2"
 set "SCRIPT_DIR=%~dp0"
 set "ISS_FILE=%SCRIPT_DIR%SpectrumTag_installer.iss"
 set "DIST_DIR=%SCRIPT_DIR%dist"
@@ -26,7 +26,11 @@ if not exist "%ISS_FILE%" (
 REM ---------- 1) 自动探测 VST3 顶层目录（包含 SpectrumTag.vst3 bundle 的父目录）----------
 set "VST3_DIR="
 
-if exist "%SCRIPT_DIR%cmake-build-release-visual-studio\SpectrumTag_artefacts\Release\VST3\SpectrumTag.vst3" (
+if exist "%SCRIPT_DIR%build\msvc\SpectrumTag_artefacts\Release\VST3\SpectrumTag.vst3\Contents\x86_64-win\SpectrumTag.vst3" (
+  set "VST3_DIR=%SCRIPT_DIR%build\msvc\SpectrumTag_artefacts\Release\VST3"
+)
+
+if not defined VST3_DIR if exist "%SCRIPT_DIR%cmake-build-release-visual-studio\SpectrumTag_artefacts\Release\VST3\SpectrumTag.vst3" (
   set "VST3_DIR=%SCRIPT_DIR%cmake-build-release-visual-studio\SpectrumTag_artefacts\Release\VST3"
 )
 
@@ -49,7 +53,11 @@ if not defined VST3_DIR (
 REM ---------- 2) 自动探测 Standalone 独立程序 exe ----------
 set "STANDALONE_EXE="
 
-if exist "%SCRIPT_DIR%cmake-build-release-visual-studio\SpectrumTagStandalone_artefacts\Release\SpectrumTag.exe" (
+if exist "%SCRIPT_DIR%build\msvc\SpectrumTagStandalone_artefacts\Release\SpectrumTag.exe" (
+  set "STANDALONE_EXE=%SCRIPT_DIR%build\msvc\SpectrumTagStandalone_artefacts\Release\SpectrumTag.exe"
+)
+
+if not defined STANDALONE_EXE if exist "%SCRIPT_DIR%cmake-build-release-visual-studio\SpectrumTagStandalone_artefacts\Release\SpectrumTag.exe" (
   set "STANDALONE_EXE=%SCRIPT_DIR%cmake-build-release-visual-studio\SpectrumTagStandalone_artefacts\Release\SpectrumTag.exe"
 )
 
@@ -92,11 +100,10 @@ echo [INFO] 安装脚本: "%ISS_FILE%"
 echo [INFO] VST3 产物: "%VST3_DIR%"
 
 REM 检查 presents 目录是否有文件
-set "ISCC_EXTRA_FLAGS=-DVST3_DIR=%VST3_DIR%"
-if defined STANDALONE_EXE set ISCC_EXTRA_FLAGS=%ISCC_EXTRA_FLAGS% /DSTANDALONE_EXE="%STANDALONE_EXE%"
+set "PRESETS_FLAG="
 if exist "%SCRIPT_DIR%presents\*" (
   echo [INFO] 找到 presents 目录，将包含预设文件
-  set "ISCC_EXTRA_FLAGS=%ISCC_EXTRA_FLAGS% /DPRESETS_EXIST=1"
+  set "PRESETS_FLAG=/DPRESETS_EXIST=1"
 ) else (
   echo [WARN] presents 目录为空，将不包含预设文件
 )
@@ -104,7 +111,7 @@ if exist "%SCRIPT_DIR%presents\*" (
 echo [INFO] 开始打包 ...
 echo ------------------------------------------------------------
 
-"%ISCC_PATH%" %ISCC_EXTRA_FLAGS% "%ISS_FILE%"
+"%ISCC_PATH%" /DVST3_DIR="%VST3_DIR%" /DSTANDALONE_EXE="%STANDALONE_EXE%" %PRESETS_FLAG% "%ISS_FILE%"
 
 if errorlevel 1 (
   echo ------------------------------------------------------------
