@@ -15,7 +15,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${SCRIPT_DIR}"
-BUILD_DIR="${PROJECT_ROOT}/cmake-build-release"
+BUILD_DIR="${PROJECT_ROOT}/build"
 ARTEFACTS_DIR="${BUILD_DIR}/SpectrumTag_artefacts/Release"
 DIST_DIR="${PROJECT_ROOT}/dist"
 WORK_DIR="${DIST_DIR}/.mac_installer_work"
@@ -199,7 +199,7 @@ log "Step 2/7 Validate build artifacts"
 if [[ ! -d "${STANDALONE_APP}" ]]; then
   echo "[ERROR] Missing standalone app: ${STANDALONE_APP}" >&2
   echo "[HINT] Build first:" >&2
-  echo "       cmake --build cmake-build-release --config Release --target SpectrumTagStandalone" >&2
+  echo "       cmake --build build --config Release --target SpectrumTagStandalone" >&2
   exit 1
 fi
 log "  - App : ${STANDALONE_APP} [$(bundle_archs "${STANDALONE_APP}")]"
