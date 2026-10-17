@@ -1,4 +1,4 @@
-# SpectrumTag v1.4.1
+# SpectrumTag v1.4.3
 
 **SpectrumTag** 把 **图片轮廓** 变成 **频域掩码**，再用 STFT / OLA 把它"印章"（Print）到音频的频谱上 —— 于是你的音频里会真的"长出"这张图的形状，在任意频谱分析软件里都能看到它。
 
@@ -102,7 +102,7 @@
 
 ### 5.1 Windows
 
-运行 `SpectrumTag_Setup_1.4.1_x64.exe`，安装时可选组件：
+运行 `SpectrumTag_Setup_1.4.3_x64.exe`，安装时可选组件：
 
 - **VST3 plug-in** → 默认装到 `%CommonProgramFiles%\VST3\iisaacbeats.cn\SpectrumTag.vst3`
 - **standalone application** → 装到 `C:\Program Files\iisaacbeats.cn\SpectrumTag\SpectrumTag.exe`（开始菜单有快捷方式，可勾选创建桌面快捷方式）
@@ -159,6 +159,11 @@ v1.3.0 起切换 `linear / mel` 会立即重新计算时频图。若仍无变化
 
 ## 8. 版本历史
 
+- **v1.4.3**：
+  - 修正公司名与 Bundle ID 拼写（`iisaacbeas` → `iisaacbeats`）。
+- **v1.4.2**：
+  - 安装包改为以 **独立程序（Standalone）为主体**（必装），VST3 / AU 插件改为可选组件，默认创建桌面快捷方式。
+  - 选择 VST3 组件时可自定义安装目录；装到非默认目录后仍会提示在 DAW 中手动添加并重新扫描。
 - **v1.4.1**：
   - 修复：独立程序「加载新音频」按钮在 macOS 上点击后崩溃。根因是导出结果弹窗回调里先 `exportOverlay.reset()` 再读取闭包捕获的 `file`，构成 use-after-free（Windows 因堆行为差异碰巧不崩，macOS 上 `strlen(NULL)` 触发 SIGSEGV）；现改为把「关闭弹窗 + 加载音频」延后到消息循环下一次迭代执行。
   - 加固：后台渲染线程的完成通知改为按值捕获 `outputFile` / `success`、按引用捕获主组件，消除同类悬垂指针隐患。
