@@ -1,4 +1,4 @@
-#本次Fork仅用于本人测试，完整版请移步去https://github.com/sweetorange1/SpectrumTag
+#本次Fork仅用于本人测试，原版请移步去https://github.com/sweetorange1/SpectrumTag
 
 # SpectrumTag v1.4.3
 
