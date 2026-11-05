@@ -1,3 +1,5 @@
+#本次Fork仅用于本人测试，完整版请移步去https://github.com/sweetorange1/SpectrumTag
+
 # SpectrumTag v1.4.3
 
 **SpectrumTag** 把 **图片轮廓** 变成 **频域掩码**，再用 STFT / OLA 把它"印章"（Print）到音频的频谱上 —— 于是你的音频里会真的"长出"这张图的形状，在任意频谱分析软件里都能看到它。
