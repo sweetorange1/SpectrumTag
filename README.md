@@ -12,6 +12,7 @@
 
 这些版本已由贡献者指定为当前 Windows Stable 交接基线。Mac VST3、AU、ARA 和独立程序的本轮修改尚未构建或验收，由上游继续处理；**此 PR 不附带 Mac 成品**。两款插件的版本仍为 1.4.18，只有独立程序的单文件封装升至 1.4.19。
 
+- [项目总览与完整开发过程](PROJECT_OVERVIEW.md)
 - [构建、架构、验证记录与维护说明](docs/WINDOWS_HANDOFF.md)
 - [Mac / AU 后续工作](docs/MAC_AU_HANDOFF.md)
 - [1.4.4–1.4.19 变更摘要](CHANGELOG.md)
