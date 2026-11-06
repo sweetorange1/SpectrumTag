@@ -1,180 +1,55 @@
-# SpectrumTag v1.4.3
+# SpectrumTag
 
-**SpectrumTag** 把 **图片轮廓** 变成 **频域掩码**，再用 STFT / OLA 把它"印章"（Print）到音频的频谱上 —— 于是你的音频里会真的"长出"这张图的形状，在任意频谱分析软件里都能看到它。
+把图片转换成黑白频域掩模，将图形打印进音频的频谱。基于 iisaacbeats.cn / sweetorange1 的 SpectrumTag，保留原项目署名、资源与 AGPL-3.0 许可。
 
-> **先用哪个？**
-> SpectrumTag 有两个形态：**独立程序（`SpectrumTag.exe` / `SpectrumTag.app`，推荐）** 和 **VST3 / AU 插件（补充）**。
-> 日常使用请直接用独立程序：拖进音频 → 拖进图片 → 点 Print → 得到 WAV，全程离线、一次成型。
-> 插件形态需要在宿主里实时播放、并用自动化曲线去控制 Print 的触发时机，只在"想在 DAW 工程内做实时/自动化处理"时才用。
+## 本次 Windows Stable 交接
 
-![SpectrumTag 独立程序界面](readme_1.png)
-
----
-
-## 1. 两种形态怎么选
-
-| | **独立程序（Standalone）** | **VST3 / AU 插件** |
+| 产品 | 版本 | 工作方式 |
 | --- | --- | --- |
-| 典型用途 | 把一整段音频文件一次性处理完并导出 | 在 DAW 工程里做实时效果 / 自动化 |
-| 输入 | 本地音频文件（WAV / MP3 / FLAC / AIFF / OGG） | 宿主轨道的实时音频流 |
-| 频谱显示 | 整段音频的**静态完整时频图**，可缩放、可拖动 | 随播放**实时滚动**的瀑布图 |
-| 触发方式 | 点一次 **Print**，后台离线合成 | 手动点按钮，或用 `Print Trigger` 自动化 / MIDI Learn |
-| 输出 | 导出 `<原文件名>_tagged.wav` 到指定目录 | 走宿主播放 / bounce 输出 |
-| 需要宿主 | 不需要 | 需要 |
-| 推荐度 | **推荐（主用法）** | 补充用法 |
+| SpectrumTag 实时 VST3 | 1.4.18 | 实时 Print 试听；Record 捕获工程时间轴后可编辑、删除和撤销 Print |
+| SpectrumTag ARA | 1.4.18 | 独立 ARA 身份；Load / Clear 操作宿主音频，同轨事件按工程位置排列，可请求宿主定位 |
+| SpectrumTag 独立程序 | 1.4.19 | Load / 拖入音频或视频音轨，本地播放、编辑并另存导出；Windows 单文件 EXE |
 
----
+这些版本已由贡献者指定为当前 Windows Stable 交接基线。Mac VST3、AU、ARA 和独立程序的本轮修改尚未构建或验收，由上游继续处理；**此 PR 不附带 Mac 成品**。两款插件的版本仍为 1.4.18，只有独立程序的单文件封装升至 1.4.19。
 
-## 2. 独立程序：三步上手
+- [构建、架构、验证记录与维护说明](docs/WINDOWS_HANDOFF.md)
+- [Mac / AU 后续工作](docs/MAC_AU_HANDOFF.md)
+- [1.4.4–1.4.19 变更摘要](CHANGELOG.md)
 
-1. **拖入音频**：把音频文件拖到窗口任意位置（或点击频谱空白区选择文件）。左侧会立刻画出整段音频的时频图。
-2. **拖入图片**：把 `png / jpg / jpeg / bmp / gif` 图片拖进来。频谱上会出现一个可拖动、可缩放的**图片框**。
-3. **点 Print**：右下角圆形按钮 → 选择输出目录 → 后台渲染 → 得到 `<原文件名>_tagged.wav`。
+## 编辑体验
 
-图片框**框住哪里，印章就盖在哪里**：横向 = 音频时间位置，纵向 = 频率位置（顶部高频、底部低频）。
+- 自动阈值 Otsu、局部自适应、手动阈值和透明度剪影；反转、保留音量和噪声补偿均有预览。噪声补偿仅用于已录制/加载的音频，并限制在 Print 矩形内。
+- 默认 Mel (RX)、20 kHz 上限；可选 Linear、Bark、Log、Extended Log、insight。所有模式共用时间尺度，insight 保留当前 Range；实际频率不超过音源 Nyquist。
+- 8 种记忆配色，中英文控件及悬停说明，记忆原图。眼睛按钮或频谱右键切换原图，右上角图标全览。
+- 滚轮平移时间，Ctrl / Shift + 滚轮改变横向视图缩放。原图保持原始长宽比；点击已打印图形恢复其参数及正常显示比例，不移动指针。
+- 选中 Print 后可拖动位置、拖动右下角等比例缩放、调整参数、按 Delete 删除。拖动时显示模拟预览，松手后后台渲染。重复同位置 Print 不叠加加深；删除同时移除对应噪声补偿。
+- Ctrl+Z / Ctrl+Shift+Z 撤销与重做；工具栏箭头选择上/下一个 Print。Shift 拖动参数微调，Alt+左键恢复控件默认值。
 
----
+## 三种播放逻辑
 
-## 3. 界面与操作
+实时 VST3 未录音时是即时音效；停止播放后频谱停止、未完成 Print 结束。Record 保留 DAW 的绝对时间和片段空隙。正常播放时已录区域输出录制/渲染结果，未录区域保留宿主输入。插件内点击试听不改变 DAW 的指针；内部试听进入未录空隙时输出静音，停止后重新跟随宿主。
 
-### 3.1 频谱区（左侧）
+ARA 通过宿主接口请求定位。Load 使用宿主提供的同轨事件，Clear 清理所加载轨道范围内的打印状态，保留 DAW 原音频。ARA 的 OnlyARA 分类已设置，但不同宿主是否从普通插入菜单隐藏它仍需实测。
 
-- 载入音频后立即计算并缓存整段时频图，不再滚动。
-- **Speed** 滑杆 / 鼠标按住频谱**横向拖动** / **鼠标滚轮**：缩放和平移时间轴，用来精确对齐图片框的位置；按住 **Ctrl + 滚轮**可横向缩放（等价调节 Speed）。
-- 频谱底部显示**时间轴**（`mm:ss`），刻度随缩放与拖动自适应变化，方便按时间定位。
-- **FFT scale = mel** 时，左侧频率轴显示对数刻度并附带**钢琴键盘**（C1–C8 标注），方便把印章对准音高。
-- 顶部标题栏右侧显示当前文件信息：文件名 / 时长 / 采样率 / 声道数。
+独立版从文件加载，频谱点击可直接定位本地播放指针。支持常见音频以及 MP4 / M4V / MOV / MKV / WebM / AVI 音轨；视频不含画面播放器。导入视频后可选择导出视频或仅导出音频：视频保留画面流，替换第一条音轨；音频保持源编码族及适合的容器。压缩音频需要重新编码，不承诺原码率或逐字节相同。源文件不会被覆盖。
 
-### 3.2 图片框（右侧频谱上的黄框）
+## 构建入口
 
-| 操作 | 说明 |
-| --- | --- |
-| 未选图时**单击**框内 | 弹出图片选择对话框 |
-| **拖动**框体 | 移动位置（改变印章的时间 / 频率落点） |
-| **拖动**右下角小方块 | 等比缩放（改变印章的大小） |
+需要 CMake 3.22+、C++17、Visual Studio 2022 C++ 工具。JUCE 固定 8.0.15；ARA SDK 在启用 ARA 时获取固定版本，也可显式指定本地 SDK。
 
-图片载入后会自动做预处理：缩放到最长边 2048 px → 按亮度（或 Alpha 通道，透明像素占比高时自动切到 Alpha 模式）**二值化**，框内显示的就是最终用于生成掩码的黑白图。
-
-### 3.3 参数区（右侧）
-
-| 参数 | 取值 | 说明 |
-| --- | --- | --- |
-| `FFT Size` | 1024 / 2048 / 4096（默认）/ 8192 | 时频分辨率。越大频率越细、时间越粗；印章细节也随之变化 |
-| `FFT scale` | `linear` / `mel` | 频率轴映射方式。**mel 时图片框的纵向位置按对数频率解释**，适合对准音高 |
-| `Speed` | 0.1 – 4.0（默认 1.0） | 时频图横向缩放。放大后图片框覆盖的**音频时长变短**（印章更短促），缩小则覆盖更长时间 |
-| `Amplitude Ratio` | 0.0 – 1.5 | 印章强度。见下方说明 |
-| `Invert` | 开 / 关 | 掩码反相（图形区域与背景区域互换处理） |
-
-**Amplitude Ratio 怎么理解**（`gain = 1 → ratio` 映射到掩码亮暗）：
-
-- `0.0`：图形轮廓区域被**完全抹掉**（在频谱上挖出一个"图形形状的洞"，最直观的效果）；
-- `1.0`：无变化（等于没盖章）；
-- `1.0 – 1.5`：图形轮廓区域被**提升**；
-- `0.0 – 1.0` 之间：轮廓区域按比例**衰减**；
-- 勾上 `Invert` 后，图形区域与背景区域的处理方向互换。
-
-### 3.4 Print 按钮（右下角）
-
-- 没有音频时点击 → 直接弹出音频选择器（不报错）。
-- 没有图片时点击 → 提示先载入图片。
-- 有音频有图片 → 弹出**输出目录**选择框 → 后台线程离线合成 → 完成后弹窗告知输出路径。
-- 输出为 **WAV**，保持原音频的采样率、位深（16 / 24 / 32）与声道数；文件名 `<原名>_tagged.wav`，若已存在则自动追加 `_1`、`_2` …
-
----
-
-## 4. VST3 / AU 插件形态（补充用法）
-
-插件形态是**实时流式**的：把 SpectrumTag 挂到轨道上，播放时频谱才会滚动，印章也只在 Print 被触发的那段时间写入。
-
-- **Print 触发有三种方式**：
-  1. 直接点 UI 上的 Print 按钮；
-  2. DAW **自动化曲线**写 `Print Trigger`（布尔参数，仅在 `false → true` 上升沿响应一次）；
-  3. DAW **MIDI Learn** 绑定 `Print Trigger`，用 MIDI 控制器物理触发。
-- **离线导出（bounce / freeze）同样有效**：宿主不创建插件界面时，由音频线程自行消费触发请求，导出音频里也会有印章。
-- **工程持久化**：工程会记录当前图片路径与图片框位置，重新打开自动恢复；图片文件丢失时不阻塞，仅回退到"Choose picture"占位。
-- 参数除 `Print Trigger` 外与独立程序一致（`FFT Size` / `FFT scale` / `Speed` / `Amplitude Ratio` / `Invert`）。
-
-> 也就是说：如果你只是想"给一个音频文件盖章"，用独立程序；只有在需要实时听、或用自动化精确编排触发时机时，才用插件。
-
----
-
-## 5. 安装
-
-### 5.1 Windows
-
-运行 `SpectrumTag_Setup_1.4.3_x64.exe`，安装时可选组件：
-
-- **VST3 plug-in** → 默认装到 `%CommonProgramFiles%\VST3\iisaacbeats.cn\SpectrumTag.vst3`
-- **standalone application** → 装到 `C:\Program Files\iisaacbeats.cn\SpectrumTag\SpectrumTag.exe`（开始菜单有快捷方式，可勾选创建桌面快捷方式）
-
-> 若把 VST3 装到非默认目录，安装后会提示你需要在 DAW 中手动添加该目录并重新扫描插件。
-
-### 5.2 macOS
-
-打开 `.dmg`，运行其中的 `.pkg`，会安装：
-
-- `SpectrumTag.vst3` → `/Library/Audio/Plug-Ins/VST3/`
-- `SpectrumTag.component`（AU）→ `/Library/Audio/Plug-Ins/Components/`
-- `SpectrumTag.app`（独立程序）→ `/Applications/`
-
----
-
-## 6. 从源码构建
-
-依赖：CMake 3.22+、支持 C++17 的编译器（MSVC 19.30+ / Clang 13+ / GCC 10+）。JUCE 通过 `FetchContent` 自动拉取，无需手动安装。
-
-```bash
-# 一次性构建插件 + 独立程序
-cmake -S . -B cmake-build-release -DCMAKE_BUILD_TYPE=Release
-cmake --build cmake-build-release --config Release --target SpectrumTag_All
+```powershell
+.\build-windows.ps1 -BuildDir D:\Build\SpectrumTag
+.\build-ara-windows.ps1 -BuildDir D:\Build\SpectrumTagARA -AraSdkDir D:\Dependencies\ARA_SDK
+.\build-standalone-windows.ps1 -BuildDir D:\Build\SpectrumTagStandalone -RuntimeDir D:\Dependencies\SpectrumTagRuntime
 ```
 
-产物：
+`RuntimeDir` 需要 `ffmpeg.exe`、`COPYING.GPLv3`、`FFmpeg-NOTICE.txt`。这些二进制依赖不放进本源码 PR。1.4.19 将它们压缩嵌入 Windows EXE，首次使用自动释放并校验缓存，无须 EXE 旁的配套文件夹。当前 Windows 缓存/临时媒体默认使用 D 盘；移植与打包注意事项见维护说明。
 
-- 独立程序：`cmake-build-release/SpectrumTagStandalone_artefacts/Release/SpectrumTag.exe`（macOS 为 `SpectrumTag.app`）
-- VST3：`cmake-build-release/SpectrumTag_artefacts/Release/VST3/SpectrumTag.vst3`
+上游旧安装器脚本和旧 `Standalone/` 实现保留作历史参考；当前独立版入口是 `Standalone/ModernStandalone.cpp`。旧安装器尚未适配本次 ARA / 新独立版交付，勿直接作为本轮发布入口。
 
-打包：
+## English overview
 
-- Windows：`build_installer.bat`（需 Inno Setup 6），输出到 `dist\`
-- macOS：`build_macos_installer.sh`，输出 `.pkg` 与 `.dmg`
-
----
-
-## 7. 常见问题
-
-**Q：图片盖上去没反应 / 效果很弱？**
-检查 `Amplitude Ratio` 是否为 0 附近（0 = 图形被抹除，1 = 无变化，>1 = 提升），以及是否误勾了 `Invert`。
-
-**Q：印章出现在了错误的时间点？**
-图片框的横向位置决定时间。用 `Speed` 放大时间轴后再精确定位，会更准。
-
-**Q：切换 FFT scale 后频谱没变？**
-v1.3.0 起切换 `linear / mel` 会立即重新计算时频图。若仍无变化，请确认使用的是最新构建。
-
-**Q：支持哪些文件？**
-音频：`.wav .mp3 .flac .aif .aiff .ogg`；图片：`.png .jpg .jpeg .bmp .gif`；输出固定为 `.wav`。
-
----
-
-## 8. 版本历史
-
-- **v1.4.3**：
-  - 修正公司名与 Bundle ID 拼写（`iisaacbeas` → `iisaacbeats`）。
-- **v1.4.2**：
-  - 安装包改为以 **独立程序（Standalone）为主体**（必装），VST3 / AU 插件改为可选组件，默认创建桌面快捷方式。
-  - 选择 VST3 组件时可自定义安装目录；装到非默认目录后仍会提示在 DAW 中手动添加并重新扫描。
-- **v1.4.1**：
-  - 修复：独立程序「加载新音频」按钮在 macOS 上点击后崩溃。根因是导出结果弹窗回调里先 `exportOverlay.reset()` 再读取闭包捕获的 `file`，构成 use-after-free（Windows 因堆行为差异碰巧不崩，macOS 上 `strlen(NULL)` 触发 SIGSEGV）；现改为把「关闭弹窗 + 加载音频」延后到消息循环下一次迭代执行。
-  - 加固：后台渲染线程的完成通知改为按值捕获 `outputFile` / `success`、按引用捕获主组件，消除同类悬垂指针隐患。
-- **v1.4.0**：
-  - 修复独立程序导出音频开头约 0.07 秒整体延迟（STFT/OLA 延迟补偿错误）与印章区「开头加速、结尾延后」的时序畸变（干/湿信号延迟错位），并同步修正插件（VST3/AU）的延迟上报与干湿对齐。
-  - 新增：鼠标滚轮平移时间轴、Ctrl+滚轮横向缩放频谱；频谱底部新增自适应时间轴。
-  - 新增：导出成功改用自定义弹窗，并提供「加载新音频」按钮一键载入刚导出的文件。
-  - 优化：滚轮滚动速度、界面图片显示与实际音频处理对齐（所见即所得）。
-- **v1.3.0**：新增启动后自动检查更新（延迟 5 秒、异步、失败静默，插件与独立程序均生效）；修复切换 `FFT scale` 后频谱未实时重算的问题；安装包同时包含 **独立程序** 与 VST3 插件。
-- **v1.2.3**：离线渲染 / 导出自动化支持（实时路径由 Editor timer 消费触发，离线路径由音频线程消费）；加载抑制窗口改用 sample-clock；`imgBoxWidthPx` 持久化，离线与预览结果精确对齐。
-- **v1.2.0**：首个正式发布版本。完整 STFT / OLA / WOLA 归一化、图片打印起始完整性、工程持久化（图片路径与图片框位置）、Print 自动化与 MIDI Learn（五层防误触保护）、Windows / macOS 一键打包。
+This contribution adds a recorded-timeline editor to the realtime VST3, a dedicated ARA extension, and a shared standalone audio/video-soundtrack editor. Windows plugins are 1.4.18; the single-file Windows standalone is 1.4.19. Existing source audio is retained and Print operations are replaceable, removable and undoable. Spectrum simulations during edits are replaced by the actual rendered result. Mac/AU compilation, codec packaging and host acceptance remain follow-up work for the upstream maintainer; see the linked handoff documents for exact boundaries and prior Windows validation.
 
 ---
 
