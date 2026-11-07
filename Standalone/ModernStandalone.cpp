@@ -113,11 +113,15 @@ int selfTest(const juce::File& folder){try{
     {juce::String error;auto silent=folder.getChildFile("no-audio.mp4");need(codecRun({"-v","error","-f","lavfi","-i","color=black:size=16x16:duration=1","-an","-y",silent.getFullPathName()},error),"silent video fixture");auto previousAudio=p.recording().snapshot();auto previousFile=session.current().file;session.load(silent);wait([&]{return !session.busy();});need(p.recording().snapshot()==previousAudio&&session.current().file==previousFile,"video without audio preserves current session");log("PASS video without audio rejected without losing loaded session");}
     {Player panel(false);panel.processor.onDropAudioFile(wav);wait([&]{return panel.processor.recording().snapshot()&&!panel.processor.recording().isBusy();});
         auto* spectrum=revision1416::find(panel,"spectrumView");
-        wait([&]{return (juce::int64)spectrum->getProperties()["rasterApplied"]>0;});
         const auto audio=panel.processor.recording().snapshot();const auto* frame=audio->frameAt(.5);int peak=0;if(frame)for(auto v:frame->level)peak=juce::jmax(peak,(int)v);
+        // The first raster can belong to the empty, pre-load view. Wait for
+        // this recording revision rather than accepting any completed raster.
+        wait([&]{return (bool)spectrum->getProperties()["recordMode"]
+            && spectrum->getProperties().contains("rasterRevision")
+            && (int)spectrum->getProperties()["rasterRevision"]==audio->revision;});
         log("Standalone display peak="+juce::String(peak)+" raster="+spectrum->getProperties()["rasterApplied"].toString());need(peak>80,"standalone loaded spectral energy");
 
-        const auto image=panel.createComponentSnapshot(panel.getLocalBounds());int lit=0;for(int y=150;y<585;++y)for(int x=100;x<300;++x)lit+=image.getPixelAt(x,y).getBrightness()>.08f;log("Standalone spectrum lit pixels="+juce::String(lit));need(lit>100,"standalone waveform must have visible spectrum");auto stream=folder.getChildFile("Standalone-1.4.19.png").createOutputStream();juce::PNGImageFormat png;need(stream&&png.writeImageToStream(image,*stream),"standalone UI snapshot");}
+        const auto image=panel.createComponentSnapshot(panel.getLocalBounds());int lit=0;for(int y=150;y<585;++y)for(int x=100;x<300;++x)lit+=image.getPixelAt(x,y).getBrightness()>.08f;log("Standalone spectrum lit pixels="+juce::String(lit));need(lit>100,"standalone waveform must have visible spectrum");auto stream=folder.getChildFile("Standalone-"+juce::String(ProjectInfo::versionString)+".png").createOutputStream();juce::PNGImageFormat png;need(stream&&png.writeImageToStream(image,*stream),"standalone UI snapshot");}
     p.releaseResources();log("ALL STANDALONE CHECKS PASSED");return 0;
 }catch(const std::exception& e){folder.getChildFile("standalone-failure.txt").replaceWithText(e.what());return 1;}}
 class App final : public juce::JUCEApplication {

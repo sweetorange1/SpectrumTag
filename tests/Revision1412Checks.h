@@ -36,8 +36,11 @@ static void revision1412Checks(const juce::File& dir) {
     const float width=(float)view->getWidth()-70,height=(float)view->getHeight()-102;
     view->mouseDown(mouseAt(*view,{70+width*.25f,height*.4f}));tickUI();
     auto* fill=dynamic_cast<juce::Slider*>(componentWithID(*editor,"noiseFill"));require(fill&&fill->isEnabled(),"1412 selected Fill control");
+    // Selection recalls the Print's display FFT asynchronously. Finish that
+    // work before measuring whether a subsequent gesture renders any audio.
+    fill->onDragStart();require(p.recording().flush(),"1412 selection settled before Fill drag");
     const auto revision=p.recording().snapshot()->revision;
-    fill->onDragStart();fill->setValue(.1,juce::sendNotificationSync);tickUI();auto lowUI=view->createComponentSnapshot(view->getLocalBounds());
+    fill->setValue(.1,juce::sendNotificationSync);tickUI();auto lowUI=view->createComponentSnapshot(view->getLocalBounds());
     const int x=juce::roundToInt((float)view->getProperties()["selectedX"]+(float)view->getProperties()["selectedW"]*30.5f/160);
     const int y=juce::roundToInt((float)view->getProperties()["selectedY"]+(float)view->getProperties()["selectedH"]*12.5f/65);
     fill->setValue(.8,juce::sendNotificationSync);tickUI();auto highUI=view->createComponentSnapshot(view->getLocalBounds());

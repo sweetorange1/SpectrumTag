@@ -79,8 +79,7 @@ jobs:
           mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
           ditto native/SpectrumTag.component "$HOME/Library/Audio/Plug-Ins/Components/SpectrumTag.component"
           ditto 'native/SpectrumTag ARA.component' "$HOME/Library/Audio/Plug-Ins/Components/SpectrumTag ARA.component"
-          auval -v aufx SpTg Iisa > checks/au.log 2>&1
-          auval -v aufx SpAr Iisa > checks/ara-au.log 2>&1
+          python3 packaging/macos/validate_au.py "$HOME/Library/Audio/Plug-Ins/Components" checks
       - name: Validate VST3 bundles
         run: |
           curl -fL --retry 3 https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip -o pluginval.zip
@@ -121,8 +120,7 @@ jobs:
         run: |
           sudo installer -pkg installer/SpectrumTag-1.4.20-macOS.pkg -target / > install.log 2>&1
           /Applications/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/installed-codec.json"
-          auval -v aufx SpTg Iisa > installed-au.log 2>&1
-          auval -v aufx SpAr Iisa > installed-ara-au.log 2>&1
+          python3 packaging/macos/validate_au.py /Library/Audio/Plug-Ins/Components installed-au-checks
           for name in 'SpectrumTag.vst3' 'SpectrumTag ARA.vst3'; do
             codesign --verify --deep --strict "/Library/Audio/Plug-Ins/VST3/$name"
           done
@@ -140,5 +138,4 @@ jobs:
             universal-codec.json
             install.log
             installed-codec.json
-            installed-au.log
-            installed-ara-au.log
+            installed-au-checks/
