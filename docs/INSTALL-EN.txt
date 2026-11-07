@@ -1,5 +1,11 @@
 SpectrumTag 1.4.27 — Windows / macOS Installation and Troubleshooting
 
+This delivery adds diagnostics for the Mac report "Print finishes but is not displayed". That field issue is not yet confirmed fixed; the opposite-polarity stereo finding is a separate display defect.
+After installation, confirm 1.4.27 in the plug-in header. Reproduce the issue, then click Diagnostics at the top right BEFORE closing the editor, starting playback or changing the frequency scale.
+Save the JSON report (Desktop by default; location selectable) and send it back manually. If VST3, AU and ARA all reproduce it, save one report from each affected format.
+The report contains system/host details, parameters, processing/display status and aggregate statistics. No audio, images, screenshots, project data, source names/paths or automatic upload. No separate scanner or project transfer is required.
+Capturing diagnostics does not trigger Print, FFT or a forced redraw. The report is captured before the Save dialog opens. If this version displays the Print correctly, a report and a note saying so are still useful.
+
 1. Packages and requirements
 Windows: SpectrumTag-1.4.27-Windows-Setup.exe, Windows 10/11 x64.
 macOS: SpectrumTag-1.4.27-macOS.pkg, macOS 15 or later, Apple Silicon and Intel universal binaries.

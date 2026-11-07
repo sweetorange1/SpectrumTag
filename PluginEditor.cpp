@@ -616,6 +616,40 @@ public:
         getProperties().set("recordMode",recordMode);getProperties().set("panActive",panActive);getProperties().set("panTarget",panTarget);
         getProperties().set("displayStart",view.endTime-timeSpan());getProperties().set("displayEnd",view.endTime);getProperties().set("displayTop",top);getProperties().set("overviewStart",timelineStart());getProperties().set("overviewEnd",recorded?recorded->end():0.);
     }
+    juce::var diagnosticState(bool probePixels=false) const {
+        using namespace spectrumtag::diagnostics;auto o=object();auto result=renderer.result();
+        put(o,"recordMode",recordMode);put(o,"viewSnapshotRevision",recorded?recorded->revision:-1);
+        put(o,"waterfallRevision",waterfallSource?waterfallSource->revision:-1);put(o,"waterfallMatchesViewSource",recorded==waterfallSource);
+        put(o,"requestedRaster",(juce::int64)requestedRaster);put(o,"appliedRaster",(juce::int64)appliedRaster);put(o,"epoch",(juce::int64)rasterEpoch);
+        put(o,"resultGeneration",result?(juce::int64)result->generation:-1);put(o,"resultEpoch",result?(juce::int64)result->epoch:-1);
+        put(o,"resultRevision",result&&result->source?result->source->revision:-1);put(o,"resultMatchesViewSource",result&&result->source==recorded);
+        put(o,"resultMatchesGeometry",result&&result->image.getWidth()==contentBounds.getWidth()&&result->image.getHeight()==contentBounds.getHeight());
+        put(o,"resultMatchesStyle",result&&result->palette==palette&&result->scale==scaleMode&&result->top==topHz());
+        put(o,"resultMs",result?result->milliseconds:0.);put(o,"dirty",dirty);put(o,"previewActive",preview.has_value());put(o,"previewReleased",previewReleased);
+        put(o,"contentBounds",rectangle(contentBounds));put(o,"imageBounds",rectangle(imageBox->getBounds()));put(o,"imageVisible",imageBox->isVisible());
+        put(o,"imageLoaded",imageBox->hasImage());put(o,"imageConversionReady",imageBox->conversionReady());
+        put(o,"viewStart",view.endTime-timeSpan());put(o,"viewEnd",view.endTime);put(o,"viewZoom",view.zoomX);put(o,"follow",view.follow);put(o,"fit",fit);
+        put(o,"scale",scaleMode);put(o,"rangeHz",topHz());put(o,"palette",palette);put(o,"waterfallStart",waterfallStart);put(o,"waterfallEnd",waterfallEnd);
+        put(o,"waterfallValid",waterfall.isValid());put(o,"waterfallFormat",(int)waterfall.getFormat());put(o,"waterfallWidth",waterfall.getWidth());put(o,"waterfallHeight",waterfall.getHeight());
+        put(o,"paintCount",(juce::int64)paintCount);put(o,"paintedRaster",(juce::int64)paintedRaster);put(o,"paintAgeMs",lastPaintTime>0?juce::Time::getMillisecondCounterHiRes()-lastPaintTime:-1.);
+        put(o,"showing",isShowing());put(o,"liveFrameCount",(int)history->frames.size());
+        if(probePixels){juce::Array<juce::var> probes;const auto edits=processor.recording().edits();
+            if(edits)for(size_t i=0;i<std::min<size_t>(edits->size(),64);++i){auto entry=object();const auto& e=(*edits)[i];auto bounds=editBounds(e);
+                put(entry,"index",(int)i);put(entry,"selected",e.id==selected);put(entry,"bounds",bounds.toString());put(entry,"intersectsViewport",bounds.intersects(contentBounds.toFloat()));
+                double total=0,squares=0;int count=0;float peak=0;
+                if(waterfall.isValid()&&waterfallEnd>waterfallStart&&recorded){const auto nyquist=recorded->sampleRate*.5;
+                    for(int x=0;x<32;++x)for(int y=0;y<32;++y){const double time=e.start+(x+.5)*e.duration/32.;
+                        const double px=(time-waterfallStart)/(waterfallEnd-waterfallStart)*waterfall.getWidth();
+                        const double py=spectrumtag::frequency::toY((e.low+(e.high-e.low)*(y+.5)/32.)*nyquist,topHz(),scaleMode)*waterfall.getHeight();
+                        if(!std::isfinite(px)||!std::isfinite(py)||px<0||py<0||px>=waterfall.getWidth()||py>=waterfall.getHeight())continue;
+                        const float value=waterfall.getPixelAt((int)px,(int)py).getBrightness();total+=value;squares+=value*value;peak=juce::jmax(peak,value);++count;
+                    }}
+                put(entry,"rasterProbePixels",count);put(entry,"rasterMeanBrightness",total/juce::jmax(1,count));put(entry,"rasterPeakBrightness",peak);
+                put(entry,"rasterBrightnessVariance",juce::jmax(0.,squares/juce::jmax(1,count)-std::pow(total/juce::jmax(1,count),2)));probes.add(std::move(entry));
+            }put(o,"printRasterProbes",probes);
+        }
+        return o;
+    }
     void mouseWheelMove(const juce::MouseEvent& event,const juce::MouseWheelDetails& wheel) override {
         const auto point=event.getEventRelativeTo(this).position;if(!contentBounds.toFloat().contains(point))return;
         if(onNavigation)onNavigation();
@@ -714,6 +748,7 @@ public:
         dragEdit.reset();movingPrint=false;resizingPrint=false;
     }
     void paint(juce::Graphics& g) override {
+        ++paintCount;paintedRaster=appliedRaster;lastPaintTime=juce::Time::getMillisecondCounterHiRes();
         if(dirty)render();
         g.fillAll(kSpectrogramBgColour);
         if(waterfall.isValid()){
@@ -906,6 +941,7 @@ private:
     float lastTop=0;
     spectrumtag::ViewRenderer renderer;
     uint64_t requestedRaster=0,appliedRaster=0,rasterEpoch=0,lastClearSerial=0;
+    uint64_t paintCount=0,paintedRaster=0;double lastPaintTime=0;
     bool panActive=false;double panTarget=0,panTick=0;
     juce::Image overviewImage;std::shared_ptr<const spectrumtag::RecordingSnapshot> overviewSource;int overviewPalette=-1;
     double lastCursor=-1;
@@ -956,6 +992,10 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     tooltipLanguageButton.setComponentID("tooltipLanguage");
     tooltipLanguageButton.onClick=[this]{beginChange();chineseTips=!chineseTips;spectrumtag::Preferences::remember(nullptr,nullptr,&chineseTips);refreshLanguage();changed();finishChange(true);};
     addAndMakeVisible(tooltipLanguageButton);
+    diagnosticsButton.setLookAndFeel(&tooltipLookAndFeel);
+    diagnosticsButton.setColour(juce::TextButton::buttonColourId,kPanelColour);
+    diagnosticsButton.setComponentID("exportDiagnostics");
+    diagnosticsButton.onClick=[this]{exportDiagnostics();};addAndMakeVisible(diagnosticsButton);
 
     // ---- 顶部 ----
     titleLabel.setText (SPECTRUMTAG_ARA?"SpectrumTag ARA":"SpectrumTag", juce::dontSendNotification);
@@ -1299,6 +1339,7 @@ void SpectrumTagAudioProcessorEditor::resized()
 
     // ===== 顶部 =====
     tooltipLanguageButton.setBounds(canvasWidth-px(100),px(14),px(80),px(26));
+    diagnosticsButton.setBounds(canvasWidth-px(232),px(14),px(124),px(26));
     uiScaleCombo.setBounds(20,52,90,28);
     const int headerH = px (90);
     auto header = r.removeFromTop (headerH).reduced (px (20), px (8)).withHeight(px(38));
@@ -1477,6 +1518,7 @@ void SpectrumTagAudioProcessorEditor::timerCallback()
     if(maskChanged&&pendingSelected&&spectrumView->selectedPrint())
         spectrumView->setPreview(editedSelection(false),false,pendingDuration||pendingPresetTiming);
     spectrumView->tick();
+    if(juce::Time::getMillisecondCounter()-lastDiagnosticTick>=500){lastDiagnosticTick=juce::Time::getMillisecondCounter();diagnosticHistory.add(diagnosticState());}
     const auto timingPrefix=spectrumView->isFitView()
         ?juce::String::fromUTF8(chineseTips?"全览 ":"Fit ")+juce::String(spectrumView->fitSpeed(),3)+juce::String::fromUTF8("× · ")
         :juce::String::fromUTF8(chineseTips?"视窗 ":"Window ");
@@ -1507,6 +1549,50 @@ void SpectrumTagAudioProcessorEditor::timerCallback()
 #endif
     auto recording=processor.recording().snapshot();noiseFillSlider.setEnabled(processor.recording().isEnabled()&&recording&&!recording->empty());noiseFillLabel.setAlpha(noiseFillSlider.isEnabled()?1.f:.4f);
     if(!pendingChange&&!gestureActive){persistEditorStateToProcessor();stableState=processor.captureUserState();}
+}
+
+juce::var SpectrumTagAudioProcessorEditor::diagnosticState() const {
+    using namespace spectrumtag::diagnostics;auto o=object();
+    put(o,"elapsedMs",juce::Time::getMillisecondCounterHiRes()-diagnosticStarted);
+    put(o,"engine",engine(processor.recording()));put(o,"view",spectrumView->diagnosticState());
+    put(o,"transportPlaying",processor.isTransportAdvancing());put(o,"hostPosition",processor.audition().hostPosition());put(o,"auditionPosition",processor.audition().position());
+    put(o,"localAudition",processor.audition().isLocal());put(o,"realtimePrintRunning",processor.isPrintRunning());
+    return o;
+}
+juce::var SpectrumTagAudioProcessorEditor::diagnosticReport(){
+    using namespace spectrumtag::diagnostics;auto report=object();
+    put(report,"schema","SpectrumTag-diagnostics-1");put(report,"capturedUtc",juce::Time::getCurrentTime().toISO8601(true));
+    put(report,"privacy","Aggregate technical data only. No media, images, screenshots, project state, file paths, credentials or automatic upload.");
+    put(report,"environment",environment());put(report,"wrapper",juce::AudioProcessor::getWrapperTypeDescription(processor.wrapperType));
+    put(report,"araBuild",processor.isARABuild());put(report,"araBound",processor.araBound());put(report,"standalone",processor.filePlayerMode);
+    put(report,"processorSampleRate",processor.getSampleRate());put(report,"blockSize",processor.getBlockSize());
+    put(report,"inputChannels",processor.getTotalNumInputChannels());put(report,"outputChannels",processor.getTotalNumOutputChannels());
+    put(report,"editorBounds",rectangle(getBounds()));put(report,"uiScale",uiScale);
+    if(auto* peer=getPeer())put(report,"nativeScale",peer->getPlatformScaleFactor());
+    put(report,"current",diagnosticState());put(report,"viewProbe",spectrumView->diagnosticState(true));
+    put(report,"prints",prints(processor.recording()));put(report,"recentStates",diagnosticHistory.json());
+    auto parameters=object();for(auto* p:processor.getParameters())if(auto* v=dynamic_cast<juce::AudioProcessorParameterWithID*>(p))
+        if(auto* raw=processor.getAPVTS().getRawParameterValue(v->paramID))parameters.getDynamicObject()->setProperty(v->paramID,raw->load());
+    put(report,"parameters",parameters);
+    return report;
+}
+void SpectrumTagAudioProcessorEditor::exportDiagnostics(){
+    // Capture before opening a native dialog: opening/closing a dialog may itself
+    // trigger the repaint we are investigating. Do not tick/render or toggle view.
+    const auto report=diagnosticReport();const bool chinese=chineseTips;
+    const auto destination=juce::File::getSpecialLocation(juce::File::userDesktopDirectory).getNonexistentChildFile(
+        "SpectrumTag-" JucePlugin_VersionString "-Diagnostics-"+juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S"),".json");
+    diagnosticChooser=std::make_unique<juce::FileChooser>(juce::String::fromUTF8(chinese?"导出诊断（不含音乐、图片或工程）":"Export diagnostics (no media or project files)"),destination,"*.json");
+    diagnosticsButton.setEnabled(false);
+    diagnosticChooser->launchAsync(juce::FileBrowserComponent::saveMode|juce::FileBrowserComponent::canSelectFiles|juce::FileBrowserComponent::warnAboutOverwriting,
+        [safe=juce::Component::SafePointer<SpectrumTagAudioProcessorEditor>(this),report,chinese](const juce::FileChooser& chooser){
+            if(!safe)return;safe->diagnosticsButton.setEnabled(true);const auto file=chooser.getResult();if(file==juce::File{})return;
+            const bool saved=spectrumtag::diagnostics::write(file,report);
+            juce::AlertWindow::showMessageBoxAsync(saved?juce::MessageBoxIconType::InfoIcon:juce::MessageBoxIconType::WarningIcon,
+                juce::String::fromUTF8(chinese?"SpectrumTag 诊断":"SpectrumTag diagnostics"),
+                saved?juce::String::fromUTF8(chinese?"已保存。请将这个 JSON 文件手动发给开发者。\n":"Saved. Please send this JSON file to the developer manually.\n")+file.getFullPathName()
+                     :juce::String::fromUTF8(chinese?"无法保存，请选择可写入的位置重试。":"Could not save. Please choose a writable location and try again."));
+        });
 }
 
 void SpectrumTagAudioProcessorEditor::beginChange(){
@@ -1672,6 +1758,8 @@ void SpectrumTagAudioProcessorEditor::imagePicked(const juce::File& file){
 }
 void SpectrumTagAudioProcessorEditor::refreshLanguage(){
     auto tr=[this](const char* zh,const char* en){return juce::String::fromUTF8(chineseTips?zh:en);};lookAndFeel.setChinese(chineseTips);
+    diagnosticsButton.setButtonText(tr("导出诊断","Diagnostics"));
+    diagnosticsButton.setTooltip(tr("复现问题后保存诊断 JSON：仅包含系统、参数和显示状态，不包含音乐、图片、工程或截图，不会自动上传。","After reproducing a problem, save diagnostic JSON containing system, parameter and display status only. No audio, images, projects or screenshots; never uploaded automatically."));
     for(auto* l:{&fftSizeLabel,&fftScaleLabel,&speedLabel,&amplitudeLabel,&invertLabel,&imageModeLabel,&imageAmountLabel,&noiseFillLabel,&frequencyRangeLabel})l->setFont(chineseTips?juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),18.f,juce::Font::plain)):juce::Font(basementTypeface).withHeight(18));
     fftSizeLabel.setText(tr("FFT 大小：","FFT Size:"),juce::dontSendNotification);fftScaleLabel.setText(tr("频率刻度：","FFT scale:"),juce::dontSendNotification);
     speedLabel.setText(tr("速度：","Speed:"),juce::dontSendNotification);amplitudeLabel.setText(tr("保留音量：","Amplitude Ratio:"),juce::dontSendNotification);

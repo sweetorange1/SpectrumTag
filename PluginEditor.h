@@ -8,6 +8,7 @@
 #include "shared/PreviewWorker.h"
 #include "shared/FineSlider.h"
 #include "shared/ViewRenderer.h"
+#include "shared/Diagnostics.h"
 
 // ============================================================================
 //  SpectrumTagAudioProcessorEditor
@@ -204,6 +205,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed(const juce::KeyPress&) override;
+    juce::var diagnosticReport();
 #if SPECTRUMTAG_ARA
     juce::AudioProcessorEditorARAExtension* getARAClientExtensions()override{return this;}
     void parentHierarchyChanged() override;
@@ -316,6 +318,13 @@ private:
     juce::LookAndFeel_V4 tooltipLookAndFeel;
     juce::TooltipWindow tooltipWindow {this,600};
     juce::TextButton tooltipLanguageButton {"中文"};
+    juce::TextButton diagnosticsButton {"Diagnostics"};
+    std::unique_ptr<juce::FileChooser> diagnosticChooser;
+    spectrumtag::diagnostics::History diagnosticHistory;
+    juce::uint32 lastDiagnosticTick=0;
+    const double diagnosticStarted=juce::Time::getMillisecondCounterHiRes();
+    juce::var diagnosticState() const;
+    void exportDiagnostics();
     bool chineseTips=true;
     void selectPalette(int index, bool remember);
     std::array<std::unique_ptr<juce::Button>,8> paletteButtons;
