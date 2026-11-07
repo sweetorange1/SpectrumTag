@@ -68,6 +68,7 @@ jobs:
           codesign --force --deep --sign - native/SpectrumTag.app
       - name: Processor, ARA host and media regression checks
         run: |
+          trap 'status=$?; tail -n 35 checks/*.log checks/standalone/*.log checks/standalone/standalone-failure.txt 2>/dev/null || true; exit "$status"' ERR
           mkdir -p checks/ara checks/standalone
           SPECTRUMTAG_PREFS_DIR="$PWD/checks/realtime/preferences" build/SpectrumTagVerify_artefacts/Release/SpectrumTagVerify --checks "$PWD/checks/realtime" > checks/realtime.log 2>&1
           SPECTRUMTAG_PREFS_DIR="$PWD/checks/ara/preferences" build/SpectrumTagARAVerify_artefacts/Release/SpectrumTagARAVerify "$PWD/checks/ara/editor.png" > checks/ara.log 2>&1

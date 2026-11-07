@@ -24,7 +24,9 @@ private:
             if(id==done){wait(40);continue;}done=id;
             if(r.width<1||r.height<1||r.end<=r.start)continue;
             const auto started=juce::Time::getMillisecondCounterHiRes();
-            juce::Image image(juce::Image::RGB,r.width,r.height,true);
+            // NativeImageType upgrades RGB to ARGB on macOS. The packed RGB
+            // writer below requires a real three-byte software image.
+            juce::Image image(juce::Image::RGB,r.width,r.height,true,juce::SoftwareImageType{});
             juce::Image::BitmapData pixels(image,juce::Image::BitmapData::writeOnly);
             std::array<juce::PixelRGB,256> lut;for(int i=0;i<256;++i){auto c=spectrumColour(r.palette,i/255.f);lut[i].setARGB(255,c.getRed(),c.getGreen(),c.getBlue());}
             std::vector<const SpectrumFrame*> columns((size_t)r.width,nullptr);

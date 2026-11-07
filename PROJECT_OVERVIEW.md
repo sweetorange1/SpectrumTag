@@ -11,6 +11,7 @@
 - Mac 使用独立的 Apple Silicon 和 Intel 原生构建，再用 lipo 合并 VST3、AU 与独立 App。独立版从 App 内的对应架构 Helpers 目录启动 FFmpeg；封装依赖闭包并改写加载路径，不要求用户安装 Homebrew。
 - 文件选择器使用平台合适的目录。Windows 保留现有 D 盘习惯，无 D 盘的机器回退用户数据目录；Mac 不使用 Windows 盘符，不向 App bundle 写入缓存。
 - 首轮 Apple 编译发现测试 harness 的 CoreFoundation 头文件与 JUCE 的 Point 名称冲突，已调整系统头文件的包含顺序。这个问题位于测试入口，不是 Print DSP 的算法变化。
+- Mac 回归进一步发现真实图像格式问题：JUCE 在 macOS 上把请求的 Native RGB 图像创建为 ARGB，频谱和 Print 模拟预览却按三字节 PixelRGB 连续写入。两处改用显式 SoftwareImageType，保持真实 RGB 存储；频率映射测试检查所有列的 RGB 与不透明度，不能通过放宽颜色误差掩盖像素错位。
 - Windows 新安装器延续上游 AppId，提供三个组件选项并携带按需安装的微软 x64 运行库；Mac 安装器规划五个组件。双语说明区分 Cubase ARA 扩展与 Logic 首插槽/Rosetta 的入口，说明签名、扫描、字体、缓存与媒体限制。
 - Mac 自动验证和 PKG 交付结果仍待本轮构建完成后补充；不能据 Windows 测试通过推定 Mac 或真实 DAW 工程已通过。
 

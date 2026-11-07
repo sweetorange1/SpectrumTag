@@ -23,7 +23,11 @@ static void revision149Checks(const juce::File& dir){
         for(int y=0;y<529;y+=17){const double t=1-y/528.;const double low=mode==4||mode==5?0:mode==6?10:20;
             const double hz=mode==5?650*std::sinh(t*std::asinh(24000./650)):(mode==3||mode==6)?low*std::pow(24000/low,t):(700+low)*std::pow(24700/(700+low),t)-700;
             const float bin=(float)(hz/24000*2048);const int a=juce::jlimit(0,2048,(int)bin),b=juce::jmin(2048,a+1);const int level=juce::roundToInt(f->level[a]+(bin-a)*(f->level[b]-f->level[a]));
-            const auto expected=spectrumColour(7,level/255.f),actual=result->image.getPixelAt(1,y);require(std::abs(actual.getRed()-expected.getRed())<=1,"149 display uses physical frequency bins for each preset");}
+            const auto expected=spectrumColour(7,level/255.f);
+            for(int x=0;x<request.width;++x){const auto actual=result->image.getPixelAt(x,y);
+                if(std::abs(actual.getRed()-expected.getRed())>1||std::abs(actual.getGreen()-expected.getGreen())>1||std::abs(actual.getBlue()-expected.getBlue())>1||actual.getAlpha()!=255)
+                    std::cerr<<"Raster mismatch mode="<<mode<<" x="<<x<<" y="<<y<<" actual="<<actual.toString()<<" expected="<<expected.toString()<<"\n";
+                require(std::abs(actual.getRed()-expected.getRed())<=1&&std::abs(actual.getGreen()-expected.getGreen())<=1&&std::abs(actual.getBlue()-expected.getBlue())<=1&&actual.getAlpha()==255,"149 display uses physical frequency bins and opaque RGB for every column");}}
     }
     SpectrumTagAudioProcessor p;Transport transport;transport.playing=false;p.setPlayHead(&transport);p.setRateAndBufferSizeDetails(48000,256);p.prepareToPlay(48000,256);
     auto* legacy=p.getAPVTS().getParameter(ParameterIDs::fftScale);require(legacy->getNumSteps()==2&&legacy->convertFrom0to1(1)==1,"149 old FFT Scale automation normalisation unchanged");
