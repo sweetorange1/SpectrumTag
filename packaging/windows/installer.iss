@@ -8,7 +8,8 @@
   #error Define Output as the installer output directory
 #endif
 [Setup]
-AppId={{AC8A55A4-B01F-4BB0-B928-C36C92F3B108}
+; Preserve the upstream SpectrumTag installer identity for upgrades.
+AppId={{0E3BF70B-5D5C-4F0F-B6E4-50F8C4B55C01}
 AppName=SpectrumTag
 AppVersion={#Version}
 AppPublisher=iisaacbeats.cn / SpectrumTag contributors
@@ -41,6 +42,7 @@ Name: "ara"; Description: "SpectrumTag ARA VST3 extension"; Types: full
 Name: "standalone"; Description: "SpectrumTag standalone audio/video editor"; Types: full
 
 [Files]
+Source: "{#Payload}\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsVCRuntime
 Source: "{#Payload}\SpectrumTag.vst3\*"; DestDir: "{commoncf64}\VST3\iisaacbeats.cn\SpectrumTag.vst3"; Components: realtime; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Payload}\SpectrumTag ARA.vst3\*"; DestDir: "{commoncf64}\VST3\iisaacbeats.cn\SpectrumTag ARA.vst3"; Components: ara; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Payload}\SpectrumTag.exe"; DestDir: "{app}"; Components: standalone; Flags: ignoreversion
@@ -51,7 +53,23 @@ Name: "{group}\SpectrumTag"; Filename: "{app}\SpectrumTag.exe"; Components: stan
 Name: "{group}\Installation Guide"; Filename: "{app}\Docs\INSTALL-EN.txt"
 
 [Run]
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ runtime..."; Check: NeedsVCRuntime; Flags: waituntilterminated
 Filename: "{app}\Docs\INSTALL-EN.txt"; Description: "Read installation and host setup notes"; Flags: postinstall shellexec skipifsilent unchecked
 
 [Messages]
 WelcomeLabel2=This installs SpectrumTag [name/ver] on your computer.%n%nSave your projects and fully quit all DAWs and SpectrumTag before continuing. ARA is an audio-event extension, not an ordinary insert effect.
+
+[Code]
+function NeedsVCRuntime: Boolean;
+var
+  Installed, Major, Minor, Build: Cardinal;
+  Key: String;
+begin
+  Key := 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64';
+  Result := True;
+  if RegQueryDWordValue(HKLM64, Key, 'Installed', Installed) and (Installed = 1)
+    and RegQueryDWordValue(HKLM64, Key, 'Major', Major)
+    and RegQueryDWordValue(HKLM64, Key, 'Minor', Minor)
+    and RegQueryDWordValue(HKLM64, Key, 'Bld', Build) then
+    Result := (Major < 14) or ((Major = 14) and ((Minor < 44) or ((Minor = 44) and (Build < 35211))));
+end;

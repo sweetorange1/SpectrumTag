@@ -22,6 +22,11 @@ jobs:
       HOMEBREW_NO_AUTO_UPDATE: 1
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: build
+          key: spectrumtag-mac-${{ matrix.arch }}-build-v1-${{ github.sha }}
+          restore-keys: spectrumtag-mac-${{ matrix.arch }}-build-v1-
       - name: Isolate validation preferences
         run: echo "SPECTRUMTAG_PREFS_DIR=$RUNNER_TEMP/spectrumtag-preferences" >> "$GITHUB_ENV"
       - name: Build native VST3, ARA, AU and standalone
@@ -30,6 +35,11 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
             -DSPECTRUMTAG_BUILD_ARA=ON -DSPECTRUMTAG_BUILD_TESTS=ON -DSPECTRUMTAG_ENABLE_NETWORK=OFF
           cmake --build build --parallel 3 --target SpectrumTag_VST3 SpectrumTagARA_VST3 SpectrumTag_AU SpectrumTagARA_AU SpectrumTagStandalone SpectrumTagVerify SpectrumTagARAVerify
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: build
+          key: spectrumtag-mac-${{ matrix.arch }}-build-v1-${{ github.sha }}
       - name: Bundle native audio and video codec
         run: |
           brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
