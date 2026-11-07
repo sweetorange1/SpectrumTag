@@ -1,9 +1,9 @@
-SpectrumTag 1.4.24 — Windows / macOS Installation and Troubleshooting
+SpectrumTag 1.4.25 — Windows / macOS Installation and Troubleshooting
 
 1. Packages and requirements
-Windows: SpectrumTag-1.4.24-Windows-Setup.exe, Windows 10/11 x64.
-macOS: SpectrumTag-1.4.24-macOS.pkg, macOS 15 or later, Apple Silicon and Intel universal binaries.
-All components in these packages are version 1.4.24. The Windows standalone was user-designated Stable; cross-platform automated checks and real DAW project acceptance are distinct.
+Windows: SpectrumTag-1.4.25-Windows-Setup.exe, Windows 10/11 x64.
+macOS: SpectrumTag-1.4.25-macOS.pkg, macOS 15 or later, Apple Silicon and Intel universal binaries.
+All components in these packages are version 1.4.25. The previously delivered Windows standalone 1.4.24 retains its Stable designation. This version is not automatically designated Stable; automated checks and real DAW project acceptance are distinct.
 Windows includes realtime VST3, dedicated ARA VST3 and the standalone EXE.
 Mac includes realtime VST3, ARA VST3, realtime AU, ARA AU and the standalone App.
 There is no VST2 build. Components can be selected during installation.
@@ -70,12 +70,12 @@ Project migration: keep original media, recorded caches and exports along with p
 8. Validation and reporting
 Processor checks, simulated ARA-host tests, pluginval and auval do not replace real-project testing in your own Cubase/Logic/other host. Check save/reopen, Load/Record, Print, Delete, Undo/Redo and exported media before committing important work.
 Include product version, OS/CPU, host/version, component, reproduction steps, errors and media format in reports.
-Fork/build workflow: https://github.com/Ziqing-Gu/SpectrumTag
+Fork/build workflow: https://github.com/Ziqing-Gu/Spectrum-Tag-Private
 Original project: https://github.com/sweetorange1/SpectrumTag
 SpectrumTag retains its original AGPL-3.0 license. FFmpeg and dependency notices accompany the installed program/resources.
 Apple security instructions: https://support.apple.com/102445
 
-9. Standalone additions in 1.4.24
+9. Standalone additions in 1.4.25
 Print on an empty timeline without loading media. Noise Fill above zero generates sound in blank regions. Export source-format audio/video or a full-frame spectrum animation, revealing from the extreme right and smoothly following Tag parameters. Choose video format, resolution and fps. A separate progress window supports cancellation.
 The standalone remembers its previous media and edits. If required files/cache are unavailable it opens blank without an error prompt so you can load new content. Keep source media/cache when moving projects.
 The Windows .exe is a Setup installer with component selection, runtime support and uninstallation, not a bare standalone executable. The Mac delivery is a PKG installer, not a DMG.

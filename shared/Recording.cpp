@@ -2,6 +2,7 @@
 #include "TimeScale.h"
 #include "RenderCache.h"
 #include "TargetFill.h"
+#include <algorithm>
 #include <limits>
 #include <thread>
 namespace spectrumtag {
@@ -374,7 +375,7 @@ void RecordingEngine::analyse(RecordingSnapshot& snapshot,int64_t left,int64_t r
         }
         snapshot.spectrum[tile]=std::move(result);
         const auto done=completed.fetch_add(1)+1;
-        if(stage.load()==RenderStage::spectrum)reportProgress(.85f+.13f*(float)done/(float)juce::jmax<size_t>(1,tasks.size()));
+        if(stage.load()==RenderStage::spectrum)reportProgress(.85f+.13f*(float)done/(float)std::max<size_t>(1,tasks.size()));
       }
     };
     // Bound first-load parallelism; short parameter edits stay on one worker.
