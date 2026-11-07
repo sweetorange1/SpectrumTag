@@ -79,6 +79,9 @@ jobs:
           SPECTRUMTAG_PREFS_DIR="$PWD/checks/ara/preferences" build/SpectrumTagARAVerify_artefacts/Release/SpectrumTagARAVerify "$PWD/checks/ara/editor.png" > checks/ara.log 2>&1
           native/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/checks/codec.json"
           SPECTRUMTAG_PREFS_DIR="$PWD/checks/standalone/preferences" native/SpectrumTag.app/Contents/MacOS/SpectrumTag --self-test "$PWD/checks/standalone"
+          for check in view tail missing fileless-ui video; do
+            SPECTRUMTAG_PREFS_DIR="$PWD/checks/$check/preferences" native/SpectrumTag.app/Contents/MacOS/SpectrumTag --$check-test "$PWD/checks/$check"
+          done
       - name: Validate both Audio Units
         if: always() && steps.codec.outcome == 'success'
         run: |
@@ -112,6 +115,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Read package version from source
+        id: version
+        run: |
+          version=$(sed -n 's/^project(SpectrumTag VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           pattern: native-*
@@ -121,11 +130,11 @@ jobs:
           mkdir arm64 x86_64
           tar -xzf native-arm64.tar.gz -C arm64
           tar -xzf native-x86_64.tar.gz -C x86_64
-          python3 packaging/macos/package.py arm64 x86_64 installer --version 1.4.20 > package.log 2>&1
+          python3 packaging/macos/package.py arm64 x86_64 installer --version '${{ steps.version.outputs.value }}' > package.log 2>&1
           installer/staging/standalone/Applications/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/universal-codec.json"
       - name: Verify actual PKG installation on the disposable runner
         run: |
-          sudo installer -pkg installer/SpectrumTag-1.4.20-macOS.pkg -target / > install.log 2>&1
+          sudo installer -pkg 'installer/SpectrumTag-${{ steps.version.outputs.value }}-macOS.pkg' -target / > install.log 2>&1
           /Applications/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/installed-codec.json"
           python3 packaging/macos/validate_au.py /Library/Audio/Plug-Ins/Components installed-au-checks
           for name in 'SpectrumTag.vst3' 'SpectrumTag ARA.vst3'; do
@@ -133,8 +142,8 @@ jobs:
           done
       - uses: actions/upload-artifact@v4
         with:
-          name: SpectrumTag-1.4.20-macOS-Installer
-          path: installer/SpectrumTag-1.4.20-macOS.pkg
+          name: SpectrumTag-${{ steps.version.outputs.value }}-macOS-Installer
+          path: installer/SpectrumTag-${{ steps.version.outputs.value }}-macOS.pkg
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

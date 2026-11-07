@@ -447,6 +447,12 @@ public:
         dirty=true;repaint();
     }
     void setImageVisible(bool visible){imageBox->setVisible(visible);}
+    void refreshDeletedPrint(){
+        // An in-flight raster may still refer to the deleted edit. Retire that
+        // request now; paint masks the obsolete footprint until the new audio
+        // snapshot arrives, even with a stopped transport and no timer tick yet.
+        rasterEpoch=renderer.invalidate();requestedRaster=appliedRaster=0;dirty=true;repaint();
+    }
     void clearDisplay(){
         rasterEpoch=renderer.invalidate();requestedRaster=appliedRaster=0;
         waterfall={};waterfallSource.reset();waterfallStart=waterfallEnd=0;overviewImage={};overviewSource.reset();
@@ -462,6 +468,13 @@ public:
         if(recorded&&!recorded->empty()){view.zoomX=baseSpan()/juce::jmax(.05,recorded->end()-timelineStart());view.endTime=recorded->end();view.follow=false;}
         updateImageBounds();dirty=true;repaint();
     }
+    void resetFileTimeView(){
+        // Loading a file must not silently multiply Speed by a whole-file Fit.
+        // The overview still contains the complete file; Fit is an explicit action.
+        const auto audio=processor.recording().snapshot();
+        view.reset((audio?audio->start():0.)+baseSpan());view.follow=false;
+        fit=false;panActive=false;updateImageBounds();dirty=true;repaint();
+    }
     std::function<void(const juce::String&)> onSelected;
     std::function<void()> onDelete,onNavigation,onMoveBegin,onToggleImage;
     std::function<void(float)> onWheelSpeed;
@@ -475,9 +488,10 @@ public:
         getProperties().set("previewActive",preview.has_value());dirty=true;repaint();
     }
     void releasePreview(){previewReleased=true;dirty=true;repaint();}
-    void constrainNavigation(){
+    void constrainNavigation(bool allowEmpty=false){
         if(!recorded||recorded->empty()||view.follow)return;
         const double span=timeSpan(),first=timelineStart(),last=recorded->end();
+        if(processor.filePlayerMode&&allowEmpty)return;
         view.endTime=span>=last-first?(first+last+span)*.5:juce::jlimit(first+span,last,view.endTime);
     }
     void useAbsoluteSpeed(float speed){
@@ -486,16 +500,24 @@ public:
         // visible span before removing Fit's extra zoom, then retain its centre.
         const double oldSpan=lastSpeed>0?contentBounds.getWidth()/(spectrumtag::timing::pixelsPerSecond*lastSpeed*view.zoomX):timeSpan();
         const double centre=view.endTime-oldSpan*.5;
+        const bool empty=recorded&&(view.endTime<=recorded->start()||view.endTime-oldSpan>=recorded->end());
         view.zoomX=1;fit=false;panActive=false;lastSpeed=speed;
         if(!view.follow)view.endTime=centre+contentBounds.getWidth()/(spectrumtag::timing::pixelsPerSecond*speed)*.5;
-        constrainNavigation();dirty=true;repaint();
+        constrainNavigation(empty);dirty=true;repaint();
     }
     double timeSpan() const{return baseSpan()/view.zoomX;}
     double zoom() const{return view.zoomX;}
     double visibleSeconds() const{return timeSpan();}
+    bool isFitView() const{return fit&&recorded&&!recorded->empty();}
+    double fitSpeed() const{return processor.getAPVTS().getRawParameterValue(ParameterIDs::speed)->load()*view.zoomX;}
     float topHz() const {const float tops[]={20000,24000,22050,48000};return juce::jlimit(21.f,(float)sourceRate()*.5f,tops[juce::jlimit(0,3,(int)processor.getAPVTS().getRawParameterValue(ParameterIDs::frequencyRange)->load())]);}
     void saveView(SpectrumTagAudioProcessor::EditorState& s) const {s.viewEnd=view.endTime;s.viewZoom=view.zoomX;s.viewFollow=view.follow;s.viewFit=fit;s.viewValid=true;s.selectedPrint=selected;}
-    void restoreView(const SpectrumTagAudioProcessor::EditorState& s){panActive=false;if(s.viewValid){view.endTime=s.viewEnd;view.zoomX=juce::jmax(.000001,s.viewZoom);view.follow=s.viewFollow;fit=s.viewFit;selected=s.selectedPrint;restored=true;dirty=true;}}
+    void restoreView(const SpectrumTagAudioProcessor::EditorState& s){
+        panActive=false;
+        if(s.viewValid){view.endTime=s.viewEnd;view.zoomX=juce::jmax(.000001,s.viewZoom);view.follow=s.viewFollow;fit=s.viewFit;selected=s.selectedPrint;restored=true;}
+        else if(processor.filePlayerMode){selected=s.selectedPrint;restored=false;resetFileTimeView();}
+        dirty=true;
+    }
     void restorePrintView(const spectrumtag::PrintEdit& e){
         panActive=false;
         view.zoomX=juce::jmax(.000001,e.viewZoom);view.follow=false;fit=false;
@@ -534,7 +556,12 @@ public:
         }
         const auto latest=recordMode?processor.recording().snapshot():nullptr;
         if(latest!=recorded){const bool first=!recorded||(latest&&recorded->sourceId!=latest->sourceId);recorded=latest;previewImage={};changed=true;
-            if(first&&recorded&&(!restored||(view.follow&&!processor.isTransportAdvancing()))){if(processor.recording().isArmed()&&processor.isTransportAdvancing()){view.reset(now());fit=false;}else resetView();}if(first&&recorded&&restored&&(view.endTime<=recorded->start()||view.endTime-timeSpan()>=recorded->end()))constrainNavigation();restored=false;
+            if(first&&recorded&&(!restored||(view.follow&&!processor.isTransportAdvancing()))){
+                if(processor.recording().isArmed()&&processor.isTransportAdvancing()){view.reset(now());fit=false;}
+                else if(processor.filePlayerMode)resetFileTimeView();
+                else resetView();
+            }
+            if(first&&recorded&&restored&&(view.endTime<=recorded->start()||view.endTime-timeSpan()>=recorded->end()))constrainNavigation();restored=false;
             if(fit&&recorded&&!recorded->empty()){view.zoomX=baseSpan()/juce::jmax(.05,recorded->end()-timelineStart());view.endTime=recorded->end();}
         }
         const bool playing=processor.isTransportAdvancing(),armed=processor.recording().isArmed();
@@ -542,6 +569,8 @@ public:
         if(recordMode&&fitAfterCapture&&!processor.recording().isBusy()){resetView();fitAfterCapture=false;changed=true;}
         wasPlaying=playing;wasArmed=armed;
         const auto desired=processor.recording().edits();
+        if(observedEdits&&desired&&std::any_of(observedEdits->begin(),observedEdits->end(),[&](const auto& previous){return std::none_of(desired->begin(),desired->end(),[&](const auto& current){return previous.id==current.id;});}))refreshDeletedPrint();
+        observedEdits=desired;
         const auto exists=[&](const juce::String& id){return desired&&std::any_of(desired->begin(),desired->end(),[&](const auto& e){return e.id==id;});};
         if(preview&&!exists(preview->id))setPreview({});
         if(selected.isNotEmpty()&&!exists(selected)){selected={};dragEdit.reset();movingPrint=false;repaint();}
@@ -572,7 +601,7 @@ public:
         // raster arrives during that interval, retirement must be retried on
         // later ticks even when there is no new raster to adopt.
         if(preview&&previewReleased&&waterfall.isValid()&&waterfallSource==recorded&&recorded&&!processor.recording().isBusy())
-            for(const auto& e:recorded->edits)if(SPECTRUMTAG_ARA?(e.id==preview->id&&e.amount==preview->amount&&e.imageMode==preview->imageMode&&e.ratio==preview->ratio&&e.invert==preview->invert&&e.compensation==preview->compensation&&e.speed==preview->speed&&e.scaleMode==preview->scaleMode&&e.displayTop==preview->displayTop&&std::abs(e.start-preview->start)<1.e-6&&std::abs(e.duration-preview->duration)<1.e-6):spectrumtag::sameAudioEdit(e,*preview)){setPreview({});break;}
+            for(const auto& e:recorded->edits)if(SPECTRUMTAG_ARA?(e.id==preview->id&&e.amount==preview->amount&&e.imageMode==preview->imageMode&&e.ratio==preview->ratio&&e.invert==preview->invert&&e.compensation==preview->compensation&&e.fillVersion==preview->fillVersion&&e.speed==preview->speed&&e.scaleMode==preview->scaleMode&&e.displayTop==preview->displayTop&&std::abs(e.start-preview->start)<1.e-6&&std::abs(e.duration-preview->duration)<1.e-6):spectrumtag::sameAudioEdit(e,*preview)){setPreview({});break;}
         if(changed){dirty=true;repaint();}
         if(dirty)render();
         getProperties().set("recordMode",recordMode);getProperties().set("panActive",panActive);getProperties().set("panTarget",panTarget);
@@ -586,11 +615,12 @@ public:
         if(event.mods.isShiftDown()||event.mods.isCtrlDown()){
             panActive=false;
             const auto previous=timeSpan();const double anchor=view.endTime-(1-x)*previous;auto* p=processor.getAPVTS().getParameter(ParameterIDs::speed);
+            const bool empty=recorded&&(view.endTime<=recorded->start()||view.endTime-previous>=recorded->end());
             const float value=juce::jlimit(.1f,4.f,p->convertFrom0to1(p->getValue())*std::exp(delta));
             if(onWheelSpeed)onWheelSpeed(value);
             if(!selectedPrint())view.zoomX=1;lastSpeed=value;
             if(!view.follow)view.endTime=anchor+(1-x)*timeSpan();
-            constrainNavigation();
+            constrainNavigation(empty);
         }else{
             if(view.follow)view.endTime=now();
             if(!panActive)panTarget=view.endTime;
@@ -657,7 +687,8 @@ public:
             // The final mask resolution is chosen only on mouse release.
         }else{
         e.start+=delta.x/contentBounds.getWidth()*timeSpan();
-        e.start=juce::jlimit(recorded->start()-e.duration+1./recorded->sampleRate,recorded->end()-1./recorded->sampleRate,e.start);
+        if(processor.filePlayerMode){const double limit=juce::jmin(900.,64000000./recorded->sampleRate);e.start=juce::jlimit((recorded->fileSourceLast/recorded->sampleRate)-limit,limit-e.duration,e.start);}
+        else e.start=juce::jlimit(recorded->start()-e.duration+1./recorded->sampleRate,recorded->end()-1./recorded->sampleRate,e.start);
         const float height=dragBounds.getHeight(),top=juce::jlimit((float)contentBounds.getY(),juce::jmax((float)contentBounds.getY(),contentBounds.getBottom()-height),dragBounds.getY()+delta.y);
         const float nyquist=(float)recorded->sampleRate*.5f;
         e.high=frequency((top-contentBounds.getY())/contentBounds.getHeight(),topHz())/nyquist;
@@ -678,6 +709,15 @@ public:
         g.fillAll(kSpectrogramBgColour);
         if(waterfall.isValid()){
             juce::Graphics::ScopedSaveState clipped(g);g.reduceClipRegion(contentBounds);
+            const auto desired=processor.recording().edits();
+            if(waterfallSource&&desired)for(const auto& e:waterfallSource->edits)
+                if(std::none_of(desired->begin(),desired->end(),[&](const auto& current){return current.id==e.id;})){
+                    const float padding=(float)(e.fftSize/waterfallSource->sampleRate/timeSpan()*contentBounds.getWidth());
+                    // FFT window leakage can reach beyond the image's band.
+                    // Hide the obsolete time slice, including that leakage.
+                    const auto obsolete=editBounds(e).expanded(padding+2,0);
+                    g.excludeClipRegion(juce::Rectangle<float>(obsolete.getX(),(float)contentBounds.getY(),obsolete.getWidth(),(float)contentBounds.getHeight()).getSmallestIntegerContainer());
+                }
             if(waterfallEnd>waterfallStart)g.drawImage(waterfall,juce::Rectangle<float>(timeX(waterfallStart),(float)contentBounds.getY(),timeX(waterfallEnd)-timeX(waterfallStart),(float)contentBounds.getHeight()),juce::RectanglePlacement::stretchToFit);
             else g.drawImageAt(waterfall,contentBounds.getX(),contentBounds.getY());
         }
@@ -825,6 +865,9 @@ private:
     void updateImageBounds(){imageBox->setContentBounds({0,0,contentBounds.getWidth(),contentBounds.getHeight()});}
     void render(){
         dirty=false;const int width=contentBounds.getWidth(),height=contentBounds.getHeight();if(width<1||height<1)return;
+        // Wait for the snapshot without removed edits, rather than requeueing
+        // the old Print pixels after invalidation. Snapshot arrival marks dirty.
+        if(recorded){const auto desired=processor.recording().edits();if(desired&&std::any_of(recorded->edits.begin(),recorded->edits.end(),[&](const auto& e){return std::none_of(desired->begin(),desired->end(),[&](const auto& current){return current.id==e.id;});}))return;}
         spectrumtag::ViewRenderer::Request request{recorded,width,height,palette,scaleMode,topHz(),view.endTime-timeSpan(),view.endTime,{}};
         if(!recorded){
             const auto& frames=history->frames;
@@ -846,6 +889,7 @@ private:
     std::unique_ptr<ImageBoxComponent> imageBox;
     juce::Rectangle<int> contentBounds,axisBounds,statusBounds,overviewBounds;
     std::shared_ptr<const spectrumtag::RecordingSnapshot> recorded;
+    std::shared_ptr<const std::vector<spectrumtag::PrintEdit>> observedEdits;
     juce::String selected;
     std::optional<spectrumtag::PrintEdit> preview,dragEdit;bool previewReleased=false,movingPrint=false,resizingPrint=false;
     juce::Image previewImage;juce::Point<float> dragPoint;juce::Rectangle<float> dragBounds;
@@ -1424,7 +1468,10 @@ void SpectrumTagAudioProcessorEditor::timerCallback()
     if(maskChanged&&pendingSelected&&spectrumView->selectedPrint())
         spectrumView->setPreview(editedSelection(false),false,pendingDuration||pendingPresetTiming);
     spectrumView->tick();
-    timeSpanLabel.setText(juce::String::fromUTF8(chineseTips?"视窗 ":"Window ")+juce::String(spectrumView->visibleSeconds(),2)+juce::String::fromUTF8(chineseTips?" 秒":" s"),juce::dontSendNotification);
+    const auto timingPrefix=spectrumView->isFitView()
+        ?juce::String::fromUTF8(chineseTips?"全览 ":"Fit ")+juce::String(spectrumView->fitSpeed(),3)+juce::String::fromUTF8("× · ")
+        :juce::String::fromUTF8(chineseTips?"视窗 ":"Window ");
+    timeSpanLabel.setText(timingPrefix+juce::String(spectrumView->visibleSeconds(),2)+juce::String::fromUTF8(chineseTips?" 秒":" s"),juce::dontSendNotification);
     if(!processor.filePlayerMode&&scaleNeedsSave&&juce::Time::getMillisecondCounter()-scaleChangedAt>500){spectrumtag::Preferences::remember(nullptr,nullptr,nullptr,&uiScale);scaleNeedsSave=false;}
     finishChange();
     if(recordBefore&&!processor.recording().isArmed()&&!processor.recording().isBusy()){
@@ -1480,7 +1527,7 @@ bool SpectrumTagAudioProcessorEditor::keyPressed(const juce::KeyPress& key){
 }
 void SpectrumTagAudioProcessorEditor::removeSelected(){
     beginChange();const auto id=spectrumView->selectedEdit();if(id.isEmpty()){finishChange(true);return;}
-    processor.recording().remove(id);spectrumView->setPreview({});spectrumView->selectEdit({});if(placementId==id)placementId={};changed();finishChange(true);
+    processor.recording().remove(id);spectrumView->setPreview({});spectrumView->selectEdit({});spectrumView->refreshDeletedPrint();if(placementId==id)placementId={};changed();finishChange(true);
 }
 juce::String SpectrumTagAudioProcessorEditor::adjacentPrint(bool next)const{
     auto edits=processor.recording().edits();if(!edits||edits->empty())return {};
@@ -1525,6 +1572,7 @@ spectrumtag::PrintEdit SpectrumTagAudioProcessorEditor::makeEdit(){
 }
 spectrumtag::PrintEdit SpectrumTagAudioProcessorEditor::editedSelection(bool rebuildMask){
     auto e=*spectrumView->selectedPrint();
+    e.fillVersion=1;
     auto& v=processor.getAPVTS();auto value=[&](const juce::String& id){return v.getRawParameterValue(id)->load();};auto& box=spectrumView->getImageBox();
     const int fft=1024<<juce::jlimit(0,2,(int)value(ParameterIDs::fftSize));
     const bool newMask=pendingFrequency||e.imagePath!=box.getImagePath()||e.imageMode!=(int)value(ParameterIDs::imageMode)||e.amount!=value(ParameterIDs::imageAmount)||e.fftSize!=fft;
@@ -1571,7 +1619,8 @@ void SpectrumTagAudioProcessorEditor::onPrintClicked(){
         auto source=processor.recording().snapshot();if(!source||source->empty()){finishChange(true);return;}
         const auto hideSource=[this]{imageVisible=false;spectrumView->setImageVisible(false);imageVisibilityButton.setToggleState(false,juce::dontSendNotification);};
         if(auto selected=spectrumView->selectedPrint()){hideSource();pendingSelected=true;finishChange(true);return;}
-        auto e=makeEdit();if(e.start>=source->end()||e.start+e.duration<=source->start()){finishChange(true);return;}
+        auto e=makeEdit();if(!processor.filePlayerMode&&(e.start>=source->end()||e.start+e.duration<=source->start())){finishChange(true);return;}
+        if(processor.filePlayerMode&&juce::jmax(source->end(),e.start+e.duration)-juce::jmin(source->start(),e.start)>juce::jmin(900.,64000000./source->sampleRate)){finishChange(true);return;}
         auto edits=processor.recording().edits();juce::String replacement=placementId;
         if(edits)for(const auto& old:*edits)if(old.id==replacement||(std::abs(old.start-e.start)<1./source->sampleRate&&std::abs(old.low-e.low)<1e-5&&std::abs(old.high-e.high)<1e-5)){replacement=old.id;break;}
         if(replacement.isNotEmpty())e.id=replacement;
@@ -1662,9 +1711,10 @@ void SpectrumTagAudioProcessorEditor::updateTooltips(){
     if(processor.filePlayerMode){
         recordButton.setTooltip(tr("选择本地音频或视频音轨；也可直接拖入文件。", "Choose local audio or a video soundtrack, or drag a file into the window."));
         clearRecordButton.setTooltip(tr("清空加载的音频及打印；Ctrl+Z 可撤销。", "Clear loaded audio and Prints; Ctrl+Z restores them."));
-        printButton.setTooltip(tr("将图片渲染到加载的音频。使用导出按钮按原格式保存。", "Render the image into loaded audio. Use Export to save in the original format."));
+        printButton.setTooltip(tr("将图片渲染到音频内或前后空白处；空白处由噪声补偿生成声音，导出时包含延长的部分，视频相应补黑帧。删除打印会撤回对应延长。最多 15 分钟 / 6400 万采样，使用导出按原格式保存。", "Print inside audio or empty time before/after it. Noise Fill supplies sound in silence; Export includes the extension and pads video with black frames. Deleting the Print removes its extension. Limit: 15 minutes / 64M samples. Export keeps the source format."));
     }
     if(processor.isLoadMode())noiseFillSlider.setTooltip(tr("仅加载音频后可用；只补偿图片范围内的弱频段，删除打印时一起移除。", "Available after loading audio. Fill only weak frequencies inside the image; removed with that Print."));
+    if(processor.filePlayerMode)noiseFillSlider.setTooltip(tr("在空白或已加载的音频中，只补偿图片范围内的弱频段。空白处需要大于 0 才能生成声音；删除打印时一起移除。", "Fill weak frequencies only inside the image, with or without a loaded file. A value above zero generates sound in blank areas. Removed with that Print."));
     const char* names[]={"经典橙","深海青","电光蓝","薰衣草紫","玫瑰粉","薄荷绿","奶油金","冰川白"};for(int i=0;i<8;++i)paletteButtons[i]->setTooltip(chineseTips?juce::String::fromUTF8(names[i]):juce::String(spectrumtag::palettes[i].name));
 #if SPECTRUMTAG_ARA
     clearRecordButton.setTooltip(tr("清空当前加载的音频视图及其全部打印和补偿噪声。DAW 素材保留；点击加载重新开始。可撤销。", "Clear the loaded view and all its Prints/Noise Fill. DAW events remain. Click Load to start again. Undo restores the edits."));

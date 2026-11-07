@@ -1594,6 +1594,7 @@ void SpectrumTagAudioProcessor::setStateInformation (const void* data, int sizeI
 
         undoChanges.clear();redoChanges.clear();
 #if !SPECTRUMTAG_ARA
+        recordingEngine.setDisplayFft(1024<<juce::jlimit(0,2,(int)apvts.getRawParameterValue(ParameterIDs::fftSize)->load()));
         recordingEngine.restore(tree.getProperty("recordingFile").toString(),(bool)tree.getProperty("recordMode",false));
 #endif
         EditorState s;

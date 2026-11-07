@@ -3,7 +3,7 @@
 #include <mutex>
 #include "EmbeddedCodec.h"
 namespace spectrumtag::standalone {
-struct FileInfo {juce::File file;double rate=0;int channels=0,bits=24;bool floating=false,video=false;juce::String codec;};
+struct FileInfo {juce::File file;double rate=0;int channels=0,bits=24;bool floating=false,video=false;juce::String codec;bool generated=false;};
 inline juce::File workFolder(){
 #if JUCE_WINDOWS
     auto folder=juce::File("D:/").isDirectory() ? juce::File("D:/Codex/Temp/SpectrumTag-Standalone")
@@ -20,7 +20,7 @@ inline bool codecRun(juce::StringArray args,juce::String& output){
     // Drain pipes while encoding; otherwise long stderr output can block the child.
     output=child.readAllProcessOutput();return child.waitForProcessToFinish(10000)&&child.getExitCode()==0;
 }
-inline bool writeFloatWave(const juce::File& path,const RecordingSnapshot& audio,juce::String& error){
+inline bool writeFloatWave(const juce::File& path,const RecordingSnapshot& audio,juce::String& error,const std::function<bool()>& cancelled={},const std::function<void(float)>& progress={}){
     auto out=path.createOutputStream();if(!out){error="Cannot create export audio.";return false;}
     out->setPosition(0);out->truncate();const auto samples=audio.last-audio.first;
     const uint64_t size=(uint64_t)samples*audio.channels*4;
@@ -28,17 +28,26 @@ inline bool writeFloatWave(const juce::File& path,const RecordingSnapshot& audio
     out->write("RIFF",4);out->writeInt((int)(size+36));out->write("WAVEfmt ",8);out->writeInt(16);out->writeShort(3);out->writeShort((short)audio.channels);
     out->writeInt((int)audio.sampleRate);out->writeInt((int)audio.sampleRate*audio.channels*4);out->writeShort((short)(audio.channels*4));out->writeShort(32);out->write("data",4);out->writeInt((int)size);
     for(int64_t first=audio.first;first<audio.last;first+=4096){juce::MemoryOutputStream block;
+        if(cancelled&&cancelled())return false;
         for(int64_t n=first;n<juce::jmin(audio.last,first+4096);++n)for(int c=0;c<audio.channels;++c)block.writeFloat(audio.sample(c,n));
         if(!out->write(block.getData(),block.getDataSize())){error="Export write failed.";return false;}
+        if(progress)progress((float)(juce::jmin(audio.last,first+4096)-audio.first)/(float)samples);
     }
     out->flush();if(out->getStatus().failed()){error=out->getStatus().getErrorMessage();return false;}return true;
 }
 inline bool inspect(const juce::File& file,FileInfo& info,juce::File& decoded,juce::String& error){
     info.file=file;juce::AudioFormatManager formats;formats.registerBasicFormats();
     std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+    const auto extension=file.getFileExtension().toLowerCase();
+    // Native PCM/FLAC inspection does not need to extract/start the video codec.
+    if(reader&&juce::StringArray{".wav",".wave",".aif",".aiff",".flac"}.contains(extension)){
+        info.rate=reader->sampleRate;info.channels=(int)reader->numChannels;info.bits=(int)reader->bitsPerSample;info.floating=reader->usesFloatingPointData;
+        info.codec=extension==".flac"?juce::String("flac"):juce::String("pcm_")+(info.floating?"f":info.bits==8?"u":"s")+juce::String(info.bits)+(info.bits==8?"":extension==".aif"||extension==".aiff"?"be":"le");
+        if(info.channels<1||info.channels>2||reader->lengthInSamples<1||reader->lengthInSamples>64000000||reader->lengthInSamples/info.rate>900||info.rate<8000||info.rate>384000){error="Audio limit: mono/stereo, 15 minutes / 64M samples, 8-384 kHz.";return false;}
+        return true;
+    }
     juce::String log;codecRun({"-hide_banner","-i",file.getFullPathName()},log);
     if(!log.contains("Audio: ")){error=log.contains("Input #")?juce::String("No readable audio track in this file."):log;return false;}
-    const auto extension=file.getFileExtension().toLowerCase();
     info.video=juce::StringArray{".mp4",".m4v",".mov",".mkv",".webm",".avi"}.contains(extension)&&log.contains("Video: ");
     const auto line=log.fromFirstOccurrenceOf("Audio: ",false,false);info.codec=line.upToFirstOccurrenceOf(",",false,false).trim().upToFirstOccurrenceOf(" ",false,false);
     if(info.video)reader.reset(); // Always honour video-track timestamps via the decoder.
@@ -73,6 +82,38 @@ inline juce::String audioEncoder(const FileInfo& info){
     if(info.codec=="mp3")return "libmp3lame";if(info.codec=="opus")return "libopus";
     if(info.codec=="vorbis")return "libvorbis";return info.codec;
 }
+struct VideoPadding {
+    int headFrames=0,tailFrames=0;
+    double lead=0;
+    int64_t audioDelay=0;
+    juce::StringArray encoding;
+};
+inline bool videoPadding(const FileInfo& info,const RecordingSnapshot& audio,VideoPadding& pad,juce::String& error){
+    if(audio.first>=0&&(audio.fileSourceLast<=0||audio.last<=audio.fileSourceLast))return true;
+    juce::String details;
+    if(!codecRun({"-hide_banner","-i",info.file.getFullPathName(),"-map","0:v:0","-vf","showinfo","-frames:v","1","-an","-f","null","-"},details)){error=details;return false;}
+    const auto rateText=details.fromFirstOccurrenceOf("frame_rate: ",false,false).upToFirstOccurrenceOf("\n",false,false).trim().upToFirstOccurrenceOf(" ",false,false);
+    const auto ratio=juce::StringArray::fromTokens(rateText,"/","");
+    const double fps=ratio.size()==2?ratio[0].getDoubleValue()/juce::jmax(1.,ratio[1].getDoubleValue()):rateText.getDoubleValue();
+    const auto duration=juce::StringArray::fromTokens(details.fromFirstOccurrenceOf("Duration: ",false,false).upToFirstOccurrenceOf(",",false,false).trim(),":","");
+    const double seconds=duration.size()==3?duration[0].getDoubleValue()*3600+duration[1].getDoubleValue()*60+duration[2].getDoubleValue():0;
+    if(!std::isfinite(fps)||fps<=0||fps>1000||seconds<=0){error="Cannot determine video timing for black-frame padding.";return false;}
+    pad.headFrames=(int)std::ceil(juce::jmax(0.,-audio.start())*fps-1.e-8);
+    pad.tailFrames=(int)std::ceil(juce::jmax(0.,audio.end()-seconds)*fps-1.e-8);
+    pad.lead=pad.headFrames/fps;
+    // Frame-aligned padding: delay audio by only the fractional-frame remainder.
+    pad.audioDelay=juce::jmax<int64_t>(0,llround((pad.lead+audio.start())*audio.sampleRate));
+    if(!pad.headFrames&&!pad.tailFrames)return true;
+    const auto video=details.fromFirstOccurrenceOf("Video: ",false,false).upToFirstOccurrenceOf(",",false,false).upToFirstOccurrenceOf(" ",false,false);
+    if(video=="h264")pad.encoding={"-c:v:0","libx264","-crf:v:0","0","-preset:v:0","veryfast"};
+    else if(video=="hevc")pad.encoding={"-c:v:0","libx265","-x265-params","lossless=1:pools=1","-preset:v:0","fast"};
+    else if(video=="vp9")pad.encoding={"-c:v:0","libvpx-vp9","-lossless:v:0","1","-cpu-used:v:0","4"};
+    else if(video=="vp8")pad.encoding={"-c:v:0","libvpx","-qmin:v:0","0","-qmax:v:0","0","-b:v:0","20M"};
+    else if(video=="mpeg4"||video=="mjpeg")pad.encoding={"-c:v:0",video,"-q:v:0","1"};
+    else if(video=="prores")pad.encoding={"-c:v:0","prores_ks","-q:v:0","1"};
+    else {error="This video codec cannot yet be padded with black frames without changing its format: "+video;return false;}
+    return true;
+}
 inline bool exportOriginal(const FileInfo& info,const RecordingSnapshot& audio,const juce::File& target,juce::String& error,bool audioOnly=false){
     if(target==info.file){error="Choose a new file name to retain the source audio.";return false;}
     const auto ext=info.video&&audioOnly?audioExtension(info):info.file.getFileExtension().toLowerCase();
@@ -97,6 +138,14 @@ inline bool exportOriginal(const FileInfo& info,const RecordingSnapshot& audio,c
     else {error="This source format cannot be exported.";return false;}
     juce::StringArray args{"-nostdin","-v","error"};
     if(info.video&&!audioOnly){
+        VideoPadding pad;if(!videoPadding(info,audio,pad,error))return false;
+        if(pad.headFrames||pad.tailFrames){
+            const auto filter="[0:v:0]tpad=start="+juce::String(pad.headFrames)+":stop="+juce::String(pad.tailFrames)+":start_mode=add:stop_mode=add:color=black[v];[1:a:0]adelay="+juce::String(pad.audioDelay)+"S:all=1[a]";
+            args.addArray({"-i",info.file.getFullPathName(),"-i",wave.getFullPathName(),"-itsoffset",juce::String(pad.lead,12),"-i",info.file.getFullPathName(),
+                "-filter_complex",filter,"-map","[v]","-map","[a]","-map","2:a?","-map","-2:a:0","-map","2:s?","-map","2:d?","-map","2:t?",
+                "-map_metadata","0","-map_chapters","2","-c","copy","-c:a:0",codec,"-ar:a:0",juce::String((int)info.rate),"-ac:a:0",juce::String(info.channels),"-map_metadata:s:a:0","0:s:a:0","-vsync","0"});
+            args.addArray(pad.encoding);
+        }else{
         // Keep every video/subtitle/additional audio stream. The first audio
         // stream is edited; do not re-encode the video or shorten it to audio.
         args.addArray({"-i",info.file.getFullPathName(),"-i",wave.getFullPathName(),
@@ -105,6 +154,7 @@ inline bool exportOriginal(const FileInfo& info,const RecordingSnapshot& audio,c
             "-map_chapters","0","-c","copy","-c:a:0",codec,
             "-ar:a:0",juce::String((int)info.rate),"-ac:a:0",juce::String(info.channels),
             "-map_metadata:s:a:0","0:s:a:0"});
+        }
     }else args.addArray({"-i",wave.getFullPathName(),"-vn","-c:a",codec,"-ar",juce::String((int)info.rate),"-ac",juce::String(info.channels)});
     if(codec.isEmpty()){error="The source audio codec cannot be exported without changing format.";return false;}
     if(ext==".m4v")args.addArray({"-f","mp4"});
@@ -118,28 +168,66 @@ inline bool exportOriginal(const FileInfo& info,const RecordingSnapshot& audio,c
 }
 class Session final : private juce::Thread {
 public:
-    explicit Session(SpectrumTagAudioProcessor& value):juce::Thread("SpectrumTag file IO"),processor(value){startThread();}
-    ~Session()override{signalThreadShouldExit();notify();stopThread(-1);}
+    explicit Session(SpectrumTagAudioProcessor& value,bool remember=false):juce::Thread("SpectrumTag file IO"),processor(value),persistent(remember){processor.recording().allowFilePrintExtension();if(persistent)restoreLastSession();startThread();}
+    ~Session()override{signalThreadShouldExit();notify();stopThread(-1);if(persistent)saveLastSession();}
     bool load(juce::File file){return submit({false,std::move(file),{}});}
     bool exportTo(juce::File file,bool audioOnly=false){return submit({true,std::move(file),current(),audioOnly});}
     bool busy()const{return working.load();}
-    FileInfo current()const{std::lock_guard<std::mutex> lock(mutex);return info;}
+    FileInfo current()const{auto s=processor.recording().snapshot();std::lock_guard<std::mutex> lock(mutex);if(s&&(s->sourceId.startsWith("generated:")||(s->sourceId==sourceId&&info.generated))){FileInfo generated;generated.rate=s->sampleRate;generated.channels=s->channels;generated.codec="pcm_s24le";generated.generated=true;return generated;}return info;}
     juce::String status()const{std::lock_guard<std::mutex> lock(mutex);return message;}
     uint64_t loadedRevision()const{return loaded.load();}
-    bool exportable()const{auto s=processor.recording().snapshot();std::lock_guard<std::mutex> lock(mutex);return s&&s->sourceId==sourceId&&info.file.existsAsFile();}
+    bool restoredLastSession()const{return restored.load();}
+    bool exportable()const{auto s=processor.recording().snapshot();std::lock_guard<std::mutex> lock(mutex);if(s&&(s->sourceId.startsWith("generated:")||(s->sourceId==sourceId&&info.generated)))return !s->edits.empty();return s&&s->sourceId==sourceId&&(!info.video||info.file.existsAsFile());}
+    void ensureBlankCanvas(){
+        if(busy()||processor.recording().isBusy()||processor.recording().snapshot()||processor.isClearPending())return;
+        // A single immutable silent sample is the source anchor, not a fixed
+        // duration of blank audio. The existing Print extent logic supplies
+        // precisely the necessary timeline coverage and keeps Undo/cache valid.
+        auto blank=std::make_shared<RecordingSnapshot>();blank->sourceId="generated:"+juce::Uuid().toString();blank->last=blank->fileSourceLast=1;
+        auto page=std::make_shared<AudioPage>();page->valid.set(0);blank->original.push_back(page);
+        processor.recording().restoreDocument({blank,std::make_shared<const std::vector<PrintEdit>>(),true});
+    }
+    static juce::File sessionFile(){return Preferences::file().getParentDirectory().getChildFile("Standalone/last-session.xml");}
+    bool saveLastSession(){
+        if(restoreFailed.load()){auto s=processor.recording().snapshot();if(!s||!s->sourceId.startsWith("generated:")||s->edits.empty())return false;}
+        if(!processor.recording().flush(120000))return false;
+        juce::MemoryBlock state;processor.getStateInformation(state);auto xml=juce::AudioProcessor::getXmlFromBinary(state.getData(),(int)state.getSize());
+        if(!xml)return false;const auto audio=processor.recording().snapshot();
+        if(audio&&!audio->empty()&&xml->getStringAttribute("recordingFile").isEmpty())return false;
+        auto currentInfo=current();juce::XmlElement document("SpectrumTagStandaloneSession");
+        document.setAttribute("schema",1);document.setAttribute("file",currentInfo.file.getFullPathName());document.setAttribute("rate",currentInfo.rate);
+        document.setAttribute("channels",currentInfo.channels);document.setAttribute("bits",currentInfo.bits);document.setAttribute("floating",currentInfo.floating);
+        document.setAttribute("video",currentInfo.video);document.setAttribute("codec",currentInfo.codec);document.setAttribute("generated",currentInfo.generated);document.addChildElement(xml.release());
+        const auto target=sessionFile();if(target.getParentDirectory().createDirectory().failed())return false;juce::TemporaryFile temporary(target);
+        return document.writeTo(temporary.getFile())&&temporary.overwriteTargetFileWithTemporary();
+    }
 private:
-    struct Job{bool exporting=false;juce::File file;FileInfo original;bool audioOnly=false;};
+    bool restoreLastSession(){
+        auto xml=juce::XmlDocument::parse(sessionFile());if(!xml||!xml->hasTagName("SpectrumTagStandaloneSession")||xml->getIntAttribute("schema")!=1){restoreFailed=sessionFile().existsAsFile();return false;}
+        auto* state=xml->getChildByName("SpectrumTagState");if(!state){restoreFailed=true;return false;}
+        const auto path=state->getStringAttribute("recordingFile");
+        if(path.isNotEmpty()&&!juce::File(path).existsAsFile()){restoreFailed=true;return false;}
+        FileInfo saved;saved.file=juce::File(xml->getStringAttribute("file"));saved.rate=xml->getDoubleAttribute("rate");saved.channels=xml->getIntAttribute("channels");saved.bits=xml->getIntAttribute("bits",24);saved.floating=xml->getBoolAttribute("floating");saved.video=xml->getBoolAttribute("video");saved.codec=xml->getStringAttribute("codec");
+        juce::MemoryBlock data;juce::AudioProcessor::copyXmlToBinary(*state,data);processor.setStateInformation(data.getData(),(int)data.getSize());
+        saved.generated=xml->getBoolAttribute("generated",false);
+        Job job;job.restoring=true;job.file=saved.file;job.original=saved;pending=job;working=true;message="Restoring last session...";return true;
+    }
+    struct Job{bool exporting=false;juce::File file;FileInfo original;bool audioOnly=false,restoring=false;};
     SpectrumTagAudioProcessor& processor;mutable std::mutex mutex;std::optional<Job> pending;FileInfo info;juce::String message,sourceId;
-    std::atomic<bool> working{false};std::atomic<uint64_t> loaded{0};
+    const bool persistent;std::atomic<bool> working{false},restored{false},restoreFailed{false};std::atomic<uint64_t> loaded{0};
     bool submit(Job job){if(working.exchange(true))return false;{std::lock_guard<std::mutex> lock(mutex);message=job.exporting?"Exporting...":"Loading...";pending=std::move(job);}notify();return true;}
     void run()override{while(!threadShouldExit()){
         std::optional<Job> job;{std::lock_guard<std::mutex> lock(mutex);job.swap(pending);}if(!job){wait(50);continue;}
         juce::String error;bool ok=false;
-        if(job->exporting){const auto snapshot=processor.recording().snapshot();ok=snapshot&&exportOriginal(job->original,*snapshot,job->file,error,job->audioOnly);}
+        if(job->restoring){ok=processor.recording().flush(120000)&&processor.recording().errorCode()==0;
+            if(ok){std::lock_guard<std::mutex> lock(mutex);info=job->original;auto audio=processor.recording().snapshot();sourceId=audio?audio->sourceId:juce::String();restored=true;++loaded;}
+            else {restoreFailed=true;}
+        }
+        else if(job->exporting){const auto snapshot=processor.recording().snapshot();auto original=job->original;if(original.file==juce::File{})original.file=workFolder().getChildFile("Untitled.wav");ok=snapshot&&exportOriginal(original,*snapshot,job->file,error,job->audioOnly);}
         else {FileInfo next;juce::File decoded;if(inspect(job->file,next,decoded,error)){
             processor.recording().importAudio(decoded.existsAsFile()?decoded:job->file,0);
             ok=processor.recording().flush(120000)&&processor.recording().errorCode()==0;
-            if(ok){std::lock_guard<std::mutex> lock(mutex);info=next;sourceId=processor.recording().snapshot()->sourceId;++loaded;}
+            if(ok){std::lock_guard<std::mutex> lock(mutex);info=next;sourceId=processor.recording().snapshot()->sourceId;restored=false;restoreFailed=false;++loaded;}
             else error="Audio loading failed; the previous file is retained.";
         }if(decoded.existsAsFile())decoded.deleteFile();}
         {std::lock_guard<std::mutex> lock(mutex);message=ok?(job->exporting?"Exported: ":"Loaded: ")+job->file.getFileName():error;}

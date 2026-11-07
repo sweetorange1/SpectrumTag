@@ -2,15 +2,25 @@
 
 本 Fork 用于 Ziqing-Gu 的开发与测试；原版项目请访问 [sweetorange1/SpectrumTag](https://github.com/sweetorange1/SpectrumTag)。
 
-## 1.4.20 跨平台构建
+## 当前 Windows 独立版 Stable：1.4.24
 
-当前开发版本统一为 **1.4.20**：Windows 实时 VST3、ARA VST3、独立 EXE，以及 macOS Universal 实时/ARA VST3、实时/ARA AU、独立 App。macOS 音视频编解码器随 App 封装，按运行架构选取；不依赖用户安装 Homebrew 或 FFmpeg。下面的 Windows Stable 交接记录保留历史版本信息，1.4.20 尚未由用户指定为 Stable。
+2026-11-07，用户明确指定已交付的 Windows 独立版 **1.4.24 为 Stable**，并要求执行新的 Plan B。已有 EXE、版本号、安装和测试结果直接复用；本次只更新状态记录和备份源码。该 Stable 指定不改变此前 VST3/ARA 的版本及状态，Mac/AU/GitHub 发布仍暂停。
+
+1.4.24 包含满屏纯频谱视频、从最右侧逐渐显现、频谱生成加速、可取消进度弹窗、桌面默认导出位置及停止状态删除残影修复。见 [Stable 与 Plan B 记录](docs/STABLE_1.4.24.md)、[本版开发记录](docs/WINDOWS_1.4.24.md) 和 [项目总览](PROJECT_OVERVIEW.md)。
+
+后续状态：用户已恢复 1.4.24 跨平台安装包工作，目标为 Windows Setup 和 macOS Universal PKG（含实时/ARA VST3、AU/ARA AU、独立 App），附中英文 TXT 说明；具体完成结果以 `PROJECT_OVERVIEW.md` 的最新交付记录为准。Windows 独立版 Stable 和冻结 Plan B 不因此重新构建或备份。
+
+The user has resumed 1.4.24 installer delivery: Windows Setup and a macOS Universal PKG including realtime/ARA VST3, realtime/ARA AU and the standalone App, with Chinese/English TXT installation guides. See the latest delivery record in `PROJECT_OVERVIEW.md` for completed validation; a requested target is not a claim of completed Mac verification.
+
+## 历史：1.4.20 跨平台构建
+
+此前跨平台开发版本统一为 **1.4.20**：Windows 实时 VST3、ARA VST3、独立 EXE，以及 macOS Universal 实时/ARA VST3、实时/ARA AU、独立 App。macOS 音视频编解码器随 App 封装，按运行架构选取；不依赖用户安装 Homebrew 或 FFmpeg。以下交接记录保留历史版本信息，不能据此推定当前成品或 Stable 状态。
 
 手动运行 Actions 的 `Cross-platform installers` 工作流可构建和验证两个 Mac 架构，再合并为可选择组件的 PKG。安装包使用 macOS 15 构建基线，尚无 Apple Developer ID 签名或公证。详见 `docs/INSTALL-ZH-CN.txt` 和 `docs/INSTALL-EN.txt`（与安装包一并提供）。
 
 把图片转换成黑白频域掩模，将图形打印进音频的频谱。基于 iisaacbeats.cn / sweetorange1 的 SpectrumTag，保留原项目署名、资源与 AGPL-3.0 许可。
 
-## 本次 Windows Stable 交接
+## 历史：1.4.18 / 1.4.19 Windows Stable 交接
 
 | 产品 | 版本 | 工作方式 |
 | --- | --- | --- |

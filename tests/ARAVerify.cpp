@@ -278,8 +278,10 @@ int main(int argc,char** argv){try{
         check(dc->storeObjectsToArchive(reinterpret_cast<ARA::ARAArchiveWriterHostRef>(&archive),nullptr),"ARA archive store");auto saved=archive.data;
         p.recording().remove(edit.id);waitFor(*owner,[&]{return !p.recording().isBusy();},"Delete Print");check(mod->edits.empty(),"Delete restores original");
         dc->notifyModelUpdates();const int notifications=updates.modifications;
+        const auto cachedEngine=std::atomic_load(&mod->runtime->engine);const auto printPassesBeforeRestore=cachedEngine->printPasses();const auto hitsBeforeRestore=cachedEngine->cacheHits();
         dc->beginEditing();check(dc->restoreObjectsFromArchive(reinterpret_cast<ARA::ARAArchiveReaderHostRef>(&archive),nullptr),"ARA archive restore");dc->endEditing();
         waitFor(*owner,[&]{return !p.recording().isBusy();},"archive rerender");dc->notifyModelUpdates();check(updates.modifications==notifications,"archive restore must not echo host edit notifications");check(mod->edits.size()==1,"archive restores Print mask/settings");
+        check(mod->edits[0].fillVersion==1&&cachedEngine->printPasses()==printPassesBeforeRestore&&cachedEngine->cacheHits()>hitsBeforeRestore,"1421 ARA archive restores versioned Print from persistent result cache");
         std::cout<<"PASS archive restoration, no host notification echo, Delete\n"<<std::flush;
         // Filtered archives must remap persistent modification IDs without discarding other caches.
         const auto untouched=static_cast<Source*>(ARA::PlugIn::fromRef(sources[1]))->raw;

@@ -66,7 +66,7 @@ inline juce::Image printPreview(const RecordingSnapshot& source,const PrintEdit&
                     const float gain=1-affected+affected*e.ratio;
                     // Display frames are channel averages. Independent noise
                     // power falls by channel count in that average.
-                    const float fill=juce::jmax(0.f,layer.floorPower/juce::jmax(1,source.channels)-energy);
+                    const float fill=juce::jmax(0.f,layer.floorPower/(e.fillVersion==0?juce::jmax(1,source.channels):1)-energy);
                     energy=energy*gain*gain+fill*(1-affected)*(1-affected)*layer.edges[y]*layer.envelopes[x];
                 }
             }

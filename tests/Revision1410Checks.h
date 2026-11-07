@@ -43,11 +43,13 @@ static void revision1410Checks(const juce::File& dir) {
     // including the old high-speed Super Vision value exceeding the new range.
     RecordingEngine legacy;juce::AudioBuffer<float> audio(2,48000);for(int c=0;c<2;++c)for(int i=0;i<48000;++i)audio.setSample(c,i,.03f*std::sin(i*.071f));
     legacy.setArmed(true);legacy.capture(audio,0,48000,true);legacy.setArmed(false);require(legacy.flush(),"1410 legacy source");
-    for(int mode:{2,3}){PrintEdit e;e.start=mode==2?.1:.6;e.duration=.25;e.low=.1f;e.high=.8f;e.rows=513;e.cols=12;e.fftSize=1024;e.speed=mode==2?1.f:4.f;e.viewZoom=1.3;e.scaleMode=mode;e.mask=std::make_shared<const std::vector<float>>(513*12,1.f);legacy.add(e);}
-    require(legacy.flush(),"1410 legacy Print fixture");auto before=legacy.snapshot();juce::MemoryBlock bytes;require(juce::File(legacy.save()).loadFileAsData(bytes),"1410 fixture bytes");
-    // Cache magic is little endian.
-    static_cast<char*>(bytes.getData())[0]=0x33;
-    const auto cache=dir.getChildFile("1410-legacy-SPT3.sptrec");require(cache.replaceWithData(bytes.getData(),bytes.getSize()),"1410 fixture saved");
+    for(int mode:{2,3}){PrintEdit e;e.fillVersion=0;e.start=mode==2?.1:.6;e.duration=.25;e.low=.1f;e.high=.8f;e.rows=513;e.cols=12;e.fftSize=1024;e.speed=mode==2?1.f:4.f;e.viewZoom=1.3;e.scaleMode=mode;e.mask=std::make_shared<const std::vector<float>>(513*12,1.f);legacy.add(e);}
+    require(legacy.flush(),"1410 legacy Print fixture");auto before=legacy.snapshot();
+    // Write the historical schema, independent of the current writer version.
+    juce::MemoryOutputStream bytes;const auto& s=*before;bytes.writeInt(0x53505433);bytes.writeDouble(s.sampleRate);bytes.writeInt(s.channels);bytes.writeInt(s.fftSize);bytes.writeInt64(s.origin);bytes.writeInt64(s.first);bytes.writeInt64(s.last);bytes.writeInt((int)s.original.size());
+    for(auto page:s.original){bytes.writeBool(page!=nullptr);if(page){for(int n=0;n<recordingPageSize;n+=8){unsigned bits=0;for(int b=0;b<8;++b)if(page->valid[n+b])bits|=1u<<b;bytes.writeByte((char)bits);}for(int c=0;c<s.channels;++c)for(float v:page->samples[c])bytes.writeFloat(v);}}
+    bytes.writeInt((int)s.edits.size());for(const auto& e:s.edits){bytes.writeString(e.id);bytes.writeString(e.imagePath);bytes.writeDouble(e.start);bytes.writeDouble(e.duration);bytes.writeFloat(e.low);bytes.writeFloat(e.high);bytes.writeFloat(e.ratio);bytes.writeFloat(e.compensation);bytes.writeInt(e.fftSize);bytes.writeInt(e.rows);bytes.writeInt(e.cols);bytes.writeBool(e.invert);bytes.writeFloat(e.speed);bytes.writeFloat(e.amount);bytes.writeFloat(e.displayTop);bytes.writeFloat(e.imageAspect);bytes.writeDouble(e.viewZoom);bytes.writeInt(e.imageMode);bytes.writeInt(e.scaleMode);for(float v:*e.mask)bytes.writeByte((char)juce::roundToInt(v*255));}
+    const auto cache=dir.getChildFile("1410-legacy-SPT3.sptrec");require(cache.replaceWithData(bytes.getData(),bytes.getDataSize()),"1410 fixture saved");
     RecordingEngine loaded;loaded.restore(cache.getFullPathName(),true);require(loaded.flush()&&loaded.errorCode()==0,"1410 SPT3 migrated");auto after=loaded.snapshot();
     for(size_t i=0;i<before->edits.size();++i){const auto& a=before->edits[i];const auto& b=after->edits[i];require(sameAudioEdit(a,b),"1410 migrated Print retains mask, position and duration");const double oldBase=468.*(a.scaleMode==2?840./528.:1186./560.)/(a.scaleMode==2?18.:5.);require(std::abs(b.speed*60.*b.viewZoom-a.speed*oldBase*a.viewZoom)<.00001,"1410 old Print keeps its display rate");}
     for(int64_t i=0;i<48000;i+=17)require(before->sample(0,i)==after->sample(0,i),"1410 migrated Print retains actual audio");

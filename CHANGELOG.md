@@ -1,9 +1,16 @@
 # Change history
 
+2026-11-07: the user designated the delivered Windows standalone **1.4.24 Stable** and requested a new Plan B source snapshot. This is a status/documentation change only; the existing EXE and version are retained. See `docs/STABLE_1.4.24.md`. The earlier version history below retains its original identities.
+
 This is a concise record of the Windows development delivered after upstream 1.4.3. Features were iterated during development; the README and handoff describe the current behaviour. Windows plugins 1.4.18 and standalone 1.4.19 were designated Stable on 2026-11-06. Earlier Stable decisions and delivery versions are not retroactively renamed.
 
 | Version | Delivered change |
 | --- | --- |
+| 1.4.24 | Full-frame spectrum video enters at the right edge, with pixel-exact cached rendering and native RGB/BGR streaming; Desktop export default, cancellable progress dialog and immediate stopped-Delete cleanup. / 满屏纯频谱从最右侧显现、缓存加速、桌面默认导出、可取消进度弹窗与删除残影修复。Windows standalone user-designated Stable; cross-platform installers are being validated separately. |
+| 1.4.23 | Source-free Print and animated spectrum video export, automatic Tag camera matching, overlap priority, selectable format/resolution/fps, and real processed soundtrack. / 无源文件 Print、纯频谱视频导出、视图匹配与真实处理音轨。 |
+| 1.4.22 | Consistent Speed on first Load, explicit Fit, Print before/after source bounds, extended exports, video black prefix/tail with preserved sync, silent blank recovery for unavailable media. / 统一首次加载速度、独立全览、超范围打印和导出、视频前后补黑及丢失媒体空白恢复。 |
+| 1.4.21 | Target-spectrum Noise Fill, content-verified rendered audio/spectrum cache, faster initial analysis, and standalone session restoration. / 目标频谱噪声补偿、内容校验渲染缓存、首次分析优化与独立版会话恢复。 |
+| 1.4.20 | Windows/macOS shared build and installer foundation, native Apple/Intel/AU targets, codec packaging, platform path/font/pixel handling. Cross-platform delivery was paused pending later work. / 跨平台构建与安装基础、双架构/AU、编码器封装和平台兼容；此前交付暂停，未宣称 Mac 已验收。 |
 | 1.4.19 (standalone) | Single Windows EXE with embedded compressed codec/notices; verified first-use extraction, reuse, repair and concurrent startup. Plugins remain 1.4.18. |
 | 1.4.18 | Proportional corner resize for selected Prints with deferred rendering and one-action Undo; standalone video soundtrack import/drop and video/audio-only export. |
 | 1.4.17 | First-click Print selection/scale recall without seeking; previous/next Print toolbar; zoom visibility fixes; ARA fresh Mel and same-track snapshot reuse; remove ARA percentage scaling; modern standalone with file import/export and local transport. |

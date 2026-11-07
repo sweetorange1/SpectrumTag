@@ -17,6 +17,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Read package version from source
+        id: version
+        run: |
+          version=$(sed -n 's/^project(SpectrumTag VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
       - name: Verify source compatibility with existing native artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -37,10 +43,10 @@ jobs:
           mkdir arm64 x86_64
           tar -xzf native-arm64.tar.gz -C arm64
           tar -xzf native-x86_64.tar.gz -C x86_64
-          python3 packaging/macos/package.py arm64 x86_64 installer --version 1.4.20 > package.log 2>&1
+          python3 packaging/macos/package.py arm64 x86_64 installer --version '${{ steps.version.outputs.value }}' > package.log 2>&1
       - name: Verify installation and installed components
         run: |
-          sudo installer -pkg installer/SpectrumTag-1.4.20-macOS.pkg -target / > install.log 2>&1
+          sudo installer -pkg 'installer/SpectrumTag-${{ steps.version.outputs.value }}-macOS.pkg' -target / > install.log 2>&1
           /Applications/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/installed-codec.json"
           python3 packaging/macos/validate_au.py /Library/Audio/Plug-Ins/Components installed-au-checks
           for name in 'SpectrumTag.vst3' 'SpectrumTag ARA.vst3'; do
@@ -48,8 +54,8 @@ jobs:
           done
       - uses: actions/upload-artifact@v4
         with:
-          name: SpectrumTag-1.4.20-macOS-Installer
-          path: installer/SpectrumTag-1.4.20-macOS.pkg
+          name: SpectrumTag-${{ steps.version.outputs.value }}-macOS-Installer
+          path: installer/SpectrumTag-${{ steps.version.outputs.value }}-macOS.pkg
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

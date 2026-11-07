@@ -138,9 +138,9 @@ void Composer::run(){std::optional<Job> previousJob;std::shared_ptr<const Record
             if(!dirty[page]||(compatible&&!edited)){n=end;continue;}
             for(;n<end;++n){const double t=s.sourceTime(n/job->rate);if(!audio.contains((int64_t)std::floor(t*audio.sampleRate+1.e-7)))continue;
                 const size_t at=(size_t)((n-out->origin)%recordingPageSize);
-                if(!wet[page])wet[page]=std::make_shared<AudioPage>();wet[page]->valid.set(at);
+                if(edited){if(!wet[page])wet[page]=std::make_shared<AudioPage>();wet[page]->valid.set(at);}
                 if(!compatible){if(!raw[page])raw[page]=std::make_shared<AudioPage>();raw[page]->valid.set(at);}
-                for(int c=0;c<out->channels;++c){if(!compatible)raw[page]->samples[c][at]+=readSample(audio,c,t,job->rate,false);wet[page]->samples[c][at]+=readSample(audio,c,t,job->rate,true);}
+                for(int c=0;c<out->channels;++c){if(!compatible)raw[page]->samples[c][at]+=readSample(audio,c,t,job->rate,false);if(edited)wet[page]->samples[c][at]+=readSample(audio,c,t,job->rate,true);}
             }
         }
         if(threadShouldExit()||job->id!=generation)break;
@@ -171,23 +171,27 @@ bool Controller::cache(Source& source){
     try{
         juce::ARAAudioSourceReader reader(&source);if(!reader.isValid()){source.error="Cannot read this ARA source. Click Load to retry.";return false;}
         auto out=std::make_shared<RecordingSnapshot>();out->sampleRate=rate;out->channels=channels;out->last=length;
-        out->original.reserve((size_t)((length+recordingPageSize-1)/recordingPageSize));juce::AudioBuffer<float> buffer(channels,recordingPageSize);
-        for(int64_t position=0;position<length;position+=recordingPageSize){const int n=(int)juce::jmin<int64_t>(recordingPageSize,length-position);
+        constexpr int readSize=65536;
+        out->original.reserve((size_t)((length+recordingPageSize-1)/recordingPageSize));juce::AudioBuffer<float> buffer(channels,readSize);
+        for(int64_t position=0;position<length;position+=readSize){const int n=(int)juce::jmin<int64_t>(readSize,length-position);
             if(!reader.read(&buffer,0,n,position,true,true)){source.error="ARA audio read failed. No partial source was accepted; click Load to retry.";return false;}
-            auto page=std::make_shared<AudioPage>();for(int i=0;i<n;++i){page->valid.set((size_t)i);for(int c=0;c<channels;++c){const float v=buffer.getSample(c,i);page->samples[c][i]=std::isfinite(v)?v:0;}}
-            out->original.push_back(page);
+            for(int offset=0;offset<n;offset+=recordingPageSize){const int count=juce::jmin(recordingPageSize,n-offset);
+                auto page=std::make_shared<AudioPage>();if(count==recordingPageSize)page->valid.set();else for(int i=0;i<count;++i)page->valid.set((size_t)i);
+                for(int c=0;c<channels;++c){const auto* input=buffer.getReadPointer(c,offset);for(int i=0;i<count;++i)page->samples[c][i]=std::isfinite(input[i])?input[i]:0;}
+                out->original.push_back(page);
+            }
         }
         out->rendered=out->original;source.raw=out;source.error.clear();return true;
     }catch(...){source.error="Not enough memory to load this ARA source.";return false;}
 }
-void Controller::sync(Modification& m,bool notify){
+void Controller::sync(Modification& m,bool notify,bool restoring){
     auto* source=m.getAudioSource<Source>();const auto raw=source->raw;
     const auto old=std::atomic_load(&m.runtime->raw);std::atomic_store(&m.runtime->raw,raw);
     m.runtime->active=!m.isDeactivatedForUndoHistory()&&!source->isDeactivatedForUndoHistory()&&source->isSampleAccessEnabled();
     auto e=std::atomic_load(&m.runtime->engine);
     if(raw&&(!m.edits.empty()||e)){
         if(!e){e=std::make_shared<RecordingEngine>();std::atomic_store(&m.runtime->engine,e);}
-        if(raw!=old||!e->isEnabled())e->restoreDocument({raw,immutableEdits(m.edits),true});else e->setEdits(m.edits);
+        if(restoring||raw!=old||!e->isEnabled())e->restoreDocument({raw,immutableEdits(m.edits),true});else e->setEdits(m.edits);
     }
     if(notify){m.notifyContentChanged(juce::ARAContentUpdateScopes::samplesAreAffected(),true);for(auto* r:m.getPlaybackRegions())r->notifyContentChanged(juce::ARAContentUpdateScopes::samplesAreAffected(),true);}
 }
@@ -398,11 +402,11 @@ juce::ValueTree encode(const PrintEdit& e){
     v.setProperty("start",e.start,nullptr);v.setProperty("duration",e.duration,nullptr);
     v.setProperty("low",e.low,nullptr);v.setProperty("high",e.high,nullptr);v.setProperty("ratio",e.ratio,nullptr);v.setProperty("noise",e.compensation,nullptr);
     v.setProperty("fft",e.fftSize,nullptr);v.setProperty("rows",e.rows,nullptr);v.setProperty("cols",e.cols,nullptr);v.setProperty("invert",e.invert,nullptr);
-    v.setProperty("speed",e.speed,nullptr);v.setProperty("amount",e.amount,nullptr);v.setProperty("top",e.displayTop,nullptr);v.setProperty("aspect",e.imageAspect,nullptr);v.setProperty("zoom",e.viewZoom,nullptr);v.setProperty("mode",e.imageMode,nullptr);v.setProperty("scale",e.scaleMode,nullptr);
+    v.setProperty("speed",e.speed,nullptr);v.setProperty("amount",e.amount,nullptr);v.setProperty("top",e.displayTop,nullptr);v.setProperty("aspect",e.imageAspect,nullptr);v.setProperty("zoom",e.viewZoom,nullptr);v.setProperty("mode",e.imageMode,nullptr);v.setProperty("scale",e.scaleMode,nullptr);v.setProperty("fillVersion",e.fillVersion,nullptr);
     juce::MemoryOutputStream mask;for(float f:*e.mask)mask.writeFloat(f);v.setProperty("mask",mask.getMemoryBlock(),nullptr);return v;
 }
 std::optional<PrintEdit> decode(const juce::ValueTree& v){
-    if(!v.hasType("Print"))return {};PrintEdit e;e.id=v["id"].toString();e.imagePath=v["image"].toString();e.start=v["start"];e.duration=v["duration"];e.low=v["low"];e.high=v["high"];e.ratio=v["ratio"];e.compensation=v["noise"];e.fftSize=v["fft"];e.rows=v["rows"];e.cols=v["cols"];e.invert=v["invert"];e.speed=v["speed"];e.amount=v["amount"];e.displayTop=v["top"];e.imageAspect=v["aspect"];e.viewZoom=v["zoom"];e.imageMode=v["mode"];e.scaleMode=v["scale"];
+    if(!v.hasType("Print"))return {};PrintEdit e;e.id=v["id"].toString();e.imagePath=v["image"].toString();e.start=v["start"];e.duration=v["duration"];e.low=v["low"];e.high=v["high"];e.ratio=v["ratio"];e.compensation=v["noise"];e.fftSize=v["fft"];e.rows=v["rows"];e.cols=v["cols"];e.invert=v["invert"];e.speed=v["speed"];e.amount=v["amount"];e.displayTop=v["top"];e.imageAspect=v["aspect"];e.viewZoom=v["zoom"];e.imageMode=v["mode"];e.scaleMode=v["scale"];e.fillVersion=(int)v.getProperty("fillVersion",0);
     const auto maskValue=v["mask"];auto* bytes=maskValue.getBinaryData();if(!bytes||e.id.isEmpty()||e.rows<1||e.rows>2049||e.cols<1||e.cols>4096||bytes->getSize()!=(size_t)e.rows*e.cols*4)return {};
     auto mask=std::make_shared<std::vector<float>>();mask->reserve((size_t)e.rows*e.cols);juce::MemoryInputStream stream(*bytes,false);
     for(int i=0;i<e.rows*e.cols;++i){float f=stream.readFloat();if(!std::isfinite(f)||f<0||f>1)return {};mask->push_back(f);}e.mask=mask;
@@ -413,8 +417,10 @@ bool Controller::doStoreObjectsToStream(juce::ARAOutputStream& out,const juce::A
     try{
         juce::ValueTree archive("SpectrumTagARA");archive.setProperty("schema",1,nullptr);
         for(auto* m:filter->getAudioModificationsToStore<Modification>()){
+            if(auto engine=std::atomic_load(&m->runtime->engine))engine->flush(120000);
             juce::ValueTree v("Modification");v.setProperty("id",juce::String(m->getPersistentID()),nullptr);v.setProperty("viewFrequencyScale",m->viewFrequencyScale,nullptr);for(const auto& e:m->edits)v.addChild(encode(e),-1,nullptr);archive.addChild(v,-1,nullptr);
         }
+        for(auto* view:views)view->engine.flush(120000);
         juce::MemoryOutputStream bytes;archive.writeToStream(bytes);if(bytes.getDataSize()>256*1024*1024)return false;
         return out.writeInt(0x53504131)&&out.writeInt((int)bytes.getDataSize())&&out.write(bytes.getData(),bytes.getDataSize());
     }catch(...){return false;}
@@ -430,7 +436,7 @@ bool Controller::doRestoreObjectsFromStream(juce::ARAInputStream& in,const juce:
             for(auto child:v){auto e=decode(child);if(!e)return false;edits.push_back(std::move(*e));}const int scale=(int)v.getProperty("viewFrequencyScale",-1);if(scale < -1||scale>6)return false;
             if(m){changes[m]=std::move(edits);choices[m]=scale;}
         }
-        for(auto& [m,edits]:changes){m->edits=std::move(edits);m->viewFrequencyScale=choices[m];sync(*m,false);
+        for(auto& [m,edits]:changes){m->edits=std::move(edits);m->viewFrequencyScale=choices[m];sync(*m,false,true);
             m->notifyContentChanged(juce::ARAContentUpdateScopes::samplesAreAffected(),false);
             for(auto* r:m->getPlaybackRegions())r->notifyContentChanged(juce::ARAContentUpdateScopes::samplesAreAffected(),false);
         }

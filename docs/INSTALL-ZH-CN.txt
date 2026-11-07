@@ -1,9 +1,9 @@
-SpectrumTag 1.4.20 — Windows / macOS 安装与常见问题
+SpectrumTag 1.4.24 — Windows / macOS 安装与常见问题
 
 一、选择安装包
-Windows：SpectrumTag-1.4.20-Windows-Setup.exe，适用于 Windows 10/11 64 位。
-macOS：SpectrumTag-1.4.20-macOS.pkg，适用于 macOS 15 或更新版本，包含 Apple Silicon 和 Intel 双架构。
-这两个包的所有产品版本均为 1.4.20。它们不是此前 1.4.18 / 1.4.19 Stable 的重命名；新版本是否设为 Stable 由用户验证后决定。
+Windows：SpectrumTag-1.4.24-Windows-Setup.exe，适用于 Windows 10/11 64 位。
+macOS：SpectrumTag-1.4.24-macOS.pkg，适用于 macOS 15 或更新版本，包含 Apple Silicon 和 Intel 双架构。
+这两个包的所有组件版本均为 1.4.24。Windows 独立版已由用户指定为 Stable；其他组件的跨平台自动验证与真实 DAW 工程验收应分别看待。
 
 Windows 包：实时 VST3、ARA 专用 VST3、独立 EXE。
 Mac 包：实时 VST3、ARA 专用 VST3、实时 AU、ARA AU、独立 App。
@@ -15,6 +15,8 @@ Mac 包：实时 VST3、ARA 专用 VST3、实时 AU、ARA AU、独立 App。
 先在测试工程验证新版本。请保留旧工程、原始音视频和旧版安装包。
 不要只复制 VST3 或 App 文件夹内部的某个二进制文件；整个 bundle 才是完整产品。
 不要同时在用户级和系统级目录保留多个同名版本，否则宿主可能扫描到旧版本。
+升级同路径版本：关闭宿主后运行新安装包，覆盖对应组件，再重启宿主扫描。若旧版是手工复制到其他目录的，先把确认过的旧 SpectrumTag 完整 bundle 移到插件目录之外备份，再安装新版；不要删除原音频、工程、用户设置或整个插件目录。
+Mac 还要检查 ~/Library/Audio/Plug-Ins/VST3 和 ~/Library/Audio/Plug-Ins/Components，避免它们与本包的 /Library 路径同时存在旧副本。Windows 则检查先前自行设置的 VST3 扫描目录。
 
 三、Windows
 双击安装 EXE，允许系统安装权限，选择组件和独立程序目录。
@@ -37,7 +39,7 @@ VST3：/Library/Audio/Plug-Ins/VST3/SpectrumTag.vst3
 AU：/Library/Audio/Plug-Ins/Components/SpectrumTag.component
     /Library/Audio/Plug-Ins/Components/SpectrumTag ARA.component
 两个处理器架构均已合并在同一套应用/插件中，无需另选 ARM 或 Intel 包。独立版内含两种架构的编解码器，不需要安装 Homebrew 或 FFmpeg。
-用户数据位于 ~/Library/SpectrumTag；加载/导出对话框默认从“音乐”目录开始。请给缓存和导出预留足够空间。
+用户数据位于 ~/Library/SpectrumTag；加载对话框从“音乐”目录开始，导出默认保存到桌面，也可选择其他目录。请给缓存和导出预留足够空间。
 
 签名状态：本次 Mac 应用/插件使用 ad-hoc 签名；PKG 没有 Apple Developer ID Installer 签名，也没有 Apple 公证。Windows 安装 EXE 没有商业代码签名。
 这不等于已通过 Apple/Microsoft 的发行者认证。仅在你确认文件来源和版本后继续安装。
@@ -66,7 +68,7 @@ Logic 的 ARA 入口不同于 Cubase：应选中目标音频轨，将 SpectrumTa
 2. ARA 出现在插件管理器里：管理器列出扫描信息不等于普通插入效果。请从音频事件扩展入口使用。如果普通插入菜单仍可加载，记录宿主版本和扫描路径后反馈。
 3. 独立版无声：检查“音频设备”的输出设备、采样率、输出通道和其他程序是否独占设备；先用普通立体声 WAV 验证。插件版还要检查轨道监听、旁路及路由。
 4. 视频不能加载：文件必须含可解码的音轨。当前只处理第一条音轨的单声道/立体声内容；多声道、无音轨、加密/受保护或损坏文件不支持。当前载入上限为 15 分钟，且受 6400 万采样点限制，较高采样率可能更早达到限制。
-5. “原格式导出”不是有损音频的逐字节保留：音轨处理后需要重新编码，保留支持的原容器/音频编码类别、采样率和声道数。视频画面及其他可复制流直接复制；若原编码不能重建，程序会报告错误，不会悄悄改为另一种格式。请另存输出，原文件保持不变。
+5. “原格式导出”不是有损音频的逐字节保留：音轨处理后需要重新编码，保留支持的原容器/音频编码类别、采样率和声道数。视频画面及其他可复制流直接复制；若原编码不能重建，程序会报告错误，不会悄悄改为另一种格式。请另存输出，原文件保持不变。若 Print 超出原视频范围，导出会增加对应时长并在超出的部分补黑帧，原音画保持同步。
 6. 第一次使用慢：Windows 首次需要解压并校验内置编码器；长音频加载和 Print 渲染也需要时间。等待进度结束后导出；预留缓存磁盘空间，避免多实例同时处理大文件。
 7. 中文字符不完整：Mac 使用系统中文字体回退，Windows 使用微软雅黑等系统字体；请不要删除系统中文字体。反馈时提供系统版本、宿主版本、缩放比例和截图。
 8. 工程迁移：录音缓存、原媒体和独立版导出文件不是仅靠插件文件即可恢复。迁移或清理之前保存工程并保留相关文件；不要在工程仍使用缓存时删除它。
@@ -78,3 +80,8 @@ Logic 的 ARA 入口不同于 Cubase：应选中目标音频轨，将 SpectrumTa
 原始项目：https://github.com/sweetorange1/SpectrumTag
 许可：保留 SpectrumTag 原项目 AGPL-3.0；FFmpeg 和其他第三方许可随程序附带，详见应用资源或安装目录中的许可说明。
 Apple 安装安全说明：https://support.apple.com/102445
+
+八、1.4.24 独立版补充
+可在未导入音频的空白时间轴 Print；Noise Fill 大于零才会在空白处生成声音。可按原格式导出音频/视频，也可单独导出满屏纯频谱动画。频谱从最右侧逐渐出现，按 Tag 参数平滑匹配视图；视频可选格式、分辨率和帧率。导出有独立进度弹窗，可取消。
+独立版记住上次媒体和处理内容；所需文件/缓存不可用时静默显示空白，可继续重新加载。工程迁移仍需保留原媒体和缓存。
+Windows 安装程序的扩展名是 .exe，但交付的是含组件选择、运行库和卸载功能的 Setup，不是裸独立版 EXE；Mac 交付 PKG，不需要 DMG。

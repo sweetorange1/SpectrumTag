@@ -1,9 +1,9 @@
-SpectrumTag 1.4.20 — Windows / macOS Installation and Troubleshooting
+SpectrumTag 1.4.24 — Windows / macOS Installation and Troubleshooting
 
 1. Packages and requirements
-Windows: SpectrumTag-1.4.20-Windows-Setup.exe, Windows 10/11 x64.
-macOS: SpectrumTag-1.4.20-macOS.pkg, macOS 15 or later, Apple Silicon and Intel universal binaries.
-All components in these packages are version 1.4.20. The earlier 1.4.18/1.4.19 Stable deliverables retain their original identity; the new version is not automatically designated Stable.
+Windows: SpectrumTag-1.4.24-Windows-Setup.exe, Windows 10/11 x64.
+macOS: SpectrumTag-1.4.24-macOS.pkg, macOS 15 or later, Apple Silicon and Intel universal binaries.
+All components in these packages are version 1.4.24. The Windows standalone was user-designated Stable; cross-platform automated checks and real DAW project acceptance are distinct.
 Windows includes realtime VST3, dedicated ARA VST3 and the standalone EXE.
 Mac includes realtime VST3, ARA VST3, realtime AU, ARA AU and the standalone App.
 There is no VST2 build. Components can be selected during installation.
@@ -11,6 +11,8 @@ There is no VST2 build. Components can be selected during installation.
 2. Before installing
 Save your work and completely quit all DAWs and SpectrumTag standalone instances. Keep your original media, existing projects and previous installer. Test the update in a separate project first.
 Install complete .vst3/.component/.app bundles, not just their inner executables. Avoid duplicate versions in user and system plug-in directories.
+For an upgrade at the same path, quit the host, run the new installer to replace the chosen components, then restart and rescan. For old manually installed copies elsewhere, move only the confirmed complete SpectrumTag bundles outside scanned plug-in folders as a backup before installing. Do not remove source media, projects, preferences or entire plug-in directories.
+On Mac also check ~/Library/Audio/Plug-Ins/VST3 and ~/Library/Audio/Plug-Ins/Components for duplicates of this installer's /Library locations. On Windows check any previously configured custom VST3 scan folders.
 
 3. Windows installation
 Run Setup, accept the system installation permission and select components.
@@ -32,7 +34,7 @@ VST3: /Library/Audio/Plug-Ins/VST3/SpectrumTag.vst3
 AU: /Library/Audio/Plug-Ins/Components/SpectrumTag.component
     /Library/Audio/Plug-Ins/Components/SpectrumTag ARA.component
 Every app/plug-in has Apple Silicon and Intel slices. The App contains matching native codecs and does not require Homebrew or a separate FFmpeg installation.
-User data is stored in ~/Library/SpectrumTag. Media dialogs start in Music. Keep sufficient free space for temporary decoded audio and exports.
+User data is stored in ~/Library/SpectrumTag. Load dialogs start in Music; export dialogs default to Desktop and allow another destination. Keep sufficient free space for temporary decoded audio and exports.
 
 5. Signing and first-launch messages
 Mac bundles are ad-hoc signed. The PKG is not Developer ID Installer signed, and this delivery is not Apple notarized. The Windows installer is not commercially code-signed. Do not interpret successful validation as publisher certification.
@@ -60,7 +62,7 @@ Missing/old plug-in: verify component selection and installed paths, remove ambi
 ARA listed in a plug-in manager: a scan listing is not the same as a normal insert. Use the event-extension entry. If it still loads as an ordinary insert, report the host version and scanned path.
 No sound: check output device, sample rate, channels, exclusive-device use, track routing, monitoring and bypass. Test with a normal stereo WAV.
 Unsupported media: input must have a decodable first audio stream. Mono/stereo is supported; multichannel, encrypted, damaged or silent video is not. Loading is limited to 15 minutes and 64 million sample frames; high sample rates can reach the sample limit sooner.
-Original-format export: processed lossy audio must be re-encoded. Supported source container/codec family, rate and channel count are retained; unchanged video and other copyable streams are copied. Unsupported source encoders produce an error rather than silently changing format. Save to a new file; keep the original.
+Original-format export: processed lossy audio must be re-encoded. Supported source container/codec family, rate and channel count are retained; unchanged video and other copyable streams are copied. Unsupported source encoders produce an error rather than silently changing format. Save to a new file; keep the original. Prints outside the source video extend the output with black pictures in those regions while retaining original audio-picture alignment.
 Slow first use: Windows extracts and checks the embedded codec once. Long files and Print rendering take time; wait for completion before exporting and leave cache disk space available.
 Missing Chinese text: keep OS Chinese fallback fonts installed. Report OS/host version, UI scale and a screenshot.
 Project migration: keep original media, recorded caches and exports along with project files. Copying the plug-in alone does not transfer project audio. Do not clean caches that are still used by a project.
@@ -72,3 +74,8 @@ Fork/build workflow: https://github.com/Ziqing-Gu/SpectrumTag
 Original project: https://github.com/sweetorange1/SpectrumTag
 SpectrumTag retains its original AGPL-3.0 license. FFmpeg and dependency notices accompany the installed program/resources.
 Apple security instructions: https://support.apple.com/102445
+
+9. Standalone additions in 1.4.24
+Print on an empty timeline without loading media. Noise Fill above zero generates sound in blank regions. Export source-format audio/video or a full-frame spectrum animation, revealing from the extreme right and smoothly following Tag parameters. Choose video format, resolution and fps. A separate progress window supports cancellation.
+The standalone remembers its previous media and edits. If required files/cache are unavailable it opens blank without an error prompt so you can load new content. Keep source media/cache when moving projects.
+The Windows .exe is a Setup installer with component selection, runtime support and uninstallation, not a bare standalone executable. The Mac delivery is a PKG installer, not a DMG.

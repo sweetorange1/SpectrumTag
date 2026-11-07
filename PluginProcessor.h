@@ -129,7 +129,7 @@ public:
     std::function<void(double)> onFileSeek;
     bool isLoadMode()const{return SPECTRUMTAG_ARA||filePlayerMode;}
     void publishFileTransport(bool playing,double seconds){transportAdvancing=playing;auditionTransport.publishExternalPosition(seconds);}
-    void resetFileView(){undoChanges.clear();redoChanges.clear();auto s=getEditorState();s.selectedPrint={};s.placementId={};s.viewValid=false;s.viewFit=true;s.viewFollow=false;setEditorState(s);stateRevision.fetch_add(1);}
+    void resetFileView(){undoChanges.clear();redoChanges.clear();auto s=getEditorState();s.selectedPrint={};s.placementId={};s.viewValid=false;s.viewFit=false;s.viewFollow=false;s.viewZoom=1;s.viewEnd=0;setEditorState(s);stateRevision.fetch_add(1);}
     spectrumtag::AuditionTransport& audition() {return auditionTransport;}
     void auditionAt(double seconds) {
         if(filePlayerMode){if(onFileSeek)onFileSeek(seconds);return;}

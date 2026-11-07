@@ -24,7 +24,7 @@ if(APPLE)
     message(STATUS "[SpectrumTag] macOS deployment    : ${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif()
 
-project(SpectrumTag VERSION 1.4.20 LANGUAGES C CXX)
+project(SpectrumTag VERSION 1.4.24 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -103,7 +103,7 @@ target_sources(SpectrumTag PRIVATE
   source/ui/UpdateDialog.cpp
 )
 
-target_link_libraries(SpectrumTag PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_gui_extra SpectrumTagBinaryData)
+target_link_libraries(SpectrumTag PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_gui_extra juce::juce_cryptography SpectrumTagBinaryData)
 
 # ============================================================================
 #  SpectrumTagStandalone —— 独立可执行程序（非 VST3 插件）
@@ -159,7 +159,7 @@ target_sources(SpectrumTagStandalone PRIVATE Standalone/EmbeddedCodec.cpp)
 target_link_libraries(SpectrumTagStandalone PRIVATE juce::juce_cryptography)
 
 
-target_sources(SpectrumTagStandalone PRIVATE Standalone/ModernStandalone.cpp Standalone/AudioFileSession.h)
+target_sources(SpectrumTagStandalone PRIVATE Standalone/ModernStandalone.cpp Standalone/AudioFileSession.h Standalone/SpectrumVideo.cpp)
 target_include_directories(SpectrumTagStandalone PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} $<TARGET_PROPERTY:SpectrumTag,INCLUDE_DIRECTORIES>)
 target_compile_definitions(SpectrumTagStandalone PRIVATE $<TARGET_PROPERTY:SpectrumTag,COMPILE_DEFINITIONS> JUCE_MODAL_LOOPS_PERMITTED=1)
 target_link_libraries(SpectrumTagStandalone PRIVATE SpectrumTag juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp juce::juce_gui_extra SpectrumTagBinaryData)
@@ -247,7 +247,7 @@ if(SPECTRUMTAG_BUILD_ARA)
         ARA/ARAIntegration.cpp source/network/Version.cpp source/network/UpdateChecker.cpp source/ui/UpdateDialog.cpp)
     target_compile_definitions(SpectrumTagARA PUBLIC SPECTRUMTAG_ARA=1 SPECTRUMTAG_ENABLE_NETWORK=0
         JUCE_VST3_CAN_REPLACE_VST2=0 JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
-    target_link_libraries(SpectrumTagARA PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_gui_extra SpectrumTagBinaryData)
+    target_link_libraries(SpectrumTagARA PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_gui_extra juce::juce_cryptography SpectrumTagBinaryData)
     if(WIN32)
         get_target_property(ara_generated SpectrumTagARA JUCE_GENERATED_SOURCES_DIRECTORY)
         get_target_property(ara_info SpectrumTagARA JUCE_INFO_FILE)

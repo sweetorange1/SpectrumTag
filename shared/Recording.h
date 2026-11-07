@@ -20,14 +20,14 @@ struct PrintEdit {
     bool invert=false;
     float speed=1, amount=.5f, displayTop=22000, imageAspect=1;
     double viewZoom=1;
-    int imageMode=0, scaleMode=0;
+    int imageMode=0, scaleMode=0, fillVersion=1;
     std::shared_ptr<const std::vector<float>> mask;
     bool valid() const;
 };
 inline bool sameAudioEdit(const PrintEdit& a,const PrintEdit& b) {
     return a.id==b.id&&a.start==b.start&&a.duration==b.duration&&a.low==b.low&&a.high==b.high
         &&a.ratio==b.ratio&&a.compensation==b.compensation&&a.fftSize==b.fftSize&&a.invert==b.invert
-        &&a.rows==b.rows&&a.cols==b.cols&&(a.mask==b.mask||(a.mask&&b.mask&&*a.mask==*b.mask));
+        &&a.fillVersion==b.fillVersion&&a.rows==b.rows&&a.cols==b.cols&&(a.mask==b.mask||(a.mask&&b.mask&&*a.mask==*b.mask));
 }
 inline bool sameEdit(const PrintEdit& a,const PrintEdit& b) {
     return sameAudioEdit(a,b)&&a.imagePath==b.imagePath&&a.speed==b.speed&&a.amount==b.amount
@@ -43,6 +43,9 @@ struct RecordingSnapshot {
     double sampleRate=48000;
     int channels=2,fftSize=4096,revision=0;
     int64_t origin=0,first=0,last=0;
+    // Standalone-only derived tail. The immutable source still ends here.
+    // Zero means ordinary DAW/ARA capture, whose coverage must not be extended.
+    int64_t fileSourceLast=0;
     std::vector<std::shared_ptr<const AudioPage>> original,rendered;
     std::vector<PrintEdit> edits;
     struct Tile { std::vector<SpectrumFrame> frames; };
@@ -85,6 +88,7 @@ private:
     bool previousPlaying=false,previousHadTime=false,initialised=false;
 };
 
+class RenderCache;
 class RecordingEngine : private juce::Thread {
 public:
     explicit RecordingEngine(bool externalView=false);
@@ -110,9 +114,14 @@ public:
     void remove(juce::String id);
     void setCompensation(juce::String id,float amount);
     void importAudio(const juce::File&,double hostStart,double targetRate=0);
+    void allowFilePrintExtension(){filePrintExtension=true;}
     void setDisplayFft(int size);
     bool flush(int timeoutMs=10000);
     juce::String save();
+    uint64_t cacheHits()const{return cacheHitCount.load();}
+    uint64_t printPasses()const{return printPassCount.load();}
+    uint64_t analysisPasses()const{return analysisPassCount.load();}
+    double analysisMilliseconds()const{return analysisTimeMs.load();}
     void restore(const juce::String& path,bool wasEnabled);
     // ARA editor facade: already-rendered immutable audio, never a second Print pass.
     void cancelPresentation();
@@ -121,6 +130,12 @@ public:
     std::function<void(const std::vector<PrintEdit>&)> onExternalEdits;
 private:
     const bool externalView;
+    std::atomic<bool> filePrintExtension{false};
+    std::unique_ptr<RenderCache> renderCache;
+    std::atomic<uint64_t> cacheHitCount{0},printPassCount{0},analysisPassCount{0};
+    std::atomic<double> analysisTimeMs{0};
+    int persistedRevision=-1;
+    bool restoreCacheRequested=false,persistRestoredResult=false;
     std::atomic<bool> externalBusy{false};
     std::atomic<float> externalProgress{1};
 public:
@@ -157,6 +172,7 @@ private:
     void ingest(const Packet&);
     void dirty(int64_t a,int64_t b);
     void publish();
+    void prepareFilePrintExtent();
     void apply(const PrintEdit&,std::vector<std::shared_ptr<AudioPage>>&,int64_t,int64_t);
     void analyse(RecordingSnapshot&,int64_t,int64_t);
     bool load(const juce::String& path);

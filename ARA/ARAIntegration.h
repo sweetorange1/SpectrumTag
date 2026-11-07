@@ -124,7 +124,7 @@ public:
     Controller(const ARA::PlugIn::PlugInEntry*,const ARA::ARADocumentControllerHostInstance*);
     ~Controller()override;
     bool cache(Source&);
-    void sync(Modification&,bool hostNotification);
+    void sync(Modification&,bool hostNotification,bool restoring=false);
     void warmup();
     void poll();
     std::optional<Span> span(Region&)const;
