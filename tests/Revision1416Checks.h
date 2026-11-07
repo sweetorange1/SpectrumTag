@@ -7,7 +7,7 @@ inline ImageBoxComponent* box(juce::Component& c){if(auto* b=dynamic_cast<ImageB
 inline void ui(SpectrumTagAudioProcessor& p,const juce::File& dir,const std::function<void()>& poll,const std::function<int()>& hostSeeks={}){
     using namespace spectrumtag;
     dir.createDirectory();
-    auto wait=[&](auto condition,const char* why){auto until=juce::Time::getMillisecondCounter()+20000;do{poll();juce::Timer::callPendingTimersSynchronously();if(condition())return;juce::Thread::sleep(5);}while((int)(until-juce::Time::getMillisecondCounter())>0);throw std::runtime_error(why);};
+    auto wait=[&](auto condition,const char* why){auto until=juce::Time::getMillisecondCounter()+20000;do{poll();juce::Timer::callPendingTimersSynchronously();if(condition())return;juce::Thread::sleep(5);}while((int)(until-juce::Time::getMillisecondCounter())>0);auto s=p.recording().snapshot();std::cerr<<"UI timeout: "<<why<<" busy="<<p.recording().isBusy()<<" revision="<<(s?s->revision:-1)<<" edits="<<(s?s->edits.size():0);if(s&&!s->edits.empty())std::cerr<<" amount="<<s->edits.front().amount;std::cerr<<std::endl;throw std::runtime_error(why);};
     auto parameter=[&](const juce::String& id,float v){auto* a=p.getAPVTS().getParameter(id);a->setValueNotifyingHost(a->convertTo0to1(v));};
     parameter(ParameterIDs::speed,1);parameter(ParameterIDs::frequencyPreset,0);parameter(ParameterIDs::fftScale,0);parameter(ParameterIDs::fftSize,0);
     parameter(ParameterIDs::imageMode,2);parameter(ParameterIDs::imageAmount,.5f);parameter(ParameterIDs::amplitudeRatio,0);parameter(ParameterIDs::noiseFill,0);parameter(ParameterIDs::invert,0);

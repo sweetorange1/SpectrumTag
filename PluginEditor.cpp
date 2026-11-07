@@ -449,7 +449,7 @@ public:
     void setImageVisible(bool visible){imageBox->setVisible(visible);}
     void clearDisplay(){
         rasterEpoch=renderer.invalidate();requestedRaster=appliedRaster=0;
-        waterfall={};waterfallStart=waterfallEnd=0;overviewImage={};overviewSource.reset();
+        waterfall={};waterfallSource.reset();waterfallStart=waterfallEnd=0;overviewImage={};overviewSource.reset();
         preview.reset();previewImage={};selected={};dragEdit.reset();movingPrint=false;
         panActive=false;fitAfterCapture=false;recorded.reset();recordMode=processor.recording().isEnabled();
         lastClearSerial=processor.getSpectrumClearSerial();view.reset(now());fit=false;
@@ -529,7 +529,7 @@ public:
         processor.drainSpectrumFrames(incoming);
         bool changed=false;
         if(processor.recording().isEnabled()!=recordMode){
-            recordMode=processor.recording().isEnabled();rasterEpoch=renderer.invalidate();waterfall={};overviewImage={};resized();changed=true;
+            recordMode=processor.recording().isEnabled();rasterEpoch=renderer.invalidate();waterfall={};waterfallSource.reset();overviewImage={};resized();changed=true;
             if(!recordMode){recorded.reset();view.reset(now());fit=false;fitAfterCapture=false;}
         }
         const auto latest=recordMode?processor.recording().snapshot():nullptr;
@@ -563,14 +563,16 @@ public:
             &&result->image.getWidth()==contentBounds.getWidth()&&result->image.getHeight()==contentBounds.getHeight()
             &&result->palette==palette&&result->scale==scaleMode&&result->top==top
             &&((!recorded&&!result->source)||(recorded&&result->source==recorded))){
-            waterfall=result->image;waterfallStart=result->start;waterfallEnd=result->end;appliedRaster=result->generation;
+            waterfall=result->image;waterfallSource=result->source;waterfallStart=result->start;waterfallEnd=result->end;appliedRaster=result->generation;
             getProperties().set("rasterRevision",result->source?result->source->revision:-1);
             getProperties().set("rasterApplied",(juce::int64)appliedRaster);getProperties().set("rasterMs",result->milliseconds);
-            // Keep the simulation until the matching audio AND its final raster arrive.
-            if(preview&&previewReleased&&result->source==recorded&&recorded&&!processor.recording().isBusy())
-                for(const auto& e:recorded->edits)if(SPECTRUMTAG_ARA?(e.id==preview->id&&e.amount==preview->amount&&e.imageMode==preview->imageMode&&e.ratio==preview->ratio&&e.invert==preview->invert&&e.compensation==preview->compensation&&e.speed==preview->speed&&e.scaleMode==preview->scaleMode&&e.displayTop==preview->displayTop&&std::abs(e.start-preview->start)<1.e-6&&std::abs(e.duration-preview->duration)<1.e-6):spectrumtag::sameAudioEdit(e,*preview)){setPreview({});break;}
             repaint();
         }
+        // A snapshot can be published before its worker clears busy. If its
+        // raster arrives during that interval, retirement must be retried on
+        // later ticks even when there is no new raster to adopt.
+        if(preview&&previewReleased&&waterfall.isValid()&&waterfallSource==recorded&&recorded&&!processor.recording().isBusy())
+            for(const auto& e:recorded->edits)if(SPECTRUMTAG_ARA?(e.id==preview->id&&e.amount==preview->amount&&e.imageMode==preview->imageMode&&e.ratio==preview->ratio&&e.invert==preview->invert&&e.compensation==preview->compensation&&e.speed==preview->speed&&e.scaleMode==preview->scaleMode&&e.displayTop==preview->displayTop&&std::abs(e.start-preview->start)<1.e-6&&std::abs(e.duration-preview->duration)<1.e-6):spectrumtag::sameAudioEdit(e,*preview)){setPreview({});break;}
         if(changed){dirty=true;repaint();}
         if(dirty)render();
         getProperties().set("recordMode",recordMode);getProperties().set("panActive",panActive);getProperties().set("panTarget",panTarget);
@@ -854,7 +856,7 @@ private:
     bool panActive=false;double panTarget=0,panTick=0;
     juce::Image overviewImage;std::shared_ptr<const spectrumtag::RecordingSnapshot> overviewSource;int overviewPalette=-1;
     double lastCursor=-1;
-    juce::Image waterfall;double waterfallStart=0,waterfallEnd=0;
+    juce::Image waterfall;std::shared_ptr<const spectrumtag::RecordingSnapshot> waterfallSource;double waterfallStart=0,waterfallEnd=0;
     std::array<juce::Colour,256> lut;
     int palette=0,scaleMode=0;float lastSpeed=-1;bool dirty=true;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumView)

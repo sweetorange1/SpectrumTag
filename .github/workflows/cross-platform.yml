@@ -55,6 +55,7 @@ jobs:
           path: build
           key: spectrumtag-mac-${{ matrix.arch }}-build-v1-${{ github.sha }}
       - name: Bundle native audio and video codec
+        id: codec
         run: |
           brew list ffmpeg-full >/dev/null 2>&1 || brew install ffmpeg-full
           mkdir -p native
@@ -63,6 +64,10 @@ jobs:
           ditto build/SpectrumTag_artefacts/Release/AU/SpectrumTag.component native/SpectrumTag.component
           ditto 'build/SpectrumTagARA_artefacts/Release/AU/SpectrumTag ARA.component' 'native/SpectrumTag ARA.component'
           ditto build/SpectrumTagStandalone_artefacts/Release/SpectrumTag.app native/SpectrumTag.app
+          for bundle in native/*.vst3 native/*.component; do
+            codesign --force --deep --sign - "$bundle"
+            codesign --verify --deep --strict "$bundle"
+          done
           python3 packaging/macos/bundle_codec.py "$(brew --prefix ffmpeg-full)/bin/ffmpeg" native/SpectrumTag.app ${{ matrix.arch }}
           cp LICENSE native/SpectrumTag.app/Contents/Resources/SpectrumTag-LICENSE.txt
           codesign --force --deep --sign - native/SpectrumTag.app
@@ -75,12 +80,14 @@ jobs:
           native/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/checks/codec.json"
           SPECTRUMTAG_PREFS_DIR="$PWD/checks/standalone/preferences" native/SpectrumTag.app/Contents/MacOS/SpectrumTag --self-test "$PWD/checks/standalone"
       - name: Validate both Audio Units
+        if: always() && steps.codec.outcome == 'success'
         run: |
           mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
           ditto native/SpectrumTag.component "$HOME/Library/Audio/Plug-Ins/Components/SpectrumTag.component"
           ditto 'native/SpectrumTag ARA.component' "$HOME/Library/Audio/Plug-Ins/Components/SpectrumTag ARA.component"
           python3 packaging/macos/validate_au.py "$HOME/Library/Audio/Plug-Ins/Components" checks
       - name: Validate VST3 bundles
+        if: always() && steps.codec.outcome == 'success'
         run: |
           curl -fL --retry 3 https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip -o pluginval.zip
           ditto -x -k pluginval.zip pluginval
