@@ -54,7 +54,13 @@ inline int spectrumVideoChecks(const juce::File& folder){try{
     for(int resolution=0;resolution<4;++resolution){options.resolution=resolution;SpectrumMovie sized(audio,options);auto v=sized.tagCamera(second,1);const double height=(v.y(second.low*24000)-v.y(second.high*24000))*sized.plot().getHeight();need(std::abs(v.pixelsPerSecond*second.duration/height-second.imageAspect)<.00001,"aspect invariant at every selectable resolution");}
     log("PASS full-frame spectrum only, right-edge reveal, pixel-exact cache, camera aspect at all sizes, overlap priority, continuous scale");
     options.resolution=0;SpectrumVideoExport exporter;juce::String error;
-    auto encode=[&](std::shared_ptr<const RecordingSnapshot> source,VideoOptions value,const juce::File& out){const auto start=juce::Time::getMillisecondCounterHiRes();need(exporter.start(source,value,out),"video export starts");wait([&]{return !exporter.busy();});log("ENCODE "+out.getFileName()+" "+juce::String(juce::Time::getMillisecondCounterHiRes()-start,1)+"ms "+exporter.error());need(exporter.stage()==SpectrumVideoExport::complete&&out.getSize()>1000,"video export completes");};
+    auto encode=[&](std::shared_ptr<const RecordingSnapshot> source,VideoOptions value,const juce::File& out){
+        const auto start=juce::Time::getMillisecondCounterHiRes();need(exporter.start(source,value,out),"video export starts");
+        double nextLog=start+10000;
+        try{wait([&]{const auto now=juce::Time::getMillisecondCounterHiRes();if(now>=nextLog){log("ENCODING "+out.getFileName()+" stage="+juce::String((int)exporter.stage())+" progress="+juce::String(exporter.progress(),4));nextLog=now+10000;}return !exporter.busy();});}
+        catch(...){log("TIMEOUT "+out.getFileName()+" stage="+juce::String((int)exporter.stage())+" progress="+juce::String(exporter.progress(),4)+" "+exporter.error());throw;}
+        log("ENCODE "+out.getFileName()+" "+juce::String(juce::Time::getMillisecondCounterHiRes()-start,1)+"ms "+exporter.error());need(exporter.stage()==SpectrumVideoExport::complete&&out.getSize()>1000,"video export completes");
+    };
     const auto main=folder.getChildFile("SpectrumTag-animation.mp4");encode(audio,options,main);
     juce::String frames;need(codecRun({"-v","error","-i",main.getFullPathName(),"-map","0:v:0","-an","-f","framemd5","-"},frames),"decode all exported frames");int frameCount=0;for(auto line:juce::StringArray::fromLines(frames))if(line.startsWith("0,"))++frameCount;need(frameCount==96,"3.2 seconds at 30 fps");
     juce::String info;codecRun({"-hide_banner","-i",main.getFullPathName()},info);need(info.contains("1280x720")&&info.contains("30 fps")&&info.contains("Audio: aac"),"video resolution fps and processed soundtrack");

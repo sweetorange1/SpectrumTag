@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <pthread.h>
+#include <poll.h>
 #include <cerrno>
 #endif
 
@@ -72,7 +73,20 @@ public:
             }
 #else
             const auto written=::write(fd,data,juce::jmin(size,(size_t)1048576));
-            if(written<0){if((errno==EAGAIN||errno==EINTR)&&child.isRunning()){juce::Thread::sleep(5);continue;}return false;}
+            if(written<0){
+                if(errno==EINTR)continue;
+                if((errno==EAGAIN||errno==EWOULDBLOCK)&&child.isRunning()){
+                    // A FIFO may accept only a few KiB at a time on macOS.
+                    // Wait for space rather than adding 5 ms to every chunk;
+                    // keep the wait bounded so cancellation remains responsive.
+                    pollfd writable{fd,POLLOUT,0};
+                    const auto ready=::poll(&writable,1,20);
+                    if(ready<0&&errno!=EINTR)return false;
+                    if(ready>0&&(writable.revents&(POLLERR|POLLHUP|POLLNVAL)))return false;
+                    continue;
+                }
+                return false;
+            }
 #endif
             if(written==0)return false;data+=written;size-=(size_t)written;
         }return true;
