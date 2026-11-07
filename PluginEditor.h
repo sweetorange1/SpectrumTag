@@ -127,6 +127,9 @@ public:
     // 当前框在父组件（频谱区）内的归一化矩形（x/y/w/h 都 ∈ [0,1]）
     juce::Rectangle<float> getNormalisedBounds() const { return normRect; }
     void setNormalisedBounds (juce::Rectangle<float> n) { normRect = n; fitNormRectToImageAspect(); resizedFromNorm(); }
+    // A recalled Print may extend past the viewport. Clipping is the parent's
+    // job; fitting it again would shrink the source independently of the audio.
+    void setPrintBounds (juce::Rectangle<float> n) { normRect = n; resizedFromNorm(); }
 
     // 父组件传入：内容区（不含左侧刻度）的实际像素矩形
     void setContentBounds (juce::Rectangle<int> contentRect);

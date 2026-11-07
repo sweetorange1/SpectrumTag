@@ -43,13 +43,14 @@ public:
         else for(const auto& e:s.edits){bytes.writeString(e.id);bytes.writeDouble(e.start);bytes.writeDouble(e.duration);bytes.writeFloat(e.low);bytes.writeFloat(e.high);bytes.writeFloat(e.ratio);bytes.writeFloat(e.compensation);bytes.writeBool(e.invert);bytes.writeInt(e.fftSize);bytes.writeInt(e.rows);bytes.writeInt(e.cols);bytes.writeInt(e.fillVersion);for(float v:*e.mask)bytes.writeFloat(v);}
         return juce::SHA256(bytes.getData(),bytes.getDataSize()).toHexString();
     }
-    bool load(const juce::String& key,RecordingSnapshot& s){
+    bool load(const juce::String& key,RecordingSnapshot& s,bool* spectrumCurrent=nullptr){
         auto input=file(key).createInputStream();if(!input||input->getTotalLength()<40)return false;
         const auto length=input->getTotalLength()-32;juce::SubregionStream body(input.get(),0,length,false);
         const auto expected=juce::SHA256(body).getRawData();juce::MemoryBlock actual(32);
         input->setPosition(length);if(input->read(actual.getData(),32)!=32||actual!=expected)return false;
         input->setPosition(0);juce::SubregionStream compressed(input.get(),0,length,false);juce::GZIPDecompressorInputStream in(compressed);
-        if(in.readInt()!=0x53524331||in.readString()!=key)return false;
+        const int format=in.readInt();
+        if((format!=0x53524331&&format!=0x53524332)||in.readString()!=key)return false;
         auto result=s;result.rendered.resize(s.original.size());
         for(size_t i=0;i<result.rendered.size();++i){const int tag=(unsigned char)in.readByte();
             if(tag==0)result.rendered[i].reset();else if(tag==1)result.rendered[i]=s.original[i];
@@ -65,13 +66,15 @@ public:
         };
         if(!peaks(result.peaks)||!peaks(result.originalPeaks)||!readTiles(result.spectrum,false)||!readTiles(result.originalSpectrum,true)||in.readInt()!=0x454e4421)return false;
         if((int)result.spectrum.size()!=tiles||std::any_of(result.spectrum.begin(),result.spectrum.end(),[](const auto& t){return !t;}))return false;
-        s=std::move(result);return true;
+        s=std::move(result);
+        if(spectrumCurrent)*spectrumCurrent=format==0x53524332||s.channels==1;
+        return true;
     }
     bool save(const juce::String& key,const RecordingSnapshot& s,const std::function<bool()>& cancelled){
         const auto target=file(key);
         if(target.getParentDirectory().createDirectory().failed())return false;
         juce::TemporaryFile temporary(target);auto output=temporary.getFile().createOutputStream();if(!output)return false;
-        {juce::GZIPCompressorOutputStream out(*output,1);out.writeInt(0x53524331);out.writeString(key);
+        {juce::GZIPCompressorOutputStream out(*output,1);out.writeInt(0x53524332);out.writeString(key);
             for(size_t i=0;i<s.original.size();++i){if(cancelled())return false;const auto page=i<s.rendered.size()?s.rendered[i]:nullptr;
                 if(!page)out.writeByte(0);else if(page==s.original[i])out.writeByte(1);else {out.writeByte(2);for(int c=0;c<s.channels;++c)writeFloats(out,page->samples[c].data(),recordingPageSize);}}
             for(const auto* values:{&s.peaks,&s.originalPeaks}){out.writeInt((int)values->size());for(auto v:*values){out.writeFloat(v.first);out.writeFloat(v.second);}}

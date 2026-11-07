@@ -6,6 +6,7 @@ This is a concise record of the Windows development delivered after upstream 1.4
 
 | Version | Delivered change |
 | --- | --- |
+| 1.4.27 | In validation: phase-safe per-channel spectrum analysis, one-time display-cache refresh preserving rendered audio, and matching source/Print bounds when selecting. / 验证中：频谱改为分别分析声道后合并能量，避免反相抵消图形；保留旧缓存音频只更新显示；修正选中原图与打印区域大小不一致。 |
 | 1.4.26 | Encoder-compatible video timing, responsive POSIX video streaming, Windows Setup and Universal macOS PKG with realtime/ARA VST3, AU and standalone; automated native and installation checks passed. User Mac acceptance and Stable designation remain pending. / 兼容新旧编码器、修复 Mac 频谱视频传输超时；交付 Win 安装程序及 Mac 双架构 PKG，附 TXT 说明。原生及实际安装检查通过，等待用户 Mac 工程验收，不自动设 Stable。 |
 | 1.4.25 | Fix Clang/macOS scalar progress calculation selecting an unsupported JUCE SIMD overload; unify installer component versions. Packaging and platform validation in progress. / 修复 macOS 编译时进度计算误匹配 JUCE SIMD 模板，统一安装包组件版本；打包及平台验证进行中。 |
 | 1.4.24 | Full-frame spectrum video enters at the right edge, with pixel-exact cached rendering and native RGB/BGR streaming; Desktop export default, cancellable progress dialog and immediate stopped-Delete cleanup. / 满屏纯频谱从最右侧显现、缓存加速、桌面默认导出、可取消进度弹窗与删除残影修复。Windows standalone user-designated Stable; cross-platform installers are being validated separately. |

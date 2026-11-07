@@ -41,8 +41,8 @@ static void revision1421Checks(const juce::File& dir){
     RecordingEngine firstLoad;firstLoad.restoreDocument({longSource,std::make_shared<const std::vector<PrintEdit>>(),true});require(firstLoad.flush(60000),"1421 long first-load analysis");const auto analysed=firstLoad.snapshot();
     const int N=4096,hop=N/8;juce::dsp::FFT fft(12);std::vector<float> window(N),data(2*N);float energy=0;for(int i=0;i<N;++i){window[i]=.5f-.5f*std::cos(juce::MathConstants<float>::twoPi*i/(N-1));energy+=window[i]*window[i];}
     const float normalisation=1/std::sqrt(energy);const auto referenceStart=juce::Time::getMillisecondCounterHiRes();
-    for(const auto& tile:analysed->spectrum)for(const auto& frame:tile->frames){const auto centre=llround(frame.time*48000);if(!analysed->contains(centre))continue;std::fill(data.begin(),data.end(),0.f);
-        for(int i=0;i<N;++i){float sample=0;for(int c=0;c<2;++c)sample+=analysed->sample(c,centre-N/2+i);data[i]=sample/2*window[i];}fft.performRealOnlyForwardTransform(data.data());
-        for(int k=0;k<=N/2;++k){const float db=juce::Decibels::gainToDecibels(std::sqrt(data[2*k]*data[2*k]+data[2*k+1]*data[2*k+1])*normalisation,-96.f);const int level=juce::jlimit(0,255,juce::roundToInt((db+96)*255/96));require(level==frame.level[k],"1421 optimized FFT matches original scalar analysis");}}
+    for(const auto& tile:analysed->spectrum)for(const auto& frame:tile->frames){const auto centre=llround(frame.time*48000);if(!analysed->contains(centre))continue;std::vector<float> power(N/2+1,0.f);
+        for(int c=0;c<2;++c){std::fill(data.begin(),data.end(),0.f);for(int i=0;i<N;++i)data[i]=analysed->sample(c,centre-N/2+i)*window[i];fft.performRealOnlyForwardTransform(data.data());for(int k=0;k<=N/2;++k)power[k]+=data[2*k]*data[2*k]+data[2*k+1]*data[2*k+1];}
+        for(int k=0;k<=N/2;++k){const float db=juce::Decibels::gainToDecibels(std::sqrt(power[k]/2)*normalisation,-96.f);const int level=juce::jlimit(0,255,juce::roundToInt((db+96)*255/96));require(level==frame.level[k],"1427 optimized FFT matches independent per-channel power analysis");}}
     std::cout<<"FIRST_LOAD_30S_STEREO_ANALYSIS_MS="<<firstLoad.analysisMilliseconds()<<" SCALAR_REFERENCE_MS="<<juce::Time::getMillisecondCounterHiRes()-referenceStart<<"\n";
 }

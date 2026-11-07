@@ -698,7 +698,7 @@ void SpectrumTagAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
         displayWindow[(size_t) n] = 0.5f * (1.0f - std::cos (juce::MathConstants<float>::twoPi
                                                               * (float) n / (float) (dispSize - 1)));
 
-    displayInputRing.assign ((size_t) dispSize, 0.0f);
+    displayInputRing.assign ((size_t) dispSize * juce::jmax(1,numCh), 0.0f);
     displayRingWritePos = 0;
     displaySamplesAccum = 0;
     displayFftWork.assign ((size_t) (2 * dispSize), 0.0f);
@@ -905,7 +905,7 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         for (int n = 0; n < desiredSize; ++n)
             displayWindow[(size_t) n] = 0.5f * (1.0f - std::cos (
                 juce::MathConstants<float>::twoPi * (float) n / (float) (desiredSize - 1)));
-        displayInputRing.assign ((size_t) desiredSize, 0.0f);
+        displayInputRing.assign ((size_t) desiredSize * juce::jmax(1,numCh), 0.0f);
         displayRingWritePos = 0;
         displaySamplesAccum = 0;
         displayFftWork.assign ((size_t) (2 * desiredSize), 0.0f);
@@ -1363,44 +1363,25 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
         for (int i = 0; i < numSamps; ++i)
         {
-            float mono = 0.0f;
             for (int ch = 0; ch < numCh; ++ch)
-                mono += buffer.getReadPointer (ch)[i];
-            mono /= (float) juce::jmax (1, numCh);
-
-            displayInputRing[(size_t) displayRingWritePos] = mono;
+                displayInputRing[(size_t)ch*dN+displayRingWritePos] = buffer.getReadPointer(ch)[i];
             displayRingWritePos = (displayRingWritePos + 1) % dN;
             ++displaySamplesAccum;
 
             if (displaySamplesAccum >= dHop)
             {
                 displaySamplesAccum -= dHop;   // 保留溢出样本，避免 FFT 窗口漂移
-                // JUCE real-only FFT 输入：displayFftWork[0..dN-1] 存放实数时域样本
-                for (int n = 0; n < dN; ++n)
-                {
-                    const int idx = (displayRingWritePos + n) % dN;
-                    displayFftWork[(size_t) n] = displayInputRing[(size_t) idx]
-                                               * displayWindow[(size_t) n];
-                }
-                std::fill (displayFftWork.begin() + dN, displayFftWork.end(), 0.0f);
-
-                displayFft->performRealOnlyForwardTransform (displayFftWork.data());
                 const int half = dN / 2 + 1;
-                std::vector<float> mags ((size_t) half);
-
-                // k=0 (DC)
-                mags[0] = std::abs (displayFftWork[0]) * displayMagNorm;
-
-                // k=1..N/2-1
-                for (int k = 1; k < half - 1; ++k)
-                {
-                    const float re = displayFftWork[(size_t) (2 * k)];
-                    const float im = displayFftWork[(size_t) (2 * k + 1)];
-                    mags[(size_t) k] = std::sqrt (re * re + im * im) * displayMagNorm;
+                std::vector<float> mags ((size_t) half,0.f);
+                // Match the recorded/ARA display: opposite channel polarity
+                // must never erase a visible Print that exists in the audio.
+                for(int ch=0;ch<numCh;++ch){
+                    for(int n=0;n<dN;++n){const int idx=(displayRingWritePos+n)%dN;displayFftWork[(size_t)n]=displayInputRing[(size_t)ch*dN+idx]*displayWindow[(size_t)n];}
+                    std::fill(displayFftWork.begin()+dN,displayFftWork.end(),0.f);
+                    displayFft->performRealOnlyForwardTransform(displayFftWork.data());
+                    for(int k=0;k<half;++k){const float re=displayFftWork[(size_t)2*k],im=displayFftWork[(size_t)2*k+1];mags[k]+=re*re+im*im;}
                 }
-
-                // k=N/2 (Nyquist)
-                mags[(size_t) (half - 1)] = std::abs (displayFftWork[(size_t) dN]) * displayMagNorm;
+                for(auto& magnitude:mags)magnitude=std::sqrt(magnitude/juce::jmax(1,numCh))*displayMagNorm;
                 if(editorAttachCount.load(std::memory_order_relaxed)>0) {
                     spectrumtag::SpectrumFrame frame;
                     frame.time=((double)visualisedSamples.load() - numSamps + i + 1 - dN*0.5)/getSampleRate();

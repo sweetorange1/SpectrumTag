@@ -344,20 +344,22 @@ void RecordingEngine::analyse(RecordingSnapshot& snapshot,int64_t left,int64_t r
     }
     std::atomic<size_t> nextTask{0},completed{0};
     const auto analyseTiles=[&]{
-      juce::dsp::FFT fft((int)std::log2(N));std::vector<float> data((size_t)2*N),mono((size_t)RecordingSnapshot::tileSize+N);
+      const size_t channelLength=(size_t)RecordingSnapshot::tileSize+N;
+      juce::dsp::FFT fft((int)std::log2(N));
+      std::vector<float> data((size_t)2*N),channels(channelLength*snapshot.channels),power((size_t)N/2+1);
       for(;;){const auto task=nextTask.fetch_add(1);if(task>=tasks.size())break;const auto tile=tasks[task];
         if(threadShouldExit()||clearing.load()||progressGeneration!=editRevision.load())return;
         const auto begin=snapshot.origin+(int64_t)tile*RecordingSnapshot::tileSize;
-        // Read and mix immutable pages once per tile, rather than doing two
-        // page lookups per sample for each of the eight overlapping FFTs.
-        std::fill(mono.begin(),mono.end(),0.f);
-        const auto monoStart=begin-N/2;
-        for(int64_t absolute=juce::jmax(snapshot.origin,monoStart);absolute<monoStart+(int64_t)mono.size();){
+        // Keep channels separate until after the FFT. A time-domain L+R mix
+        // can cancel real spectral content (and its Print) in wide stereo audio.
+        // Page reads remain amortised across all overlapping windows in a tile.
+        std::fill(channels.begin(),channels.end(),0.f);
+        const auto channelStart=begin-N/2;
+        for(int64_t absolute=juce::jmax(snapshot.origin,channelStart);absolute<channelStart+(int64_t)channelLength;){
             const auto relative=absolute-snapshot.origin;const size_t page=(size_t)(relative/recordingPageSize),at=(size_t)(relative%recordingPageSize);
-            const size_t count=juce::jmin((size_t)recordingPageSize-at,(size_t)(monoStart+mono.size()-absolute));
-            if(page<snapshot.rendered.size()&&snapshot.rendered[page]){const auto& audio=*snapshot.rendered[page];auto* dst=mono.data()+(absolute-monoStart);
-                if(snapshot.channels==1)std::copy_n(audio.samples[0].data()+at,count,dst);
-                else for(size_t i=0;i<count;++i)dst[i]=(audio.samples[0][at+i]+audio.samples[1][at+i])*.5f;}
+            const size_t count=juce::jmin((size_t)recordingPageSize-at,(size_t)(channelStart+channelLength-absolute));
+            if(page<snapshot.rendered.size()&&snapshot.rendered[page]){const auto& audio=*snapshot.rendered[page];
+                for(int c=0;c<snapshot.channels;++c)std::copy_n(audio.samples[c].data()+at,count,channels.data()+c*channelLength+(absolute-channelStart));}
             absolute+=(int64_t)count;
         }
         auto result=std::make_shared<RecordingSnapshot::Tile>();
@@ -366,10 +368,14 @@ void RecordingEngine::analyse(RecordingSnapshot& snapshot,int64_t left,int64_t r
             if(threadShouldExit()||clearing.load()||progressGeneration!=editRevision.load())return;
             const auto centre=begin+offset;SpectrumFrame frame;frame.time=centre/snapshot.sampleRate;frame.sampleRate=snapshot.sampleRate;frame.interval=hop/snapshot.sampleRate;frame.bins=N/2+1;
             if(snapshot.contains(centre)){
-                std::fill(data.begin(),data.end(),0.0f);
-                for(int i=0;i<N;++i)data[(size_t)i]=mono[(size_t)offset+i]*window[(size_t)i];
-                fft.performRealOnlyForwardTransform(data.data());
-                for(int k=0;k<frame.bins;++k){const float re=data[(size_t)2*k],im=data[(size_t)2*k+1];const float db=juce::Decibels::gainToDecibels(std::sqrt(re*re+im*im)*normalisation,-96.0f);frame.level[(size_t)k]=(juce::uint8)juce::jlimit(0,255,juce::roundToInt((db+96)*255/96));}
+                std::fill(power.begin(),power.end(),0.f);
+                for(int c=0;c<snapshot.channels;++c){
+                    std::fill(data.begin(),data.end(),0.0f);
+                    for(int i=0;i<N;++i)data[(size_t)i]=channels[c*channelLength+(size_t)offset+i]*window[(size_t)i];
+                    fft.performRealOnlyForwardTransform(data.data());
+                    for(int k=0;k<frame.bins;++k){const float re=data[(size_t)2*k],im=data[(size_t)2*k+1];power[k]+=re*re+im*im;}
+                }
+                for(int k=0;k<frame.bins;++k){const float db=juce::Decibels::gainToDecibels(std::sqrt(power[k]/snapshot.channels)*normalisation,-96.0f);frame.level[(size_t)k]=(juce::uint8)juce::jlimit(0,255,juce::roundToInt((db+96)*255/96));}
             }
             result->frames.push_back(frame);
         }
@@ -460,9 +466,22 @@ void RecordingEngine::publish(){
     if(std::exchange(restoreCacheRequested,false)&&!armed.load()){
         persistRestoredResult=true;
         const auto key=renderCache->key(work,externalView);
-        if(renderCache->load(key,work)){
+        bool spectrumCurrent=false;
+        if(renderCache->load(key,work,&spectrumCurrent)){
             if(generation!=editRevision.load())return;
-            ++cacheHitCount;work.revision=++revision;persistedRevision=work.revision;persistRestoredResult=false;
+            // Older caches still contain correct processed audio. Refresh only
+            // the obsolete L+R spectrum once; never repeat Print synthesis.
+            if(!spectrumCurrent){
+                reportStage(RenderStage::spectrum);
+                auto clean=work;clean.rendered=work.original;clean.spectrum.clear();
+                analyse(clean,work.first,work.last);if(generation!=editRevision.load())return;
+                work.originalSpectrum=std::move(clean.spectrum);work.originalPeaks=std::move(clean.peaks);
+                work.spectrum.clear();
+                if(work.original==work.rendered){work.spectrum=work.originalSpectrum;work.peaks=work.originalPeaks;}
+                else analyse(work,work.first,work.last);
+                if(generation!=editRevision.load())return;
+            }
+            ++cacheHitCount;work.revision=++revision;persistedRevision=spectrumCurrent?work.revision:0;persistRestoredResult=!spectrumCurrent;
             if(auto old=std::atomic_exchange(&published,std::make_shared<const RecordingSnapshot>(work)))retired.push_back(std::move(old));
             dirtyFirst=INT64_MAX;dirtyLast=INT64_MIN;reportProgress(1);reportStage(RenderStage::ready);return;
         }

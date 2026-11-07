@@ -521,12 +521,19 @@ public:
     void restorePrintView(const spectrumtag::PrintEdit& e){
         panActive=false;
         view.zoomX=juce::jmax(.000001,e.viewZoom);view.follow=false;fit=false;
+        // A saved zoom describes the canvas at Print time. The current host
+        // rectangle (or overview height) may differ. Restore the aspect of the
+        // actual time/frequency footprint before fitting the source image to it.
+        // This is view-only: selection must not move or re-render the audio.
+        const auto footprint=editBounds(e);
+        if(footprint.getWidth()>0&&footprint.getHeight()>0&&e.imageAspect>0)
+            view.zoomX*=e.imageAspect*footprint.getHeight()/footprint.getWidth();
         view.endTime=e.start+e.duration*.5+timeSpan()*.5;
         alignImageToPrint(e);
     }
     void alignImageToPrint(const spectrumtag::PrintEdit& e){
         dirty=true;const auto b=editBounds(e).translated(-(float)contentBounds.getX(),-(float)contentBounds.getY());
-        imageBox->setNormalisedBounds({b.getX()/contentBounds.getWidth(),b.getY()/contentBounds.getHeight(),b.getWidth()/contentBounds.getWidth(),b.getHeight()/contentBounds.getHeight()});
+        imageBox->setPrintBounds({b.getX()/contentBounds.getWidth(),b.getY()/contentBounds.getHeight(),b.getWidth()/contentBounds.getWidth(),b.getHeight()/contentBounds.getHeight()});
     }
     double imageStart() const {
         return view.endTime-baseSpan()/view.zoomX+getImageBoxX()/juce::jmax(1,contentBounds.getWidth())*baseSpan()/view.zoomX;

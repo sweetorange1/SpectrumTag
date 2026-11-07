@@ -1,9 +1,9 @@
-SpectrumTag 1.4.26 — Windows / macOS 安装与常见问题
+SpectrumTag 1.4.27 — Windows / macOS 安装与常见问题
 
 一、选择安装包
-Windows：SpectrumTag-1.4.26-Windows-Setup.exe，适用于 Windows 10/11 64 位。
-macOS：SpectrumTag-1.4.26-macOS.pkg，适用于 macOS 15 或更新版本，包含 Apple Silicon 和 Intel 双架构。
-这两个包的所有组件版本均为 1.4.26。此前 Windows 独立版 1.4.24 保留其 Stable 状态；本版未自动指定为 Stable。自动验证与真实 DAW 工程验收应分别看待。
+Windows：SpectrumTag-1.4.27-Windows-Setup.exe，适用于 Windows 10/11 64 位。
+macOS：SpectrumTag-1.4.27-macOS.pkg，适用于 macOS 15 或更新版本，包含 Apple Silicon 和 Intel 双架构。
+这两个包的所有组件版本均为 1.4.27。此前 Windows 独立版 1.4.24 保留其 Stable 状态；本版未自动指定为 Stable。自动验证与真实 DAW 工程验收应分别看待。
 
 Windows 包：实时 VST3、ARA 专用 VST3、独立 EXE。
 Mac 包：实时 VST3、ARA 专用 VST3、实时 AU、ARA AU、独立 App。
@@ -81,7 +81,7 @@ Logic 的 ARA 入口不同于 Cubase：应选中目标音频轨，将 SpectrumTa
 许可：保留 SpectrumTag 原项目 AGPL-3.0；FFmpeg 和其他第三方许可随程序附带，详见应用资源或安装目录中的许可说明。
 Apple 安装安全说明：https://support.apple.com/102445
 
-八、1.4.26 独立版补充
+八、1.4.27 独立版补充
 可在未导入音频的空白时间轴 Print；Noise Fill 大于零才会在空白处生成声音。可按原格式导出音频/视频，也可单独导出满屏纯频谱动画。频谱从最右侧逐渐出现，按 Tag 参数平滑匹配视图；视频可选格式、分辨率和帧率。导出有独立进度弹窗，可取消。
 独立版记住上次媒体和处理内容；所需文件/缓存不可用时静默显示空白，可继续重新加载。工程迁移仍需保留原媒体和缓存。
 Windows 安装程序的扩展名是 .exe，但交付的是含组件选择、运行库和卸载功能的 Setup，不是裸独立版 EXE；Mac 交付 PKG，不需要 DMG。

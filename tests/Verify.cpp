@@ -43,6 +43,7 @@ static ImageBoxComponent* imageBox(juce::Component& root) {
 #include "Revision1416Checks.h"
 #include "RenderReplacementChecks.h"
 #include "Revision1421Checks.h"
+#include "Revision1427Checks.h"
 static void checks(const juce::File& dir) {
     dir.createDirectory();
    #if JUCE_WINDOWS
@@ -157,11 +158,13 @@ static void checks(const juce::File& dir) {
      juce::AudioBuffer<float> b(1,48000);for(int i=0;i<48000;++i)b.setSample(0,i,.1f*std::sin(juce::MathConstants<double>::twoPi*700*i/48000));p.recording().setArmed(true);p.recording().capture(b,0,48000,true);p.recording().setArmed(false);require(p.recording().flush(),"1416 source");revision1416::ui(p,dir,[]{});}
     revision1416::replacements();
     revision1421Checks(dir);
+    revision1427Checks(dir.getChildFile("1427-display"));
     std::cout<<"ALL CHECKS PASSED\n";
 }
 
 int main(int argc,char**argv) {
     juce::ScopedJuceInitialiser_GUI init;
+    if(argc==3&&std::string(argv[1])=="--checks1427"){try{revision1427Checks(juce::File(argv[2]));return 0;}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<"\n";return 1;}}
     if(argc==3 && (std::string(argv[1])=="--checks1410"||std::string(argv[1])=="--checks1412"||std::string(argv[1])=="--checks1421")) {try {juce::File dir(argv[2]);dir.createDirectory();
       #if JUCE_WINDOWS
         _putenv_s("SPECTRUMTAG_PREFS_DIR",dir.getChildFile("preferences-test").getFullPathName().toRawUTF8());

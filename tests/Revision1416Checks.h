@@ -45,6 +45,11 @@ inline void ui(SpectrumTagAudioProcessor& p,const juce::File& dir,const std::fun
     const float selectedX=(int)view->getProperties()["selectedX"]+(int)view->getProperties()["selectedW"]*.5f;
     const float selectedY=(int)view->getProperties()["selectedY"]+(int)view->getProperties()["selectedH"]*.5f;
     click(selectedX,selectedY);transport.advance(false,true,position,128,48000);
+    view->createComponentSnapshot(view->getLocalBounds());
+    const auto selectedBounds=juce::Rectangle<float>((float)view->getProperties()["selectedX"],(float)view->getProperties()["selectedY"],(float)view->getProperties()["selectedW"],(float)view->getProperties()["selectedH"]);
+    const auto imageBounds=view->getLocalArea(image,image->getLocalBounds()).toFloat();
+    need(std::abs(selectedBounds.getWidth()/selectedBounds.getHeight()-e.imageAspect)<.015f,"1427 selection restores actual Print aspect, not only source image aspect");
+    need(std::abs(imageBounds.getX()-selectedBounds.getX())<1.5f&&std::abs(imageBounds.getY()-selectedBounds.getY())<1.5f&&std::abs(imageBounds.getWidth()-selectedBounds.getWidth())<1.5f&&std::abs(imageBounds.getHeight()-selectedBounds.getHeight())<1.5f,"1427 selected Print and source image have matching bounds");
     need(!transport.isLocal()&&transport.position()==position&&(!hostSeeks||hostSeeks()==seeks),"1417 clicking selected Print again must not seek");
     need(p.recording().snapshot()==beforeSelect,"1417 selection restores display without rendering audio");
     click(selectedX,8);transport.advance(false,true,position,128,48000);

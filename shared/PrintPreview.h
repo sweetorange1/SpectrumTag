@@ -64,9 +64,8 @@ inline juce::Image printPreview(const RecordingSnapshot& source,const PrintEdit&
                 for(const auto& layer:layers){const int r=layer.rows[y],c=layer.cols[x];if(r<0||c<0)continue;
                     const auto& e=*layer.edit;const float mask=(*e.mask)[(size_t)r*e.cols+c],affected=e.invert?1-mask:mask;
                     const float gain=1-affected+affected*e.ratio;
-                    // Display frames are channel averages. Independent noise
-                    // power falls by channel count in that average.
-                    const float fill=juce::jmax(0.f,layer.floorPower/(e.fillVersion==0?juce::jmax(1,source.channels):1)-energy);
+                    // Display frames average channel power, not L+R samples.
+                    const float fill=juce::jmax(0.f,layer.floorPower-energy);
                     energy=energy*gain*gain+fill*(1-affected)*(1-affected)*layer.edges[y]*layer.envelopes[x];
                 }
             }
