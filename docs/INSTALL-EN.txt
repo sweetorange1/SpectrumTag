@@ -19,6 +19,7 @@ VST3 location: C:\Program Files\Common Files\VST3\iisaacbeats.cn\
   SpectrumTag ARA.vst3
 Default standalone location: C:\Program Files\iisaacbeats.cn\SpectrumTag\SpectrumTag.exe
 The standalone location is selectable; plug-ins use the standard VST3 location.
+Setup includes the Microsoft Visual C++ x64 runtime and installs it only when the required version is missing. For VCRUNTIME140/MSVCP140 errors, rerun Setup or use Microsoft's official runtime installer; do not download individual DLLs from third-party sites.
 The standalone EXE embeds its codec. No companion Runtime folder is required. First use extracts and verifies the codec in the cache.
 When D: exists, defaults are D:\Codex\Temp\SpectrumTag-Standalone for temporary media and codec files, and D:\Codex\PluginData\SpectrumTag for preferences/recorded data. Computers without D: use SpectrumTag in the user's application-data directory.
 Uninstall through Windows Installed Apps. User projects, original media and external recording caches are not intentionally removed by the uninstaller.
@@ -50,6 +51,7 @@ Realtime: insert SpectrumTag as an ordinary audio effect. Without Record it prov
 ARA: attach SpectrumTag ARA through the DAW's audio-event extension/ARA command. In Cubase, select the audio event and use its extension entry. Do not use the dedicated ARA container as an ordinary insert effect.
 ARA has Load/Clear, not Record. Load reads host audio; Clear removes the loaded material and Print edits. Event positions come from the host timeline.
 VST3/AU support alone does not imply ARA support: the host, version and license tier must support ARA. Cubase uses VST3; Logic uses AU. ARA AU needs a host that actually exposes ARA. If an Apple Silicon host does not expose its ARA entry, consult that host's official Rosetta requirements; ordinary realtime use does not automatically require Rosetta.
+Apple currently states that third-party ARA in Logic Pro on Apple Silicon requires Logic to run using Rosetta. Quit Logic, select Logic Pro in Finder, open Get Info and enable Open using Rosetta, then relaunch. This is a Logic ARA host requirement; realtime AU and the standalone App can run natively. Reference: https://support.apple.com/102082
 Standalone: use Load or drag audio/video from Explorer/Finder, choose an audio output device, then play/edit/export. For video input, choose video export with unchanged pictures or audio-only export. The app is an audio editor, not a video-picture editor.
 
 7. Troubleshooting

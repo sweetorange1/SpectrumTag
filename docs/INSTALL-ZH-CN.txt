@@ -23,6 +23,7 @@ Mac 包：实时 VST3、ARA 专用 VST3、实时 AU、ARA AU、独立 App。
   SpectrumTag ARA.vst3
 独立程序默认安装到：C:\Program Files\iisaacbeats.cn\SpectrumTag\SpectrumTag.exe
 可以在安装界面为独立程序选择其他磁盘；插件仍使用标准 VST3 路径。
+安装包附带 Microsoft Visual C++ x64 运行库，仅在缺少所需版本时安装。若提示 VCRUNTIME140/MSVCP140 缺失，请重新运行安装包或使用微软官方运行库安装程序，不要从第三方网站单独下载 DLL。
 无需把独立程序旁边再放一个 Runtime 文件夹：编码器已嵌入 EXE，首次使用时会验证并解压到缓存。
 有 D 盘时默认缓存位于 D:\Codex\Temp\SpectrumTag-Standalone，偏好设置和录音数据位于 D:\Codex\PluginData\SpectrumTag。
 没有 D 盘的电脑使用当前用户应用数据目录下的 SpectrumTag；不要将插件安装目录当成可写缓存目录。
@@ -56,6 +57,7 @@ ARA：使用宿主的“扩展 / ARA”入口，将 SpectrumTag ARA 应用到音
 ARA 版只有 Load / Clear，没有 Record。Load 从宿主读取当前轨道相关音频；Clear 清空已加载内容及 Print 修改。宿主时间位置必须由 ARA 模型提供，不要手动拼接文件起点。
 ARA 是否可用取决于宿主、版本、授权版本和 ARA 支持；“支持 AU”或“支持 VST3”本身不代表支持 ARA。
 Logic 使用 AU，Cubase 使用 VST3。ARA AU 还需要宿主实际提供 ARA 扩展支持。若 Apple Silicon 上的宿主没有显示 ARA 入口，请按该宿主的官方说明确认是否需要 Rosetta；不要为了普通实时版一律强制 Rosetta。
+Apple 当前说明：在 Apple Silicon 上，Logic Pro 使用第三方 ARA 需要以 Rosetta 启动。完全退出 Logic 后，在 Finder 中选择 Logic Pro，打开“显示简介”，勾选“使用 Rosetta 打开”再启动。这里的限制来自 Logic 的 ARA 运行方式；实时 AU 和独立版可原生运行。参考：https://support.apple.com/102082
 独立版：打开 SpectrumTag，点击 Load 或从资源管理器/Finder 拖入音频或视频，选择音频设备后播放。视频导出可选择保留原画面的视频，或只导出音轨。
 
 六、常见问题

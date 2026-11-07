@@ -1,3 +1,8 @@
+#if defined(__APPLE__)
+// Include legacy Apple Point declarations before JUCE's generated namespace
+// import, otherwise MacTypes.h and juce::Point become ambiguous in the harness.
+#include <CoreFoundation/CoreFoundation.h>
+#endif
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "shared/PlatformFonts.h"
@@ -11,8 +16,6 @@
 #include "RenderReplacementChecks.h"
 #if JUCE_WINDOWS
 #include <windows.h>
-#elif JUCE_MAC
-#include <CoreFoundation/CoreFoundation.h>
 #endif
 const ARA::ARAFactory* JUCE_CALLTYPE createARAFactory();
 using namespace spectrumtag;
