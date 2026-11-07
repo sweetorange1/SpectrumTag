@@ -7,13 +7,21 @@
 #include <vector>
 #include <deque>
 #include <mutex>
+#include "shared/Presentation.h"
+#include "shared/Recording.h"
+#ifndef SPECTRUMTAG_ARA
+#define SPECTRUMTAG_ARA 0
+#endif
+#if SPECTRUMTAG_ARA
+#include "ARA/ARAIntegration.h"
+#endif
 
 // ============================================================================
 //  SpectrumTag - 音频信号 × 图片轮廓 的频谱"印章"插件
 // ----------------------------------------------------------------------------
 //  设计要点（v3 STFT/OLA 方案）：
 //   - 未按 Print 时：音频完全 bypass，不做任何 FFT/IFFT 运算，零延迟。
-//   - 按下 Print 后：STFT（75% 重叠，hop = N/4），每个 bin 根据 mask 独立
+//   - 按下 Print 后：STFT（93.75% 重叠，hop = N/16），每个 bin 根据 mask 独立
 //     调节幅度，保留原始相位，IFFT 后重叠相加（OLA）输出。
 //     配合逐 bin 增益平滑 + 相位保留，彻底消除音量波动。
 //   - 显示路径（瀑布图）保持独立实数 FFT，仅用于可视化。
@@ -22,15 +30,23 @@
 namespace ParameterIDs
 {
     static const juce::String fftSize        = "fftSize";        // Choice: 1024/2048/4096/8192
-    static const juce::String fftScale       = "fftScale";       // Choice: linear / mel
+    static const juce::String fftScale       = "fftScale";       // Legacy choice: linear / log (keep normalised automation)
     static const juce::String speed          = "speed";          // Float
-    static const juce::String amplitudeRatio = "amplitudeRatio"; // Float: 0.0 - 1.5
+    static const juce::String amplitudeRatio = "amplitudeRatio"; // Float: 0.0 - 0.33
+    static const juce::String noiseFill = "noiseFill";
+    static const juce::String frequencyRange = "frequencyRange";
+    static const juce::String frequencyPreset = "frequencyPreset";
+    static const juce::String imageMode = "imageMode";
+    static const juce::String imageAmount = "imageAmount";
     static const juce::String invert         = "invert";         // Bool
     static const juce::String printTrigger   = "printTrigger";   // Bool（自动化触发 Print，按上升沿）
 }
 
 class SpectrumTagAudioProcessor : public juce::AudioProcessor,
                                   public juce::AudioProcessorValueTreeState::Listener
+#if SPECTRUMTAG_ARA
+                                  , public juce::AudioProcessorARAExtension
+#endif
 {
 public:
     SpectrumTagAudioProcessor();
@@ -61,23 +77,107 @@ public:
 
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts; }
+    int getFrequencyScale() const {
+        const int preset=(int)apvts.getRawParameterValue(ParameterIDs::frequencyPreset)->load();
+        // Keep the retired slot in host automation, but resolve it to Log.
+        if(preset==2)return 1;
+        return preset>0 ? preset+1 : (int)apvts.getRawParameterValue(ParameterIDs::fftScale)->load();
+    }
 
     // ===== 频谱可视化（仅显示用 FFT）=====
     void getLatestMagnitudeSpectrum (std::vector<float>& dest);
+    uint64_t getVisualisedSamples() const { return visualisedSamples.load(std::memory_order_acquire); }
+    bool isTransportAdvancing() const { return transportAdvancing.load(std::memory_order_acquire); }
     int  getDisplayUpdateCounter() const { return displayUpdateCounter.load (std::memory_order_acquire); }
 
+    void drainSpectrumFrames(std::vector<spectrumtag::SpectrumFrame>& out) {
+        spectrumQueue.drain(out);const auto serial=spectrumClearSerial.load();
+        out.erase(std::remove_if(out.begin(),out.end(),[serial](const auto& f){return f.clearSerial!=serial;}),out.end());
+    }
+    void clearSpectrumHistory(){spectrumClearSerial.fetch_add(1);spectrumHistory->frames.clear();}
+    uint64_t getSpectrumClearSerial() const {return spectrumClearSerial.load();}
+    void clearRecordedAudio();
+    void finishPendingClear();
+    bool isClearPending() const {return pendingClear!=nullptr;}
+    std::shared_ptr<spectrumtag::SpectrumHistory> getSpectrumHistory() { return spectrumHistory; }
+    int getStateRevision() const { return stateRevision.load(); }
+    void pollTransportTimeout();
+
+    static constexpr bool isARABuild(){return SPECTRUMTAG_ARA!=0;}
+    bool araBound()const {
+#if SPECTRUMTAG_ARA
+        return isBoundToARA();
+#else
+        return false;
+#endif
+    }
+    spectrumtag::RecordingEngine& recording() {
+#if SPECTRUMTAG_ARA
+        if(auto* view=getEditorView<spectrumtag::ara::View>())return view->engine;
+#endif
+        return recordingEngine;
+    }
+    const spectrumtag::RecordingEngine& recording()const{return const_cast<SpectrumTagAudioProcessor*>(this)->recording();}
+    void loadARA();void clearARA();void pollARA();void rememberARAFrequencyChoice();juce::String araStatus()const;
+#if SPECTRUMTAG_ARA
+    juce::AudioProcessorARAExtension* getARAClientExtensions()override{return this;}
+#endif
+    bool filePlayerMode=false;
+    juce::String filePlayerVersion;
+    std::function<void()> onLoadAudioFile;
+    std::function<void(const juce::File&)> onDropAudioFile;
+    std::function<void(double)> onFileSeek;
+    bool isLoadMode()const{return SPECTRUMTAG_ARA||filePlayerMode;}
+    void publishFileTransport(bool playing,double seconds){transportAdvancing=playing;auditionTransport.publishExternalPosition(seconds);}
+    void resetFileView(){undoChanges.clear();redoChanges.clear();auto s=getEditorState();s.selectedPrint={};s.placementId={};s.viewValid=false;s.viewFit=true;s.viewFollow=false;setEditorState(s);stateRevision.fetch_add(1);}
+    spectrumtag::AuditionTransport& audition() {return auditionTransport;}
+    void auditionAt(double seconds) {
+        if(filePlayerMode){if(onFileSeek)onFileSeek(seconds);return;}
+#if SPECTRUMTAG_ARA
+        if(auto* view=getEditorView<spectrumtag::ara::View>())view->seek(seconds);
+        return;
+#endif
+        const auto source=recordingEngine.snapshot();
+        if(recordingEngine.isEnabled()&&source&&std::isfinite(seconds)&&std::abs(seconds)<1.e9
+            &&(transportAdvancing.load()||source->contains((int64_t)std::floor(seconds*source->sampleRate))))auditionTransport.seek(seconds);
+        else auditionTransport.requestHostFollow();
+    }
     // ===== Editor → Processor 状态镜像 =====
     struct EditorState
     {
         juce::String imagePath;
+        int palette=0;
+        bool imageVisible=true, chinese=true;
+        float uiScale=1;
+        double viewEnd=0, viewZoom=1;
+        bool viewFollow=true, viewFit=false, viewValid=false;
+        juce::String selectedPrint, placementId;
         float imgRectXNorm = 0.30f;
         float imgRectYNorm = 0.20f;
         float imgRectWNorm = 0.40f;
         float imgRectHNorm = 0.50f;
+        int spectrumHeightPx = 550;
         float imgBoxWidthPx = 600.0f;   // UI 图片框的实际像素宽度（离线导出时用于对齐 cols/duration）
         bool  hasValidValues = false;
     };
 
+    struct UserState {
+        std::vector<float> parameters;
+        EditorState editor;
+        spectrumtag::RecordingDocument document;
+#if SPECTRUMTAG_ARA
+        std::shared_ptr<const spectrumtag::ara::ViewState> ara;
+#endif
+        bool armed=false;
+    };
+    struct UserChange {UserState before,after;bool sourceChange=false;};
+    UserState captureUserState() const;
+    void commitUserChange(UserState before,UserState after,bool sourceChange=false);
+    bool undoUserChange(bool redo=false);
+    bool isRestoringUserState() const {return restoringUserState;}
+    bool canUndo() const {return !undoChanges.empty();}
+    bool canRedo() const {return !redoChanges.empty();}
+    void cancelPrint(){printRunning=false;automationPrintRequest=false;}
     void setEditorState (const EditorState& s);
     EditorState getEditorState() const;
 
@@ -167,6 +267,26 @@ private:
     };
 
     juce::AudioProcessorValueTreeState apvts;
+    spectrumtag::RecordingEngine recordingEngine{SPECTRUMTAG_ARA!=0};
+#if SPECTRUMTAG_ARA
+    juce::String araHistoryKey;
+    std::atomic<bool> araFrequencyRecallRequested{true};
+    std::atomic<int> araWrapperFrequencyScale{-1};
+    uint64_t araSelectionRevision=0,araRestoreRevision=0;
+    struct ContextHistory {std::vector<UserChange> undo,redo;};
+    std::map<juce::String,ContextHistory> araHistory;
+#endif
+    spectrumtag::AuditionTransport auditionTransport;
+    float recordingMix=0;
+    std::shared_ptr<const spectrumtag::RecordingSnapshot> playbackSnapshot,fadeFromSnapshot;
+    int renderFadeRemaining=0,renderFadeLength=1;
+    std::vector<UserChange> undoChanges,redoChanges;
+    std::shared_ptr<spectrumtag::RecordingEngine::ClearResult> pendingClear;
+    UserState beforeClear;
+    bool restoringUserState=false;
+    std::atomic<juce::uint32> lastAudioCallback {0};
+    std::atomic<bool> offlineCaptureActive {false},audioCallbackActive {false};
+
 
     // ===== Editor 状态镜像 =====
     mutable juce::SpinLock editorStateLock;
@@ -175,6 +295,15 @@ private:
     // ===== 频谱可视化：FFT 显示路径（独立，不参与音频处理）=====
     mutable juce::SpinLock spectrumLock;
     std::vector<float>     latestMagnitudes;
+    spectrumtag::SpectrumQueue spectrumQueue;
+    std::shared_ptr<spectrumtag::SpectrumHistory> spectrumHistory=std::make_shared<spectrumtag::SpectrumHistory>();
+    int displayEpoch=0;
+    std::atomic<uint64_t> spectrumClearSerial{0};
+    uint64_t audioSpectrumClearSerial=0;
+    std::atomic<int> stateRevision {0};
+    std::atomic<uint64_t> visualisedSamples { 0 };
+    std::atomic<bool> transportAdvancing { false };
+    std::vector<float> targetGainScratch, dryScratch, wetScratch;
     std::atomic<int>       displayUpdateCounter { 0 };
 
     int                             displayFftSize = 0;

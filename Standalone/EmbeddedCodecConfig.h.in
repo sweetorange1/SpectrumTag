@@ -1,0 +1,6 @@
+#pragma once
+namespace spectrumtag::standalone::embedded {
+inline constexpr const char* exeHash="@CODEC_EXE_HASH@";
+inline constexpr const char* licenseHash="@CODEC_LICENSE_HASH@";
+inline constexpr const char* noticeHash="@CODEC_NOTICE_HASH@";
+}

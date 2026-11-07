@@ -1,6 +1,8 @@
+#include "shared/TimeScale.h"
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "shared/ImageMask.h"
 #include "source/network/UpdateChecker.h"
 #include <atomic>
 #include <cmath>
@@ -10,10 +12,9 @@
 // ============================================================================
 //  SpectrumTagAudioProcessor - STFT / OLA 实现（v3）
 // ----------------------------------------------------------------------------
-//  - 未按 Print：音频完全 bypass，不执行任何 FFT/IFFT，零延迟、零开销。
-//  - 按下 Print：STFT（75% overlap，hop = N/4），每个 bin 独立查 mask、
-//    平滑增益、保留原始相位、IFFT、OLA 输出。bin 级精度 + 相位保留
-//    + 一阶增益平滑 → 彻底消除音量波动，同时保留图片高频细节。
+//  - 未按 Print：保留与 STFT 对齐的干声延迟，频谱分析继续运行。
+//  - 按下 Print：STFT（93.75% overlap，hop = N/16），每个 bin 独立查 mask、
+//    按二值化掩码修改增益、保留相位，使用 Hann WOLA 平滑重叠帧。
 //  - 显示路径：独立实数 FFT，仅写 latestMagnitudes 供 UI 瀑布图读取。
 // ============================================================================
 
@@ -26,7 +27,7 @@ namespace
             case 0: return 1024;
             case 1: return 2048;
             case 2: return 4096;
-            case 3: return 8192;
+            case 3: return 4096; // Legacy automation slot; 8192 is retired.
             default: return 4096;
         }
     }
@@ -431,11 +432,15 @@ SpectrumTagAudioProcessor::SpectrumTagAudioProcessor()
     ),
       apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
 {
+    const auto preferences=spectrumtag::Preferences::read();
+    editorState.imagePath=preferences.imagePath;
+    editorState.palette=preferences.palette;editorState.chinese=preferences.chineseTips;editorState.uiScale=preferences.uiScale;
     // 缓存 printTrigger 参数指针，后续复位/读值都走它。
     printTriggerParam = dynamic_cast<juce::AudioParameterBool*> (apvts.getParameter (ParameterIDs::printTrigger));
     lastPrintTriggerState.store (printTriggerParam != nullptr && printTriggerParam->get());
     apvts.addParameterListener (ParameterIDs::printTrigger, this);
 
+#if SPECTRUMTAG_ENABLE_NETWORK
     // 启动时延迟 5 秒检查一次更新（进程级去重，避免多实例重复触发）
     static std::atomic<bool> updateOnceFlag { false };
     if (! updateOnceFlag.exchange (true, std::memory_order_acquire))
@@ -453,6 +458,7 @@ SpectrumTagAudioProcessor::SpectrumTagAudioProcessor()
                 });
         });
     }
+#endif
 }
 
 SpectrumTagAudioProcessor::~SpectrumTagAudioProcessor()
@@ -485,10 +491,13 @@ bool SpectrumTagAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
 void SpectrumTagAudioProcessor::rebuildStft (double sampleRate, int numChannels)
 {
     const int N       = stftSize;
-    const int hop     = N / 4;
+    const int hop     = N / 16;
     const int numBins = N / 2 + 1;
 
     stftHop  = hop;
+    targetGainScratch.assign((size_t) numBins, 1.0f);
+    dryScratch.assign((size_t) numChannels, 0.0f);
+    wetScratch.assign((size_t) numChannels, 0.0f);
     stftStates.clear();
     stftStates.resize ((size_t) numChannels);
 
@@ -549,7 +558,7 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
     // ---- 3) 逐 bin 应用增益（保留原始相位）----
     // JUCE real-only 频域打包：
     //   bin0(DC)      -> fftWork[0] (实部), 虚部固定为 0
-    //   binN/2(Nyq)   -> fftWork[1] (实部), 虚部固定为 0
+    //   binN/2(Nyq)   -> fftWork[N] (实部), 虚部固定为 0
     //   bin1..N/2-1   -> fftWork[2k], fftWork[2k+1]
 
     // k = 0 (DC)
@@ -580,7 +589,7 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
         const float target = targetBinGains[(size_t) kNyq];
         float& smooth = st.smoothedGains[(size_t) kNyq];
         smooth += (target - smooth) * gainSmoothAlpha;
-        st.fftWork[1] *= smooth;
+        st.fftWork[(size_t) N] *= smooth;
     }
 
     st.lastSmoothGainProbe = st.smoothedGains[(size_t) probeBin];
@@ -590,7 +599,7 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
     }
     else if (probeBin == numBins - 1)
     {
-        st.lastFftMagProbe = std::abs (st.fftWork[1]);
+        st.lastFftMagProbe = std::abs (st.fftWork[(size_t) N]);
     }
     else
     {
@@ -630,24 +639,22 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
     //
     //  前 N/hop 帧是预热期；从第 N/hop 帧起每帧放出 hop 个稳态归一化的样本。
     ++st.frameCount;
-    if (st.frameCount >= N / hop)
+    // Finalise and clear every hop, including negative-time startup frames. Keeping
+    // their normalisation weights until the ring wraps attenuates real input later.
+    const bool ready = st.frameCount >= N / hop;
+    for (int i = 0; i < hop; ++i)
     {
-        const int fifoStart = frameStart;          // ← 修正：必须从 frameStart 开始
-        constexpr float kNormEps = 1.0e-8f;
-        for (int i = 0; i < hop; ++i)
+        const int pos = (frameStart + i) % N;
+        const float norm = st.olaNormRing[(size_t) pos];
+        if (ready)
         {
-            const int pos = (fifoStart + i) % N;
-            const float norm = st.olaNormRing[(size_t) pos];
-            const float y = (norm > kNormEps)
-                ? (st.outputRing[(size_t) pos] / norm)
-                : st.outputRing[(size_t) pos];
-
+            const float y = norm > 1.0e-8f ? st.outputRing[(size_t) pos] / norm : 0.0f;
             st.outFifo[(size_t) st.outFifoWrite] = y;
-            st.outputRing[(size_t) pos]   = 0.0f;
-            st.olaNormRing[(size_t) pos]  = 0.0f;
             st.outFifoWrite = (st.outFifoWrite + 1) % (N * 2);
             ++st.outFifoCount;
         }
+        st.outputRing[(size_t) pos] = 0.0f;
+        st.olaNormRing[(size_t) pos] = 0.0f;
     }
 
     st.lastIfftProbe = st.fftWork[(size_t) juce::jlimit (0, N - 1, N / 2)];
@@ -661,23 +668,28 @@ void SpectrumTagAudioProcessor::processStftFrame (int ch,
 // ============================================================================
 void SpectrumTagAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+#if SPECTRUMTAG_ARA
+    setLatencySamples(0);auditionTransport.reset();transportAdvancing=false;
+    prepareToPlayForARA(sampleRate,samplesPerBlock,getMainBusNumOutputChannels(),getProcessingPrecision());return;
+#endif
     juce::ignoreUnused (samplesPerBlock);
+    if(offlineCaptureActive.exchange(false)){recordingEngine.setArmed(false);cancelPrint();}
 
     const int numCh = juce::jmax (getTotalNumInputChannels(), getTotalNumOutputChannels());
-    const int scale = (int) *apvts.getRawParameterValue (ParameterIDs::fftScale);
+    const int scale = getFrequencyScale();
     currentScaleMode = scale;
 
     // ---- STFT（音频处理路径）----
     const int stftSz = fftChoiceToSize (
         (int) *apvts.getRawParameterValue (ParameterIDs::fftSize));
     stftSize = stftSz;
-    stftHop  = stftSz / 4;
+    stftHop  = stftSz / 16;
     rebuildStft (sampleRate, numCh);
 
     // ---- 显示用 FFT（独立路径）----
     const int dispSize = stftSz;   // 显示与 STFT 共用同一尺寸
     displayFftSize = dispSize;
-    displayHopSize = dispSize / 2;
+    displayHopSize = dispSize / 8;
     const int order = (int) std::round (std::log2 ((double) dispSize));
     displayFft = std::make_unique<juce::dsp::FFT> (order);
 
@@ -706,6 +718,10 @@ void SpectrumTagAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     dryWetFadeSamplesRemaining = 0;
     dryWetFadeTotalSamples = juce::jmax (1, (int) std::round (0.2 * sampleRate)); // 200ms，覆盖 OLA 8 帧预热期
     printFadeDelaySamples = 0;
+    visualisedSamples.store(0);
+    auditionTransport.reset(); recordingMix=0;renderFadeRemaining=0;fadeFromSnapshot.reset();playbackSnapshot.reset();renderFadeLength=juce::jmax(1,juce::roundToInt(sampleRate*.025));
+    ++displayEpoch;
+    transportAdvancing.store(false);
 
     // block 级日志：跨 block 衔接样本初始化（每通道一份）
     lastBlockTailSamplePre.assign  ((size_t) juce::jmax (1, numCh), 0.0f);
@@ -713,13 +729,37 @@ void SpectrumTagAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     blockCounter = 0;
 }
 
-void SpectrumTagAudioProcessor::releaseResources() {}
+void SpectrumTagAudioProcessor::releaseResources() {
+#if SPECTRUMTAG_ARA
+    releaseResourcesForARA();
+#endif
+    // Hosts may suspend immediately after freeze, without a stopped processBlock.
+    // An armed-but-not-yet-started pass survives suspension before freeze begins.
+    if(offlineCaptureActive.exchange(false)){recordingEngine.setArmed(false);cancelPrint();}
+    transportAdvancing=false;auditionTransport.requestHostFollow();
+}
 
 // ============================================================================
 //  processBlock：bypass（非 Print）/ STFT+OLA（Print 中）
 // ============================================================================
 void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
+    audioCallbackActive=true;
+    struct CallbackExit {std::atomic<bool>& active;std::atomic<juce::uint32>& last;~CallbackExit(){last=juce::Time::getMillisecondCounter();active=false;}} callbackExit{audioCallbackActive,lastAudioCallback};
+    lastAudioCallback.store(juce::Time::getMillisecondCounter(),std::memory_order_relaxed);
+#if SPECTRUMTAG_ARA
+    juce::ScopedNoDenormals araNoDenormals;
+    const auto position=getPlayHead()?getPlayHead()->getPosition().orFallback(juce::AudioPlayHead::PositionInfo{}):juce::AudioPlayHead::PositionInfo{};
+    double time=0;bool hasTime=false;
+    if(auto s=position.getTimeInSamples()){time=*s/juce::jmax(1.,getSampleRate());hasTime=true;}
+    else if(auto s=position.getTimeInSeconds()){time=*s;hasTime=true;}
+    transportAdvancing=position.getIsPlaying();
+    auditionTransport.advance(position.getIsPlaying(),hasTime,time,buffer.getNumSamples(),getSampleRate());
+    if(isBoundToARA())processBlockForARA(buffer,isRealtime(),position);
+    return;
+#endif
+    if(!isNonRealtime()&&offlineCaptureActive.exchange(false)){recordingEngine.setArmed(false);cancelPrint();}
+    if(isNonRealtime()&&recordingEngine.isArmed())offlineCaptureActive=true;
     juce::ScopedNoDenormals noDenormals;
 
     const auto totalNumInputChannels  = getTotalNumInputChannels();
@@ -731,6 +771,24 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     const int numCh    = juce::jmin (totalNumInputChannels, (int) stftStates.size());
     const int numSamps = buffer.getNumSamples();
+    bool playing = true,hasHostTime=false;
+    double hostTime=0;
+    if (auto* head = getPlayHead())
+        if (auto position = head->getPosition()) {
+            playing=position->getIsPlaying();
+            if(auto samples=position->getTimeInSamples()){hostTime=*samples/juce::jmax(1.0,getSampleRate());hasHostTime=true;}
+            else if(auto seconds=position->getTimeInSeconds()){hostTime=*seconds;hasHostTime=std::isfinite(hostTime);}
+        }
+    if (isNonRealtime()) playing = true;
+    const double auditionTime=auditionTransport.advance(playing,hasHostTime,hostTime,numSamps,getSampleRate());
+    if(playing)recordingEngine.capture(buffer,auditionTransport.hostPosition(),getSampleRate(),isNonRealtime());
+    recordingEngine.setDisplayFft(stftSize);
+    const bool wasPlaying=transportAdvancing.exchange(playing,std::memory_order_acq_rel);
+    if(!playing){
+        if(wasPlaying||!recordingEngine.isEnabled()){printRunning.store(false);automationPrintRequest.store(false);}
+        if(wasPlaying)recordingEngine.setArmed(false);
+    }
+
 
     // -------------------------------------------------------------------
     //  Print Trigger（自动化）—— sample-clock 加载抑制窗口扣减
@@ -825,22 +883,22 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     }
 
     // ---- 1) 检查参数变化 ----
-    const int desiredScale = (int) *apvts.getRawParameterValue (ParameterIDs::fftScale);
+    const int desiredScale = getFrequencyScale();
     if (desiredScale != currentScaleMode)
         currentScaleMode = desiredScale;
 
     const int desiredSize = fftChoiceToSize (
         (int) *apvts.getRawParameterValue (ParameterIDs::fftSize));
-    if (desiredSize != stftSize && ! printActive)
+    if (desiredSize != stftSize && (! printActive || (! prevPrintActive && dryWetMix <= 1.0e-4f)))
     {
         // 非 Print 期间才重建 STFT，避免 mid-print 爆音
         stftSize = desiredSize;
-        stftHop  = desiredSize / 4;
+        stftHop  = desiredSize / 16;
         rebuildStft (sr, numCh);
 
         // 同步显示 FFT
         displayFftSize = desiredSize;
-        displayHopSize = desiredSize / 2;
+        displayHopSize = desiredSize / 8;
         const int order = (int) std::round (std::log2 ((double) desiredSize));
         displayFft = std::make_unique<juce::dsp::FFT> (order);
         displayWindow.assign ((size_t) desiredSize, 0.0f);
@@ -876,16 +934,17 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     const int numBins = N / 2 + 1;
 
     // 增益平滑参数（Print 和非 Print 都有效，但非 Print 时 gain 恒为 1.0）
-    const float frameSeconds = (float) hop / juce::jmax (1.0, sr);
-    const float smoothAlpha  = 1.0f - std::exp (- frameSeconds / 0.010f);
+    // Dense Hann WOLA already crossfades frames; a second temporal low-pass erases small features.
+    const float smoothAlpha = 1.0f;
 
     const float ratio     = *apvts.getRawParameterValue (ParameterIDs::amplitudeRatio);
     const bool  invert    = *apvts.getRawParameterValue (ParameterIDs::invert) > 0.5f;
     const float ratioGain = ratioToGain (ratio);
 
-    std::vector<float> targetBinGains ((size_t) numBins, 1.0f);
-    std::vector<float> delayedDrySamples ((size_t) juce::jmax (1, numCh), 0.0f);
-    std::vector<float> wetSamples ((size_t) juce::jmax (1, numCh), 0.0f);
+    auto& targetBinGains = targetGainScratch;
+    auto& delayedDrySamples = dryScratch;
+    auto& wetSamples = wetScratch;
+    std::fill(targetBinGains.begin(), targetBinGains.end(), 1.0f);
 
     // dry 与 wet 保持同一延迟基准（与 STFT/OLA 群延迟 stftSize-1 一致），避免切换时相位/时序错位
     const int dryDelaySamples = N - 1;
@@ -895,7 +954,7 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     {
         int usedMaskCol = -1;
         bool printStateFlipped = false;
-        const bool requestedPrint = printRunning.load();
+        const bool requestedPrint = printRunning.load() && playing;
         if (requestedPrint != prevPrintActive)
         {
             prevPrintActive = requestedPrint;
@@ -949,7 +1008,7 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                     std::fill (st.outFifo.begin(),         st.outFifo.end(),         0.0f);
                     std::fill (st.smoothedGains.begin(),   st.smoothedGains.end(),   1.0f);
                     st.frameCount   = 0;
-                    st.accumCount   = 0;
+                    // Keep the completed hop; resetting before subtracting it skips the next frame.
                     st.outFifoWrite = 0;
                     st.outFifoRead  = 0;
                     st.outFifoCount = 0;
@@ -1009,36 +1068,6 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                                                           (int) std::floor (printColCursorD));
                         usedMaskCol = maskCol;
 
-                        int activeRowMin = printMaskRows;
-                        int activeRowMax = -1;
-                        for (int row = 0; row < printMaskRows; ++row)
-                        {
-                            const float m = printMask[(size_t) (row * printMaskCols + maskCol)];
-                            if (m > 0.5f)
-                            {
-                                activeRowMin = juce::jmin (activeRowMin, row);
-                                activeRowMax = juce::jmax (activeRowMax, row);
-                            }
-                        }
-
-                        const bool hasActiveRows = (activeRowMax >= activeRowMin);
-                        const float binHz = (float) sr / (float) juce::jmax (1, N);
-
-                        float activeLowHz = fLow;
-                        float activeHighHz = fHigh;
-                        if (hasActiveRows && printMaskRows > 1)
-                        {
-                            const float rowToNorm = 1.0f / (float) (printMaskRows - 1);
-                            activeLowHz  = fLow + ((float) activeRowMin * rowToNorm) * denom;
-                            activeHighHz = fLow + ((float) activeRowMax * rowToNorm) * denom;
-                        }
-
-                        // 保护带：黑色形状上下限之外强制旁通；边缘给一个很陡的过渡，抑制误挖孔竖线。
-                        const float protectPadHz = juce::jmax (2.0f * binHz, 0.005f * denom);
-                        const float edgeSlopeHz  = juce::jmax (1.5f * binHz, 0.002f * denom);
-                        const float protectLowHz = activeLowHz  - protectPadHz;
-                        const float protectHighHz = activeHighHz + protectPadHz;
-
                         for (int k = 0; k < numBins; ++k)
                         {
                             const float hz = (float) k / (float) (N / 2) * maxHz;
@@ -1050,46 +1079,16 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
                             const float norm = (hz - fLow) / denom;
                             const int row = juce::jlimit (0, printMaskRows - 1,
-                                                          (int) std::floor (norm * (printMaskRows - 1)));
+                                                          juce::roundToInt (norm * (printMaskRows - 1)));
                             const float m = printMask[(size_t) (row * printMaskCols + maskCol)];
                             float g = invert
                                 ? juce::jmap (m, ratioGain, 1.0f)
                                 : juce::jmap (m, 1.0f,      ratioGain);
 
-                            if (hasActiveRows)
-                            {
-                                if (hz < protectLowHz || hz > protectHighHz)
-                                {
-                                    g = 1.0f;
-                                }
-                                else
-                                {
-                                    const float loEdge = juce::jlimit (0.0f, 1.0f, (hz - protectLowHz) / edgeSlopeHz);
-                                    const float hiEdge = juce::jlimit (0.0f, 1.0f, (protectHighHz - hz) / edgeSlopeHz);
-                                    const float edgeKeep = juce::jmin (loEdge, hiEdge);
-                                    g = 1.0f + (g - 1.0f) * edgeKeep;
-                                }
-                            }
-
                             targetBinGains[(size_t) k] = g;
                         }
 
-                        // 频域轻度平滑（仅对掩码覆盖频段），抑制列间量化造成的孤立窄带竖线。
-                        {
-                            std::vector<float> filtered = targetBinGains;
-                            for (int k = 1; k < numBins - 1; ++k)
-                            {
-                                const float hz = (float) k / (float) (N / 2) * maxHz;
-                                if (hz < fLow || hz > fHigh)
-                                    continue;
-
-                                filtered[(size_t) k] = 0.2f * targetBinGains[(size_t) (k - 1)]
-                                                     + 0.6f * targetBinGains[(size_t) k]
-                                                     + 0.2f * targetBinGains[(size_t) (k + 1)];
-                            }
-                            targetBinGains.swap (filtered);
-                        }
-
+                        // Preserve narrow strokes: do not blur the gain mask across neighbouring bins.
                         double gSum = 0.0;
                         gainMin = targetBinGains[0];
                         gainMax = targetBinGains[0];
@@ -1105,8 +1104,7 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                         printColCursorD += printColPerSample * (double) hop;
                         if (printColCursorD >= (double) printMaskCols)
                         {
-                            printRunning.store (false);
-                            std::fill (targetBinGains.begin(), targetBinGains.end(), 1.0f);
+                            printRunning.store (false); // Keep the last column for this frame.
                         }
                     }
                 }
@@ -1307,8 +1305,50 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     }
     ++blockCounter;
 
+    // Only host-aligned gaps can use live input. Local audition has no audio
+    // for an uncaptured time, so it stays silent until the next captured segment.
+    auto recording=recordingEngine.isEnabled()?recordingEngine.snapshot():nullptr;
+    if(recording!=playbackSnapshot){
+        const bool sameSource=recording&&playbackSnapshot&&recording->sourceId==playbackSnapshot->sourceId;
+        if(sameSource&&recording->rendered!=playbackSnapshot->rendered){fadeFromSnapshot=playbackSnapshot;renderFadeRemaining=renderFadeLength;}
+        else if(!sameSource){fadeFromSnapshot.reset();renderFadeRemaining=0;}
+        playbackSnapshot=recording;
+    }
+    if(recording){
+        const double rate=juce::jmax(1.0,getSampleRate());
+        const bool localAudition=playing&&auditionTransport.isLocal();
+        const bool useRecording=playing&&(!recordingEngine.isArmed()||localAudition);
+        for(int i=0;i<numSamps;++i){
+            const double source=(auditionTime+(i-getLatencySamples())/rate)*recording->sampleRate;
+            const auto index=(int64_t)std::floor(source);const float fraction=(float)(source-index);
+            const bool captured=recording->contains(index);
+            const float target=useRecording&&(captured||localAudition)?1.0f:0.0f;
+            recordingMix+=juce::jlimit(-1.0f/128,1.0f/128,target-recordingMix);
+            const float mix=renderFadeRemaining>0?1.0f-(float)renderFadeRemaining/renderFadeLength:1.0f;
+            for(int c=0;c<numCh;++c){
+                const auto read=[&](const auto& snap){const float a=snap->sample(c,index);return a+(snap->sample(c,index+1)-a)*fraction;};
+                const float live=localAudition?0.f:buffer.getSample(c,i);
+                float cached=captured?read(recording):live;
+                if(captured&&renderFadeRemaining>0&&fadeFromSnapshot&&fadeFromSnapshot->contains(index)){
+                    const float old=read(fadeFromSnapshot);cached=old+(cached-old)*mix;
+                }
+                buffer.setSample(c,i,live+(cached-live)*recordingMix);
+            }
+            if(renderFadeRemaining>0)--renderFadeRemaining;
+        }
+        if(renderFadeRemaining==0)fadeFromSnapshot.reset();
+    }else recordingMix=0;
+
+    if (playing) visualisedSamples.fetch_add((uint64_t) numSamps, std::memory_order_release);
+
+    // Clear only the display analysis window, never the audio/Print delay lines.
+    const auto clearSerial=spectrumClearSerial.load();
+    if(clearSerial!=audioSpectrumClearSerial){
+        audioSpectrumClearSerial=clearSerial;displayRingWritePos=displaySamplesAccum=0;
+        std::fill(displayInputRing.begin(),displayInputRing.end(),0.f);
+    }
     // ---- 显示用 FFT（读处理后的 buffer）----
-    if (displayFft != nullptr && displayFftSize > 0)
+    if (playing && displayFft != nullptr && displayFftSize > 0)
     {
         const int dN = displayFftSize;
         const int dHop = displayHopSize;
@@ -1360,7 +1400,18 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                 }
 
                 // k=N/2 (Nyquist)
-                mags[(size_t) (half - 1)] = std::abs (displayFftWork[1]) * displayMagNorm;
+                mags[(size_t) (half - 1)] = std::abs (displayFftWork[(size_t) dN]) * displayMagNorm;
+                if(editorAttachCount.load(std::memory_order_relaxed)>0) {
+                    spectrumtag::SpectrumFrame frame;
+                    frame.time=((double)visualisedSamples.load() - numSamps + i + 1 - dN*0.5)/getSampleRate();
+                    frame.sampleRate=getSampleRate();frame.interval=(double)dHop/getSampleRate();
+                    frame.bins=juce::jmin(2049,half);frame.epoch=displayEpoch;frame.clearSerial=audioSpectrumClearSerial;
+                    for(int k=0;k<frame.bins;++k) {
+                        const float db=juce::Decibels::gainToDecibels(juce::jmax(1.0e-9f,mags[(size_t)k]));
+                        frame.level[(size_t)k]=(juce::uint8)juce::jlimit(0,255,juce::roundToInt((db+96.0f)*255.0f/96.0f));
+                    }
+                    spectrumQueue.push(frame);
+                }
                 {
                     const juce::SpinLock::ScopedLockType sl (spectrumLock);
                     latestMagnitudes = std::move (mags);
@@ -1368,6 +1419,18 @@ void SpectrumTagAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                 }
             }
         }
+    }
+}
+
+void SpectrumTagAudioProcessor::pollTransportTimeout()
+{
+    if(filePlayerMode)return;
+    if(audioCallbackActive.load()||!transportAdvancing.load())return;
+    const auto last=lastAudioCallback.load();
+    const auto limit=(juce::uint32)juce::jmax(1000.0,4000.0*getBlockSize()/juce::jmax(1.0,getSampleRate()));
+    if(last!=0&&juce::Time::getMillisecondCounter()-last>limit){
+        transportAdvancing=false;printRunning=false;automationPrintRequest=false;offlineCaptureActive=false;
+        recordingEngine.setArmed(false);auditionTransport.requestHostFollow();
     }
 }
 
@@ -1419,6 +1482,11 @@ void SpectrumTagAudioProcessor::startPrint (std::vector<float>&& maskData,
                                              float freqLowNorm, float freqHighNorm,
                                              double durationSeconds)
 {
+    if (maskRows <= 0 || maskCols <= 0 || maskRows > 8193 || maskCols > 4096
+        || maskData.size() != (size_t) maskRows * (size_t) maskCols
+        || !std::isfinite(durationSeconds) || durationSeconds <= 0
+        || !std::isfinite(freqLowNorm) || !std::isfinite(freqHighNorm) || freqLowNorm >= freqHighNorm)
+        return;
     const juce::SpinLock::ScopedLockType sl (printLock);
     printMask         = std::move (maskData);
     printMaskRows     = maskRows;
@@ -1458,11 +1526,23 @@ void SpectrumTagAudioProcessor::startPrint (std::vector<float>&& maskData,
 void SpectrumTagAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     juce::ValueTree tree ("SpectrumTagState");
-    tree.setProperty ("version", 1, nullptr);
+    tree.setProperty ("version", 6, nullptr);
+#if !SPECTRUMTAG_ARA
+    tree.setProperty("recordMode",recordingEngine.isEnabled(),nullptr);
+    tree.setProperty("recordingFile",recordingEngine.save(),nullptr);
+#endif
 
     tree.appendChild (apvts.copyState(), nullptr);
 
     EditorState s = getEditorState();
+    tree.setProperty("palette",s.palette,nullptr);
+    tree.setProperty("imageVisible",s.imageVisible,nullptr);
+    tree.setProperty("languageChinese",s.chinese,nullptr);tree.setProperty("uiScale",s.uiScale,nullptr);
+    tree.setProperty("viewEnd",s.viewEnd,nullptr);tree.setProperty("viewZoom",s.viewZoom,nullptr);
+    tree.setProperty("viewFollow",s.viewFollow,nullptr);tree.setProperty("viewFit",s.viewFit,nullptr);tree.setProperty("viewValid",s.viewValid,nullptr);
+    tree.setProperty("selectedPrint",s.selectedPrint,nullptr);tree.setProperty("placementId",s.placementId,nullptr);
+    tree.setProperty ("imgBoxWidthPx", s.imgBoxWidthPx, nullptr);
+    tree.setProperty("spectrumHeightPx",s.spectrumHeightPx,nullptr);
     tree.setProperty ("imagePath",     s.imagePath,     nullptr);
     tree.setProperty ("imgRectXNorm",  s.imgRectXNorm,  nullptr);
     tree.setProperty ("imgRectYNorm",  s.imgRectYNorm,  nullptr);
@@ -1487,20 +1567,56 @@ void SpectrumTagAudioProcessor::setStateInformation (const void* data, int sizeI
         if (tree.getNumChildren() > 0)
         {
             auto paramsTree = tree.getChild (0);
-            if (paramsTree.hasType ("PARAMETERS"))
+            if (paramsTree.hasType ("PARAMETERS")) {
+                // A reused instance loading a pre-1.4.9 project must leave insight mode.
+                if(!paramsTree.getChildWithProperty("id",ParameterIDs::frequencyPreset).isValid()) {
+                    juce::ValueTree choice("PARAM");choice.setProperty("id",ParameterIDs::frequencyPreset,nullptr);
+                    choice.setProperty("value",0.f,nullptr);paramsTree.appendChild(choice,nullptr);
+                }
+                if ((int)tree.getProperty("version",0) < 6) {
+                    auto speedNode=paramsTree.getChildWithProperty("id",ParameterIDs::speed);
+                    const int preset=(int)paramsTree.getChildWithProperty("id",ParameterIDs::frequencyPreset).getProperty("value",0);
+                    float speed=(float)speedNode.getProperty("value",1.f);
+                    double zoom=(double)tree.getProperty("viewZoom",1.0);
+                    if(!std::isfinite(speed)||speed<.1f||speed>4) speed=1;
+                    if(!std::isfinite(zoom)||zoom<=0) zoom=1;
+                    const int height=juce::jlimit(1,4000,(int)tree.getProperty("spectrumHeightPx",550));
+                    spectrumtag::timing::migrateLegacy(preset+1,height,speed,zoom);
+                    if(speedNode.isValid())speedNode.setProperty("value",speed,nullptr);
+                    tree.setProperty("viewZoom",zoom,nullptr);
+                }
                 apvts.replaceState (paramsTree);
+#if SPECTRUMTAG_ARA
+                araWrapperFrequencyScale=getFrequencyScale();araFrequencyRecallRequested=true;
+#endif
+            }
         }
 
+        undoChanges.clear();redoChanges.clear();
+#if !SPECTRUMTAG_ARA
+        recordingEngine.restore(tree.getProperty("recordingFile").toString(),(bool)tree.getProperty("recordMode",false));
+#endif
         EditorState s;
+        s.palette=juce::jlimit(0,7,(int)tree.getProperty("palette",0));
+        s.imageVisible=(bool)tree.getProperty("imageVisible",true);
+        const auto preferences=spectrumtag::Preferences::read();
+        s.chinese=(bool)tree.getProperty("languageChinese",preferences.chineseTips);s.uiScale=juce::jlimit(.75f,2.5f,(float)tree.getProperty("uiScale",preferences.uiScale));
+        s.viewEnd=(double)tree.getProperty("viewEnd",0.0);s.viewZoom=(double)tree.getProperty("viewZoom",1.0);
+        if(!std::isfinite(s.viewEnd))s.viewEnd=0;if(!std::isfinite(s.viewZoom)||s.viewZoom<=0)s.viewZoom=1;
+        s.viewFollow=(bool)tree.getProperty("viewFollow",true);s.viewFit=(bool)tree.getProperty("viewFit",false);s.viewValid=(bool)tree.getProperty("viewValid",false);
+        s.selectedPrint=tree.getProperty("selectedPrint").toString();s.placementId=tree.getProperty("placementId").toString();
         s.imagePath     = tree.getProperty ("imagePath",     s.imagePath).toString();
         s.imgRectXNorm  = (float) tree.getProperty ("imgRectXNorm",  s.imgRectXNorm);
         s.imgRectYNorm  = (float) tree.getProperty ("imgRectYNorm",  s.imgRectYNorm);
         s.imgRectWNorm  = (float) tree.getProperty ("imgRectWNorm",  s.imgRectWNorm);
         s.imgRectHNorm  = (float) tree.getProperty ("imgRectHNorm",  s.imgRectHNorm);
+        s.imgBoxWidthPx = (float)tree.getProperty("imgBoxWidthPx", s.imgBoxWidthPx);
+        s.spectrumHeightPx=juce::jlimit(1,4000,(int)tree.getProperty("spectrumHeightPx",550));
         s.hasValidValues = true;
 
         const juce::SpinLock::ScopedLockType sl (editorStateLock);
         editorState = s;
+        stateRevision.fetch_add(1);
     }
 
     // 工程加载后的伪边沿抑制：在接下来的 ~100ms 等量样本内忽略所有 trigger 上升沿，
@@ -1582,113 +1698,48 @@ bool SpectrumTagAudioProcessor::triggerPrintFromAutomationInternal()
     juce::Image src = juce::ImageFileFormat::loadFrom (imgFile);
     if (! src.isValid()) return false;
 
-    // 2) 与 ImageBoxComponent::preprocessImage 完全一致的二值化逻辑
-    //    （独立复现，避免 Processor 反向依赖 Editor）
-    const int maxDim = 2048;
-    int w = src.getWidth();
-    int h = src.getHeight();
-    if (juce::jmax (w, h) > maxDim)
-    {
-        const float scale = (float) maxDim / (float) juce::jmax (w, h);
-        w = juce::jmax (1, juce::roundToInt (w * scale));
-        h = juce::jmax (1, juce::roundToInt (h * scale));
-    }
-    juce::Image scaled (juce::Image::ARGB, w, h, true);
-    {
-        juce::Graphics g (scaled);
-        g.drawImage (src, 0.0f, 0.0f, (float) w, (float) h,
-                     0, 0, src.getWidth(), src.getHeight());
-    }
-
-    juce::Image::BitmapData srcBmp (scaled, juce::Image::BitmapData::readOnly);
-    int countTransparent = 0;
-    int countOpaque      = 0;
-    double sumBrightness = 0.0;
-    const int totalPx    = w * h;
-    for (int yy = 0; yy < h; ++yy)
-        for (int xx = 0; xx < w; ++xx)
-        {
-            const auto px = srcBmp.getPixelColour (xx, yy);
-            if (px.getAlpha() < 128) ++countTransparent; else ++countOpaque;
-            sumBrightness += px.getBrightness();
-        }
-    const bool useAlphaMode    = (countTransparent > totalPx / 20);
-    const float meanBrightness = (float) (sumBrightness / juce::jmax (1, totalPx));
-
-    juce::Image binary (juce::Image::ARGB, w, h, true);
-    {
-        juce::Image::BitmapData dst (binary, juce::Image::BitmapData::readWrite);
-        for (int yy = 0; yy < h; ++yy)
-            for (int xx = 0; xx < w; ++xx)
-            {
-                const auto px = srcBmp.getPixelColour (xx, yy);
-                const bool inShape = useAlphaMode
-                    ? (px.getAlpha() >= 128)
-                    : (px.getBrightness() < meanBrightness);
-                dst.setPixelColour (xx, yy, inShape ? juce::Colour (0xff111111)
-                                                    : juce::Colour (0x00000000));
-            }
-    }
+    const spectrumtag::image::Settings conversion {
+        (int)*apvts.getRawParameterValue(ParameterIDs::imageMode),
+        *apvts.getRawParameterValue(ParameterIDs::imageAmount) };
+    auto binary = spectrumtag::image::binarize(src, conversion);
 
     // 3) 计算 rows / cols / 频率范围 / duration
     const int fftSizeIdx = (int) *apvts.getRawParameterValue (ParameterIDs::fftSize);
     const int fftSize    = (fftSizeIdx == 0 ? 1024 : fftSizeIdx == 1 ? 2048
-                          : fftSizeIdx == 2 ? 4096 : 8192);
+                          : 4096);
     const int rows = fftSize / 2 + 1;
 
     // 离线/无 UI 场景下没有真实组件像素宽度。
     // 从 EditorState 镜像中读取 UI 持久化时保存的实际 boxWidthPx，
     // 使离线路径的 cols 和 duration 与预览路径完全一致，
-    // 从而 printColPerSample = 30*speedPxPerTick/sr 在两边完全相同。
+    // Editor-closed Print uses the same mode-independent clock as the viewport.
     const float boxWidthPx = juce::jmax (1.0f, state.imgBoxWidthPx);
     int cols = juce::jmax (4, juce::jmin (4096, juce::roundToInt (boxWidthPx)));
 
     const float speed = (float) *apvts.getRawParameterValue (ParameterIDs::speed);
-    const int speedPxPerTick = juce::jmax (1, juce::roundToInt (speed * 2.0f));
-    const double seconds = (double) boxWidthPx / juce::jmax (1.0, 30.0 * (double) speedPxPerTick);
+    const double seconds = (double)boxWidthPx / (spectrumtag::timing::pixelsPerSecond * speed * (state.viewValid?juce::jmax(.000001,state.viewZoom):1.));
 
-    // 频率范围：把 imgRect Y 区间通过 yNorm→Hz 反推。这里用线性映射的实现就够了——
-    //  log/linear 仅影响显示坐标系，对最终 STFT 处理没区别（Processor 端按 lowNorm/highNorm
-    //  两个比例值在 [0, Nyquist] 区间反推 bin 范围）。
+    // Use the same Hz mapping and image warp as the editor, also with no UI open.
     constexpr float kMinDisplayHz = 20.0f;
-    constexpr float kMaxDisplayHz = 22000.0f;
+    const float ranges[]={20000,24000,22050,48000};
+    const float kMaxDisplayHz=ranges[juce::jlimit(0,3,(int)*apvts.getRawParameterValue(ParameterIDs::frequencyRange))];
     const double sr = getSampleRate() > 1000.0 ? getSampleRate() : 44100.0;
     const float maxHz = (float) (sr * 0.5);
     const float topHz = juce::jmax (kMinDisplayHz + 1.0f, juce::jmin (kMaxDisplayHz, maxHz));
 
     const float yTop = juce::jlimit (0.0f, 1.0f, state.imgRectYNorm);
     const float yBot = juce::jlimit (0.0f, 1.0f, state.imgRectYNorm + state.imgRectHNorm);
-    auto yNormToHzLinear = [&] (float y) {
-        const float t = juce::jlimit (0.0f, 1.0f, 1.0f - y);
-        return kMinDisplayHz + t * (topHz - kMinDisplayHz);
-    };
-    const float fHz_top    = yNormToHzLinear (yTop);
-    const float fHz_bottom = yNormToHzLinear (yBot);
+    const int scale=getFrequencyScale();
+    auto yToHz = [&] (float y) { return spectrumtag::frequency::fromY(y,topHz,scale); };
+    const float fHz_top = yToHz(yTop);
+    const float fHz_bottom = yToHz(yBot);
     const float fLow  = juce::jmin (fHz_top, fHz_bottom);
     const float fHigh = juce::jmax (fHz_top, fHz_bottom);
     const float lowNorm  = juce::jlimit (0.0f, 1.0f, fLow  / juce::jmax (1.0f, maxHz));
     const float highNorm = juce::jlimit (0.0f, 1.0f, fHigh / juce::jmax (1.0f, maxHz));
 
-    // 4) 把 binary 渲成 mask（与 ImageBoxComponent::generateMask 完全一致）
-    std::vector<float> mask ((size_t) (rows * cols), 0.0f);
-    {
-        juce::Image::BitmapData bmp (binary, juce::Image::BitmapData::readOnly);
-        for (int row = 0; row < rows; ++row)
-        {
-            const float ny = rows > 1 ? (float) (rows - 1 - row) / (float) (rows - 1) : 0.0f;
-            const int   imgY = juce::jlimit (0, h - 1, juce::roundToInt (ny * (h - 1)));
-            for (int col = 0; col < cols; ++col)
-            {
-                const float nx = cols > 1 ? (float) col / (float) (cols - 1) : 0.0f;
-                const int   imgX = juce::jlimit (0, w - 1, juce::roundToInt (nx * (w - 1)));
-                const auto px = bmp.getPixelColour (imgX, imgY);
-                mask[(size_t) (row * cols + col)] = (px.getAlpha() > 128) ? 1.0f : 0.0f;
-            }
-        }
-    }
+    auto mask = spectrumtag::image::rasterize(binary, rows, cols, scale, fLow, fHigh);
 
-    // 5) 标记数学日志（与 UI 路径行为一致）并启动
-    markPrintClickAndBeginMathLog();
     startPrint (std::move (mask), rows, cols, lowNorm, highNorm, seconds);
     return true;
 }
@@ -1700,12 +1751,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumTagAudioProcessor::c
 
     layout.add (std::make_unique<juce::AudioParameterChoice>(
         ParameterIDs::fftSize, "FFT Size",
-        juce::StringArray { "1024", "2048", "4096", "8192" },
+        juce::StringArray { "1024", "2048", "4096", "4096 (legacy)" },
         2));
 
     layout.add (std::make_unique<juce::AudioParameterChoice>(
         ParameterIDs::fftScale, "FFT Scale",
-        juce::StringArray { "linear", "mel" },
+        juce::StringArray { "linear", "log" },
         0));
 
     layout.add (std::make_unique<juce::AudioParameterFloat>(
@@ -1713,16 +1764,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumTagAudioProcessor::c
         juce::NormalisableRange<float>(0.1f, 4.0f, 0.0f, 0.5f),
         1.0f,
         juce::AudioParameterFloatAttributes()
-            .withStringFromValueFunction ([] (float v, int) { return juce::String (v, 2) + "x"; })));
+            .withStringFromValueFunction ([] (float v, int) { return juce::String (v, 3) + "x"; })));
 
     layout.add (std::make_unique<juce::AudioParameterFloat>(
         ParameterIDs::amplitudeRatio, "Amplitude Ratio",
-        juce::NormalisableRange<float>(0.0f, 1.5f, 0.0f),
+        juce::NormalisableRange<float>(0.0f, 0.33f, 0.001f),
         0.0f,
         juce::AudioParameterFloatAttributes()
             .withStringFromValueFunction ([] (float v, int) {
-                return juce::String (juce::roundToInt (v * 100.0f)) + "%";
-            })));
+                return juce::String (v * 100.0f, 1) + "%";
+            }).withValueFromStringFunction([](const juce::String& text){return juce::jlimit(0.0f,.33f,text.getFloatValue()/100); })));
 
     layout.add (std::make_unique<juce::AudioParameterBool>(
         ParameterIDs::invert, "Invert", false));
@@ -1732,6 +1783,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumTagAudioProcessor::c
     layout.add (std::make_unique<juce::AudioParameterBool>(
         ParameterIDs::printTrigger, "Print Trigger", false));
 
+    layout.add(std::make_unique<juce::AudioParameterChoice>(ParameterIDs::imageMode, "Image B/W Mode",
+        juce::StringArray { "Auto (Otsu)", "Detail (Adaptive)", "Manual", "Alpha silhouette" }, 0));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(ParameterIDs::imageAmount, "Image B/W Amount",
+        juce::NormalisableRange<float>(0.0f,1.0f,0.001f),0.5f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(ParameterIDs::noiseFill,"Noise Fill",juce::NormalisableRange<float>(0.0f,1.0f,.001f),0.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction([](float value,int){return juce::String(juce::roundToInt(value*100))+"%";}).withValueFromStringFunction([](const juce::String& text){return juce::jlimit(0.0f,1.0f,text.getFloatValue()/100); })));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(ParameterIDs::frequencyRange,"Frequency range",
+        juce::StringArray{"20 kHz","24 kHz","22.05 kHz","48 kHz"},0));
+    // Appended parameter preserves every existing parameter index and the old
+    // fftScale 0/1 host automation. Retired slot 2 resolves to Log; the editor shows six modes.
+    layout.add(std::make_unique<juce::AudioParameterChoice>(ParameterIDs::frequencyPreset,"Frequency scale preset",juce::StringArray{"Linear / Log","insight","Log","Mel (RX)","Bark","Extended Log"},3));
     return layout;
 }
 
@@ -1739,4 +1801,120 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumTagAudioProcessor::c
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new SpectrumTagAudioProcessor();
+}
+namespace {
+bool sameEditor(const SpectrumTagAudioProcessor::EditorState& a,const SpectrumTagAudioProcessor::EditorState& b){
+    return a.imagePath==b.imagePath&&a.palette==b.palette&&a.imageVisible==b.imageVisible&&a.chinese==b.chinese&&a.uiScale==b.uiScale
+        &&a.imgRectXNorm==b.imgRectXNorm&&a.imgRectYNorm==b.imgRectYNorm&&a.imgRectWNorm==b.imgRectWNorm&&a.imgRectHNorm==b.imgRectHNorm
+        &&a.viewEnd==b.viewEnd&&a.viewZoom==b.viewZoom&&a.viewFollow==b.viewFollow&&a.viewFit==b.viewFit&&a.viewValid==b.viewValid
+        &&a.selectedPrint==b.selectedPrint&&a.placementId==b.placementId&&a.spectrumHeightPx==b.spectrumHeightPx;
+}
+}
+SpectrumTagAudioProcessor::UserState SpectrumTagAudioProcessor::captureUserState() const {
+    UserState s;for(auto* parameter:getParameters())s.parameters.push_back(parameter==printTriggerParam?0:parameter->getValue());
+    s.editor=getEditorState();s.document=recording().document();s.armed=recording().isArmed();return s;
+}
+void SpectrumTagAudioProcessor::commitUserChange(UserState before,UserState after,bool sourceChange){
+    if(restoringUserState)return;
+    if(!sourceChange&&before.parameters==after.parameters&&sameEditor(before.editor,after.editor)
+        &&spectrumtag::sameEdits(before.document.edits,after.document.edits)&&before.armed==after.armed)return;
+    if(!sourceChange){before.document.source.reset();after.document.source.reset();}
+    undoChanges.push_back({std::move(before),std::move(after),sourceChange});
+    if(undoChanges.size()>64)undoChanges.erase(undoChanges.begin());redoChanges.clear();
+}
+void SpectrumTagAudioProcessor::clearRecordedAudio(){
+    if(pendingClear)return;
+    beforeClear=captureUserState();beforeClear.armed=false;
+    cancelPrint();auditionTransport.requestHostFollow();clearSpectrumHistory();
+    pendingClear=recordingEngine.clearKeepingUndo();
+}
+void SpectrumTagAudioProcessor::finishPendingClear(){
+    if(!pendingClear||!pendingClear->ready.load())return;
+    beforeClear.document=pendingClear->before;
+    auto after=captureUserState();after.document={};after.armed=false;
+    commitUserChange(std::move(beforeClear),std::move(after),true);pendingClear.reset();
+}
+bool SpectrumTagAudioProcessor::undoUserChange(bool redo){
+    finishPendingClear();if(pendingClear)return false;
+    auto& from=redo?redoChanges:undoChanges;auto& to=redo?undoChanges:redoChanges;if(from.empty())return false;
+    auto change=std::move(from.back());from.pop_back();const auto& target=redo?change.after:change.before;
+    restoringUserState=true;cancelPrint();
+#if SPECTRUMTAG_ARA
+    if(target.ara){if(auto* view=getEditorView<spectrumtag::ara::View>())view->restoreState(*target.ara);clearSpectrumHistory();}
+    else
+#endif
+    if(change.sourceChange){recordingEngine.restoreDocument(target.document);if(!target.document.enabled)clearSpectrumHistory();}
+    else if(!spectrumtag::sameEdits(change.before.document.edits,change.after.document.edits))recording().setEdits(target.document.edits?*target.document.edits:std::vector<spectrumtag::PrintEdit>{});
+    if(change.sourceChange||change.before.armed!=change.after.armed)recordingEngine.setArmed(target.armed);
+    const auto& parameters=getParameters();
+    for(int i=0;i<parameters.size()&&i<(int)target.parameters.size();++i)
+        if(parameters[i]!=printTriggerParam&&change.before.parameters[(size_t)i]!=change.after.parameters[(size_t)i]){
+            parameters[i]->beginChangeGesture();parameters[i]->setValueNotifyingHost(target.parameters[(size_t)i]);parameters[i]->endChangeGesture();
+        }
+    rememberARAFrequencyChoice();
+    setEditorState(target.editor);stateRevision.fetch_add(1);
+    auditionTransport.requestHostFollow();restoringUserState=false;to.push_back(std::move(change));return true;
+}
+
+void SpectrumTagAudioProcessor::clearARA(){
+#if SPECTRUMTAG_ARA
+    if(auto* view=getEditorView<spectrumtag::ara::View>();view&&view->loaded){
+        auto before=captureUserState();before.ara=std::make_shared<const spectrumtag::ara::ViewState>(view->captureState());
+        view->clear();cancelPrint();clearSpectrumHistory();
+        auto state=getEditorState();state.selectedPrint={};state.placementId={};state.viewValid=false;state.viewFit=true;setEditorState(state);stateRevision.fetch_add(1);
+        auto after=captureUserState();after.ara=std::make_shared<const spectrumtag::ara::ViewState>(view->captureState());
+        before.document.source.reset();after.document.source.reset();commitUserChange(std::move(before),std::move(after),true);
+    }
+#endif
+}
+void SpectrumTagAudioProcessor::loadARA(){
+#if SPECTRUMTAG_ARA
+    if(auto* view=getEditorView<spectrumtag::ara::View>()){
+        view->setRate(getSampleRate()>0?getSampleRate():48000.);
+        std::vector<spectrumtag::ara::Region*> regions;
+        if(auto* renderer=getPlaybackRenderer())regions=renderer->getPlaybackRegions<spectrumtag::ara::Region>();
+        view->load(regions);pollARA();
+    }
+#endif
+}
+juce::String SpectrumTagAudioProcessor::araStatus()const{
+#if SPECTRUMTAG_ARA
+    if(auto* view=getEditorView<spectrumtag::ara::View>())return view->statusText(getEditorState().chinese);
+    return getEditorState().chinese?juce::String::fromUTF8("请从 Cubase 音频事件的扩展中打开 SpectrumTag ARA。"):juce::String("Open SpectrumTag ARA from the Cubase audio event extension.");
+#else
+    return {};
+#endif
+}
+void SpectrumTagAudioProcessor::rememberARAFrequencyChoice(){
+#if SPECTRUMTAG_ARA
+    if(auto* view=getEditorView<spectrumtag::ara::View>())view->rememberFrequencyChoice(getFrequencyScale());
+#endif
+}
+void SpectrumTagAudioProcessor::pollARA(){
+#if SPECTRUMTAG_ARA
+    if(auto* view=getEditorView<spectrumtag::ara::View>()){
+        view->setRate(getSampleRate()>0?getSampleRate():48000.);view->tick();
+        const bool archiveRestored=view->restoreRevision!=araRestoreRevision;
+        const bool contextChanged=araHistoryKey!=view->key||araSelectionRevision!=view->selectionRevision;
+        if(archiveRestored){araHistory.clear();undoChanges.clear();redoChanges.clear();araRestoreRevision=view->restoreRevision;}
+        if(!view->selected.empty()&&!view->getDocumentController()->isHostEditingDocument()
+            &&(contextChanged||archiveRestored||araFrequencyRecallRequested.load())){
+            const auto choice=view->frequencyChoice();
+            const int mode=choice.value_or(araWrapperFrequencyScale.load());
+            araFrequencyRecallRequested=false;
+            if(mode>=0){
+                const juce::ScopedValueSetter<bool> guard(restoringUserState,true);
+                auto assign=[&](const juce::String& id,float value){auto* p=apvts.getParameter(id);p->setValueNotifyingHost(p->convertTo0to1(value));};
+                assign(ParameterIDs::fftScale,mode==1?1.f:0.f);
+                assign(ParameterIDs::frequencyPreset,(float)juce::jmax(0,mode-1));
+                stateRevision.fetch_add(1);
+            }
+        }
+        if(contextChanged){
+            if(araHistoryKey.isNotEmpty())araHistory[araHistoryKey]={std::move(undoChanges),std::move(redoChanges)};
+            araHistoryKey=view->key;auto& history=araHistory[araHistoryKey];undoChanges=history.undo;redoChanges=history.redo;araSelectionRevision=view->selectionRevision;
+            auto state=getEditorState();state.selectedPrint={};state.placementId={};state.viewValid=false;state.viewFollow=false;state.viewFit=true;setEditorState(state);stateRevision.fetch_add(1);
+        }
+    }
+#endif
 }
