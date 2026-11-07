@@ -57,7 +57,7 @@ Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; S
 Filename: "{app}\Docs\INSTALL-EN.txt"; Description: "Read installation and host setup notes"; Flags: postinstall shellexec skipifsilent unchecked
 
 [Messages]
-WelcomeLabel2=This installs SpectrumTag [name/ver] on your computer.%n%nSave your projects and fully quit all DAWs and SpectrumTag before continuing. ARA is an audio-event extension, not an ordinary insert effect.
+WelcomeLabel2=This installs SpectrumTag [name/ver] on your computer.%n%nSave your projects and fully quit all DAWs and SpectrumTag before continuing. The ARA component requires an ARA-capable host and its ARA integration workflow.
 
 [Code]
 function NeedsVCRuntime: Boolean;

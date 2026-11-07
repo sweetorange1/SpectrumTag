@@ -1,5 +1,7 @@
 # Windows implementation handoff
 
+> Historical baseline: this document records the 1.4.18/1.4.19 Stable handoff. The subsequent 1.4.20 cross-platform work is tracked in PROJECT_OVERVIEW.md and the installation guides. Do not infer current target versions from the historical values below.
+
 ## Scope and version identity
 
 Base: upstream `ac7d32470d1e7d5ae447e00fb01ebb8ee12631e6` (1.4.3). This source handoff contains the completed Windows development through plugin/ARA 1.4.18 and standalone 1.4.19, designated Stable by the contributor on 2026-11-06. Designating Stable did not rebuild, renumber or reinstall an existing product. The root CMake project version and plugin targets are intentionally 1.4.18; `SpectrumTagStandalone` and its displayed override are 1.4.19.
