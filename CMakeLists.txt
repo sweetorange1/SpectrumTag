@@ -24,7 +24,7 @@ if(APPLE)
     message(STATUS "[SpectrumTag] macOS deployment    : ${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif()
 
-project(SpectrumTag VERSION 1.4.25 LANGUAGES C CXX)
+project(SpectrumTag VERSION 1.4.26 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -79,9 +79,17 @@ jobs:
           SPECTRUMTAG_PREFS_DIR="$PWD/checks/ara/preferences" build/SpectrumTagARAVerify_artefacts/Release/SpectrumTagARAVerify "$PWD/checks/ara/editor.png" > checks/ara.log 2>&1
           native/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/checks/codec.json"
           SPECTRUMTAG_PREFS_DIR="$PWD/checks/standalone/preferences" native/SpectrumTag.app/Contents/MacOS/SpectrumTag --self-test "$PWD/checks/standalone"
+          result=0
           for check in view tail missing fileless-ui video; do
-            SPECTRUMTAG_PREFS_DIR="$PWD/checks/$check/preferences" native/SpectrumTag.app/Contents/MacOS/SpectrumTag --$check-test "$PWD/checks/$check"
+            if SPECTRUMTAG_PREFS_DIR="$PWD/checks/$check/preferences" native/SpectrumTag.app/Contents/MacOS/SpectrumTag --$check-test "$PWD/checks/$check"; then
+              echo "$check checks passed"
+            else
+              echo "::error::$check checks failed"
+              find "checks/$check" -type f \( -name '*.log' -o -name '*failure.txt' \) -exec tail -n 35 {} \;
+              result=1
+            fi
           done
+          exit "$result"
       - name: Validate both Audio Units
         if: always() && steps.codec.outcome == 'success'
         run: |
@@ -108,7 +116,11 @@ jobs:
         if: always()
         with:
           name: checks-${{ matrix.arch }}
-          path: checks/
+          path: |
+            checks/**/*.log
+            checks/**/*.json
+            checks/**/*failure.txt
+            checks/**/*.png
   mac-installer:
     needs: mac-native
     runs-on: macos-15

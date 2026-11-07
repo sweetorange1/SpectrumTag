@@ -6,6 +6,7 @@ This is a concise record of the Windows development delivered after upstream 1.4
 
 | Version | Delivered change |
 | --- | --- |
+| 1.4.26 | Select frame-timing options from encoder capabilities for black-padded video export, supporting both the legacy Windows codec and current Mac FFmpeg. Cross-platform installer validation continues. / 按编码器能力选择补黑视频的帧同步选项，兼容旧 Windows 与新 Mac 编码器；安装包验证继续。 |
 | 1.4.25 | Fix Clang/macOS scalar progress calculation selecting an unsupported JUCE SIMD overload; unify installer component versions. Packaging and platform validation in progress. / 修复 macOS 编译时进度计算误匹配 JUCE SIMD 模板，统一安装包组件版本；打包及平台验证进行中。 |
 | 1.4.24 | Full-frame spectrum video enters at the right edge, with pixel-exact cached rendering and native RGB/BGR streaming; Desktop export default, cancellable progress dialog and immediate stopped-Delete cleanup. / 满屏纯频谱从最右侧显现、缓存加速、桌面默认导出、可取消进度弹窗与删除残影修复。Windows standalone user-designated Stable; cross-platform installers are being validated separately. |
 | 1.4.23 | Source-free Print and animated spectrum video export, automatic Tag camera matching, overlap priority, selectable format/resolution/fps, and real processed soundtrack. / 无源文件 Print、纯频谱视频导出、视图匹配与真实处理音轨。 |

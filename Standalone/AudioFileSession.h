@@ -20,6 +20,17 @@ inline bool codecRun(juce::StringArray args,juce::String& output){
     // Drain pipes while encoding; otherwise long stderr output can block the child.
     output=child.readAllProcessOutput();return child.waitForProcessToFinish(10000)&&child.getExitCode()==0;
 }
+inline bool appendVideoPassthrough(juce::StringArray& args,juce::String& error){
+    // fps_mode replaces vsync in current FFmpeg; the embedded Windows codec
+    // predates it. Probe capabilities, including user-supplied codec builds,
+    // rather than assuming an option from the OS or a version-string format.
+    juce::String options;
+    if(!codecRun({"-hide_banner","-h","full"},options)){error=options;return false;}
+    if(options.contains("-fps_mode"))args.addArray({"-fps_mode:v:0","passthrough"});
+    else if(options.contains("-vsync"))args.addArray({"-vsync","0"});
+    else {error="The audio/video encoder does not support preserving video frame timing.";return false;}
+    return true;
+}
 inline bool writeFloatWave(const juce::File& path,const RecordingSnapshot& audio,juce::String& error,const std::function<bool()>& cancelled={},const std::function<void(float)>& progress={}){
     auto out=path.createOutputStream();if(!out){error="Cannot create export audio.";return false;}
     out->setPosition(0);out->truncate();const auto samples=audio.last-audio.first;
@@ -143,7 +154,8 @@ inline bool exportOriginal(const FileInfo& info,const RecordingSnapshot& audio,c
             const auto filter="[0:v:0]tpad=start="+juce::String(pad.headFrames)+":stop="+juce::String(pad.tailFrames)+":start_mode=add:stop_mode=add:color=black[v];[1:a:0]adelay="+juce::String(pad.audioDelay)+"S:all=1[a]";
             args.addArray({"-i",info.file.getFullPathName(),"-i",wave.getFullPathName(),"-itsoffset",juce::String(pad.lead,12),"-i",info.file.getFullPathName(),
                 "-filter_complex",filter,"-map","[v]","-map","[a]","-map","2:a?","-map","-2:a:0","-map","2:s?","-map","2:d?","-map","2:t?",
-                "-map_metadata","0","-map_chapters","2","-c","copy","-c:a:0",codec,"-ar:a:0",juce::String((int)info.rate),"-ac:a:0",juce::String(info.channels),"-map_metadata:s:a:0","0:s:a:0","-vsync","0"});
+                "-map_metadata","0","-map_chapters","2","-c","copy","-c:a:0",codec,"-ar:a:0",juce::String((int)info.rate),"-ac:a:0",juce::String(info.channels),"-map_metadata:s:a:0","0:s:a:0"});
+            if(!appendVideoPassthrough(args,error))return false;
             args.addArray(pad.encoding);
         }else{
         // Keep every video/subtitle/additional audio stream. The first audio

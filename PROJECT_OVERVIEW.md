@@ -2,7 +2,10 @@
 
 维护日期：2026-11-07。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
 
-## 1.4.25 安装包与上游 PR（进行中）
+## 1.4.26 安装包与上游 PR（进行中）
+1.4.25 Windows Setup 已通过临时 Windows runner 的真实安装及内置编码器/原格式音视频检查，三个安装后文件与本地构建 SHA-256 相同。测试发布保留历史身份。Mac arm64 的处理器、ARA、普通媒体、首次视图、AU 和 VST3 均通过；延长视频检查定位到新版 FFmpeg 不再接受 `-vsync`。本轮最终安装版递增为 1.4.26，导出补帧时查询实际编码器能力，优先 `-fps_mode:v:0 passthrough`，保留旧编码器的 `-vsync 0` 路径。继续通过帧数、逐帧像素和音画同步断言验证，不能仅以文件导出成功代替。1.4.26 未指定 Stable，也不新建 Plan B。
+
+Fork 已按用户要求改名为 `Ziqing-Gu/Spectrum-Tag-Private`，README 标题为 Spectrum Tag（私人）；可见性仍为公开 Fork。改名使旧 CMake 路径缓存失效，工作流缓存现按仓库名称隔离。Windows CI 继续使用 contents: read；草稿不可读的问题通过明确的测试预发布解决，没有提升令牌写权限。
 
 Mac arm64 与 x86_64 的首次构建均在 `shared/Recording.cpp` 的 `juce::jmax<size_t>` 处失败：Clang 在重载决议中实例化了未实现的 `SIMDNativeOps<unsigned long>`。改为标准库标量 `std::max<size_t>`，计算语义保持不变。由于 1.4.24 独立版已交付，按版本规则将本轮产品递增为 1.4.25，安装包各组件统一版本；1.4.24 Stable 和冻结备份保持不动，不自动指定新 Stable。失败记录：Actions 42383473939。
 
