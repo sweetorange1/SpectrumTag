@@ -1,8 +1,12 @@
 # SpectrumTag 项目总览与开发过程
 
-维护日期：2026-11-07。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
+维护日期：2026-11-08。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
 
-## 1.4.26 安装包与上游 PR（进行中）
+## 1.4.26 安装包完成，上游 PR 等待用户验收
+
+2026-11-08：Windows Setup、macOS Universal PKG 和中英文 TXT 安装说明已生成。两个 Mac 架构的处理器、ARA、音视频、AU/VST3 检查均已通过；PKG 实际安装后的编码器、AU 和 VST3 签名检查通过。Windows Setup 实际安装及内置媒体检查通过，三个安装后文件 SHA-256 与本地最终构建逐一相同。最终交付目录为 `D:\Codex\Outputs\SpectrumTag-1.4.26-Installers`，只有根目录双语 TXT、Win 安装程序和 Mac PKG；验证日志保存在 `D:\Codex\Temp\SpectrumTag-1.4.26`。完整证据与哈希见 [安装包验证记录](docs/INSTALLERS_1.4.26.md)。本轮没有覆盖用户本机已安装产品，没有新增或访问冻结 Plan B，没有自动设为 Stable。
+
+Intel AU 发现失败来自临时 runner 的组件注册列表未刷新。仅在隔离 CI 中刷新安装目录时间戳并以 SIGKILL 重启用户的 AudioComponentRegistrar 后，两个 AU 都通过 auval；没有删除 AU 缓存或放宽系统安全策略。补跑复用精确源码对应的构建缓存和 ARM 成品，不重复完整构建。PKG 的 `lipo -verify_arch` 参数顺序错误单独修正后，只重打包并实装验证，两个架构的原生产物继续复用。
 
 用户最新指令：新 PR 必须等待用户本人验证 Mac 版并明确确认没有问题后再提交。自动构建、AU/VST3 检查和 PKG 安装通过不代替该确认。旧 PR #2 保持关闭，本轮只更新个人 Fork 并交付安装包供用户验证；不新建上游 PR。
 1.4.25 Windows Setup 已通过临时 Windows runner 的真实安装及内置编码器/原格式音视频检查，三个安装后文件与本地构建 SHA-256 相同。测试发布保留历史身份。Mac arm64 的处理器、ARA、普通媒体、首次视图、AU 和 VST3 均通过；延长视频检查定位到新版 FFmpeg 不再接受 `-vsync`。本轮最终安装版递增为 1.4.26，导出补帧时查询实际编码器能力，优先 `-fps_mode:v:0 passthrough`，保留旧编码器的 `-vsync 0` 路径。继续通过帧数、逐帧像素和音画同步断言验证，不能仅以文件导出成功代替。1.4.26 未指定 Stable，也不新建 Plan B。

@@ -18,12 +18,12 @@ SpectrumTag 将图片转换成黑白掩模，并通过处理音频的频率成�
 
 | 项目 | 当前状态 |
 | --- | --- |
-| 当前源码 | **1.4.26**，Windows 与 macOS 安装包构建、验证中 |
+| 当前交付 | **1.4.26**，Windows Setup 与 macOS Universal PKG，附中英文 TXT 安装说明 |
 | 已确认 Stable | **Windows 独立版 1.4.24**；其他组件沿用各自历史状态，详见[开发总览](PROJECT_OVERVIEW.md) |
 | Windows 安装包 | 实时 VST3、ARA 专用 VST3、独立程序；适用于 Windows 10/11 x64 |
 | macOS 安装包 | 实时/ARA VST3、实时/ARA AU、独立 App；目标为 macOS 15+，Apple Silicon + Intel |
 
-安装包通过 [Releases](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases) 提供。**1.4.26 尚未完成发布，请以对应 Release 的附件和验证记录为准。** 构建进度见 [Actions](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/actions/workflows/cross-platform.yml)。源码版本、已交付版本和 Stable 指定是不同状态。
+下载 [1.4.26 安装包与 TXT 说明](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.26)。Windows 实际安装检查、两个 Mac 架构的音视频及 AU/VST3 检查、Universal PKG 实际安装检查均已通过，详见[验证记录](docs/INSTALLERS_1.4.26.md)。**真实 Cubase / Logic 工程仍需用户验证；1.4.26 尚未被指定为 Stable。** 上游旧 PR 已关闭，等待用户亲自确认 Mac 版后再提交新 PR。
 
 ### 三个版本怎么选？
 
@@ -106,12 +106,12 @@ SpectrumTag converts an image to a monochrome mask and processes audio frequenci
 
 | Item | Status |
 | --- | --- |
-| Current source | **1.4.26**, Windows and macOS installers being built and validated |
+| Current delivery | **1.4.26**, Windows Setup and macOS Universal PKG, with Chinese/English TXT installation guides |
 | User-designated Stable | **Windows standalone 1.4.24**; other components retain their documented historical status |
 | Windows installer | Realtime VST3, dedicated ARA VST3 and standalone; Windows 10/11 x64 |
 | macOS installer | Realtime/ARA VST3, realtime/ARA AU and standalone App; macOS 15+, Apple Silicon + Intel |
 
-Download installers from [Releases](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases). **The 1.4.26 release is not complete yet; check the matching release assets and validation record.** Follow the [build workflow](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/actions/workflows/cross-platform.yml) for progress. A source version, delivered build and Stable designation are separate states.
+Download the [1.4.26 installers and TXT guides](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.26). Actual Windows installation, native media/AU/VST3 checks on both Mac architectures, and Universal PKG installation have passed; see the [verification record](docs/INSTALLERS_1.4.26.md). **Real Cubase/Logic projects still require user acceptance, and 1.4.26 has not been designated Stable.** The old upstream PR is closed; a new PR must wait for the user's personal Mac validation and explicit confirmation.
 
 ### Choose your edition
 
