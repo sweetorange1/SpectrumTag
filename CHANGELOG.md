@@ -6,7 +6,7 @@ This is a concise record of the Windows development delivered after upstream 1.4
 
 | Version | Delivered change |
 | --- | --- |
-| 1.4.27 | In validation: manual privacy-limited diagnostic export in all formats for the unresolved Mac display report; phase-safe spectrum analysis, display-only cache migration, and matching selected source/Print bounds. / 验证中：所有格式新增手动导出诊断，定位尚未确认原因的 Mac 打印不显示；另修复反相频谱抵消、旧显示缓存和选中尺寸不一致。 |
+| 1.4.27 | Manual privacy-limited diagnostics in all formats for the unresolved Mac display report; phase-safe spectrum analysis, display-only cache migration, and matching selected source/Print bounds. Native checks and installers passed; field diagnosis pending. / 所有格式新增手动导出诊断，定位尚未确认原因的 Mac 打印不显示；另修复反相频谱抵消、旧显示缓存和选中尺寸不一致。原生与实装验证通过，等待现场报告。 |
 | 1.4.26 | Encoder-compatible video timing, responsive POSIX video streaming, Windows Setup and Universal macOS PKG with realtime/ARA VST3, AU and standalone; automated native and installation checks passed. User Mac acceptance and Stable designation remain pending. / 兼容新旧编码器、修复 Mac 频谱视频传输超时；交付 Win 安装程序及 Mac 双架构 PKG，附 TXT 说明。原生及实际安装检查通过，等待用户 Mac 工程验收，不自动设 Stable。 |
 | 1.4.25 | Fix Clang/macOS scalar progress calculation selecting an unsupported JUCE SIMD overload; unify installer component versions. Packaging and platform validation in progress. / 修复 macOS 编译时进度计算误匹配 JUCE SIMD 模板，统一安装包组件版本；打包及平台验证进行中。 |
 | 1.4.24 | Full-frame spectrum video enters at the right edge, with pixel-exact cached rendering and native RGB/BGR streaming; Desktop export default, cancellable progress dialog and immediate stopped-Delete cleanup. / 满屏纯频谱从最右侧显现、缓存加速、桌面默认导出、可取消进度弹窗与删除残影修复。Windows standalone user-designated Stable; cross-platform installers are being validated separately. |

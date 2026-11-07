@@ -18,12 +18,12 @@ SpectrumTag 将图片转换成黑白掩模，并通过处理音频的频率成�
 
 | 项目 | 当前状态 |
 | --- | --- |
-| 当前交付 | **1.4.26**，Windows Setup 与 macOS Universal PKG，附中英文 TXT 安装说明 |
+| 当前交付 | **1.4.27**，带“导出诊断”的 Windows Setup 与 macOS Universal PKG，附中英文 TXT 安装说明 |
 | 已确认 Stable | **Windows 独立版 1.4.24**；其他组件沿用各自历史状态，详见[开发总览](PROJECT_OVERVIEW.md) |
 | Windows 安装包 | 实时 VST3、ARA 专用 VST3、独立程序；适用于 Windows 10/11 x64 |
 | macOS 安装包 | 实时/ARA VST3、实时/ARA AU、独立 App；目标为 macOS 15+，Apple Silicon + Intel |
 
-下载 [1.4.26 安装包与 TXT 说明](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.26)。Windows 实际安装检查、两个 Mac 架构的音视频及 AU/VST3 检查、Universal PKG 实际安装检查均已通过，详见[验证记录](docs/INSTALLERS_1.4.26.md)。**真实 Cubase / Logic 工程仍需用户验证；1.4.26 尚未被指定为 Stable。** 上游旧 PR 已关闭，等待用户亲自确认 Mac 版后再提交新 PR。
+下载 [1.4.27 安装包与 TXT 说明](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.27)。Windows 实际安装检查、两个 Mac 架构的音视频及 AU/VST3 检查、Universal PKG 实际安装检查均已通过，详见[验证记录](docs/INSTALLERS_1.4.27.md)。**本版用于调查 Mac“Print 完成但内部不显示”的现场问题，尚未确认该问题修复，也未指定为 Stable。** 复现后点右上角“导出诊断”，将保存的 JSON 手动发回；报告不包含音乐、图片或工程，也不自动上传。上游旧 PR 已关闭，等待用户亲自确认 Mac 版后再提交新 PR。
 
 ### 三个版本怎么选？
 
@@ -72,8 +72,8 @@ Print 可以超出原始文件的开始或结尾，导出时长会相应延长�
 
 完整说明：[中文 TXT](docs/INSTALL-ZH-CN.txt) · [English TXT](docs/INSTALL-EN.txt)。安装前保存工程并完全退出宿主及独立版，安装时按需选择组件。
 
-- **Windows**：运行 `SpectrumTag-1.4.26-Windows-Setup.exe` 安装向导。VST3 安装到系统标准目录，独立程序目录可选择；包含所需微软 x64 运行库和媒体编解码器。
-- **macOS**：运行 `SpectrumTag-1.4.26-macOS.pkg`，安装到标准的 Applications / Audio Plug-Ins 目录，App 内含双架构媒体依赖，无需另装 Homebrew 或 FFmpeg。
+- **Windows**：运行 `SpectrumTag-1.4.27-Windows-Setup.exe` 安装向导。VST3 安装到系统标准目录，独立程序目录可选择；包含所需微软 x64 运行库和媒体编解码器。
+- **macOS**：运行 `SpectrumTag-1.4.27-macOS.pkg`，安装到标准的 Applications / Audio Plug-Ins 目录，App 内含双架构媒体依赖，无需另装 Homebrew 或 FFmpeg。
 - 当前没有 Windows 发布者签名或 Apple Developer ID 签名/公证。macOS bundle 使用 ad-hoc 签名。系统提示、重扫插件、旧版本冲突、Logic ARA/Rosetta 和字体等问题均见安装说明。
 - ARA 需要宿主支持及正确的扩展入口。OnlyARA 标记不能保证所有宿主都从普通插入菜单隐藏它。自动化构建/验证通过也不代表所有 DAW 工程都已实测。
 
@@ -106,12 +106,12 @@ SpectrumTag converts an image to a monochrome mask and processes audio frequenci
 
 | Item | Status |
 | --- | --- |
-| Current delivery | **1.4.26**, Windows Setup and macOS Universal PKG, with Chinese/English TXT installation guides |
+| Current delivery | **1.4.27**, Windows Setup and macOS Universal PKG with Diagnostics, plus Chinese/English TXT installation guides |
 | User-designated Stable | **Windows standalone 1.4.24**; other components retain their documented historical status |
 | Windows installer | Realtime VST3, dedicated ARA VST3 and standalone; Windows 10/11 x64 |
 | macOS installer | Realtime/ARA VST3, realtime/ARA AU and standalone App; macOS 15+, Apple Silicon + Intel |
 
-Download the [1.4.26 installers and TXT guides](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.26). Actual Windows installation, native media/AU/VST3 checks on both Mac architectures, and Universal PKG installation have passed; see the [verification record](docs/INSTALLERS_1.4.26.md). **Real Cubase/Logic projects still require user acceptance, and 1.4.26 has not been designated Stable.** The old upstream PR is closed; a new PR must wait for the user's personal Mac validation and explicit confirmation.
+Download the [1.4.27 installers and TXT guides](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.27). Actual Windows installation, native media/AU/VST3 checks on both Mac architectures, and Universal PKG installation have passed; see the [verification record](docs/INSTALLERS_1.4.27.md). **This version investigates the Mac report that completed Prints are missing from the internal display; that field issue is not yet confirmed fixed, and this version is not designated Stable.** Click Diagnostics immediately after reproducing the issue and send the saved JSON manually. No media, images, project files or automatic upload. The old upstream PR is closed; a new PR must wait for the user's personal Mac validation and explicit confirmation.
 
 ### Choose your edition
 
@@ -160,8 +160,8 @@ Prints may extend before or after the source. Export duration expands accordingl
 
 Read [English TXT instructions](docs/INSTALL-EN.txt) or [中文 TXT](docs/INSTALL-ZH-CN.txt). Save your project and quit hosts and SpectrumTag before installing; select the components you need.
 
-- **Windows:** `SpectrumTag-1.4.26-Windows-Setup.exe` is an installation wizard. It uses the standard VST3 location, allows a standalone destination, and includes the required Microsoft x64 runtime and media codec.
-- **macOS:** `SpectrumTag-1.4.26-macOS.pkg` installs to standard Applications / Audio Plug-Ins locations. Bundled media dependencies require neither Homebrew nor a separate FFmpeg installation.
+- **Windows:** `SpectrumTag-1.4.27-Windows-Setup.exe` is an installation wizard. It uses the standard VST3 location, allows a standalone destination, and includes the required Microsoft x64 runtime and media codec.
+- **macOS:** `SpectrumTag-1.4.27-macOS.pkg` installs to standard Applications / Audio Plug-Ins locations. Bundled media dependencies require neither Homebrew nor a separate FFmpeg installation.
 - There is no Windows publisher signature or Apple Developer ID signing/notarization. Mac bundles are ad-hoc signed. The guides cover system prompts, rescanning, duplicate versions, Logic ARA/Rosetta and fonts.
 - ARA requires a compatible host and the correct extension entry point. OnlyARA metadata cannot guarantee hiding from every host's ordinary insert menu. Automated validation is distinct from testing real projects in every DAW.
 
