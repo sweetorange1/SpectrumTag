@@ -1,0 +1,135 @@
+name: Resume macOS AU validation and installer
+on:
+  workflow_dispatch:
+    inputs:
+      native_run_id:
+        description: Prior run with successful arm64 archive and Intel build/media/VST3 checks
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  intel-au:
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify the inherited source and completed checks
+        id: inherited
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_RUN: ${{ inputs.native_run_id }}
+        run: |
+          [[ "$NATIVE_RUN" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NATIVE_RUN" > inherited-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NATIVE_RUN/jobs" > inherited-jobs.json
+          native_sha=$(python3 -c 'import json; print(json.load(open("inherited-run.json"))["head_sha"])')
+          git diff --exit-code "$native_sha" HEAD -- CMakeLists.txt PluginProcessor.cpp PluginProcessor.h PluginEditor.cpp PluginEditor.h shared ARA Standalone source tests otf UI.png packaging/macos/bundle_codec.py
+          python3 - <<'PY'
+          import json
+          jobs=json.load(open('inherited-jobs.json'))['jobs']
+          assert any(j['name']=='mac-native (arm64, macos-15)' and j['conclusion']=='success' for j in jobs)
+          intel=next(j for j in jobs if j['name']=='mac-native (x86_64, macos-15-intel)')
+          required={'Build native VST3, ARA, AU and standalone','Bundle native audio and video codec','Processor, ARA host and media regression checks','Validate VST3 bundles'}
+          passed={s['name'] for s in intel['steps'] if s['conclusion']=='success'}
+          assert required <= passed, required-passed
+          PY
+          echo "sha=$native_sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        with:
+          path: build
+          key: spectrumtag-mac-x86_64-build-v2-${{ github.event.repository.name }}-${{ steps.inherited.outputs.sha }}
+          fail-on-cache-miss: true
+      - name: Restore the tested Intel products and codec
+        run: |
+          brew list ffmpeg-full >/dev/null 2>&1 || brew install ffmpeg-full
+          mkdir -p native checks
+          ditto build/SpectrumTag_artefacts/Release/VST3/SpectrumTag.vst3 native/SpectrumTag.vst3
+          ditto 'build/SpectrumTagARA_artefacts/Release/VST3/SpectrumTag ARA.vst3' 'native/SpectrumTag ARA.vst3'
+          ditto build/SpectrumTag_artefacts/Release/AU/SpectrumTag.component native/SpectrumTag.component
+          ditto 'build/SpectrumTagARA_artefacts/Release/AU/SpectrumTag ARA.component' 'native/SpectrumTag ARA.component'
+          ditto build/SpectrumTagStandalone_artefacts/Release/SpectrumTag.app native/SpectrumTag.app
+          for bundle in native/*.vst3 native/*.component; do
+            codesign --force --deep --sign - "$bundle"
+            codesign --verify --deep --strict "$bundle"
+          done
+          python3 packaging/macos/bundle_codec.py "$(brew --prefix ffmpeg-full)/bin/ffmpeg" native/SpectrumTag.app x86_64
+          cp LICENSE native/SpectrumTag.app/Contents/Resources/SpectrumTag-LICENSE.txt
+          codesign --force --deep --sign - native/SpectrumTag.app
+          native/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/checks/codec.json"
+          SPECTRUMTAG_PREFS_DIR="$PWD/checks/video/preferences" native/SpectrumTag.app/Contents/MacOS/SpectrumTag --video-test "$PWD/checks/video"
+      - name: Validate both installed Intel Audio Units
+        run: |
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          ditto native/SpectrumTag.component "$HOME/Library/Audio/Plug-Ins/Components/SpectrumTag.component"
+          ditto 'native/SpectrumTag ARA.component' "$HOME/Library/Audio/Plug-Ins/Components/SpectrumTag ARA.component"
+          python3 packaging/macos/validate_au.py "$HOME/Library/Audio/Plug-Ins/Components" checks
+      - name: Archive validated Intel bundles
+        run: tar -czf native-x86_64.tar.gz -C native .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-x86_64
+          path: native-x86_64.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resumed-intel-checks
+          path: |
+            inherited-*.json
+            checks/**/*.log
+            checks/**/*.json
+            checks/**/*failure.txt
+  installer:
+    needs: intel-au
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read product version
+        id: version
+        run: |
+          version=$(sed -n 's/^project(SpectrumTag VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.native_run_id }}
+          name: native-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-x86_64
+      - name: Merge validated products and create PKG
+        run: |
+          mkdir arm64 x86_64
+          tar -xzf native-arm64.tar.gz -C arm64
+          tar -xzf native-x86_64.tar.gz -C x86_64
+          python3 packaging/macos/package.py arm64 x86_64 installer --version '${{ steps.version.outputs.value }}' > package.log 2>&1
+      - name: Verify actual PKG installation
+        run: |
+          sudo installer -pkg 'installer/SpectrumTag-${{ steps.version.outputs.value }}-macOS.pkg' -target / > install.log 2>&1
+          /Applications/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/installed-codec.json"
+          python3 packaging/macos/validate_au.py /Library/Audio/Plug-Ins/Components installed-au-checks
+          for name in 'SpectrumTag.vst3' 'SpectrumTag ARA.vst3'; do
+            codesign --verify --deep --strict "/Library/Audio/Plug-Ins/VST3/$name"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SpectrumTag-${{ steps.version.outputs.value }}-macOS-Installer
+          path: installer/SpectrumTag-${{ steps.version.outputs.value }}-macOS.pkg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macOS-package-validation
+          path: |
+            package.log
+            install.log
+            installed-codec.json
+            installed-au-checks/

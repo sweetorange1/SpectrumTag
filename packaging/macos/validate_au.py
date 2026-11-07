@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Validate freshly installed AUv2 bundles after the runner registry notices them."""
-import pathlib, plistlib, subprocess, sys, time
+import os, pathlib, plistlib, subprocess, sys, time
 
 root, logs = map(pathlib.Path, sys.argv[1:3])
 logs.mkdir(parents=True, exist_ok=True)
@@ -16,8 +16,21 @@ for name, subtype, _ in units:
     subprocess.run(['codesign', '--verify', '--deep', '--strict', str(bundle)], check=True)
 
 # Only used on disposable CI runners, immediately after copying/installing AUs.
-# The registrar may still have its pre-install component list cached.
-subprocess.run(['killall', 'AudioComponentRegistrar'], check=False, capture_output=True)
+# The registrar may still have its pre-install component list cached. SIGTERM
+# did not invalidate that list on Intel runners; explicitly restart this
+# user's registrar after touching the installed bundle directories. Never
+# delete the user's AU cache or relax system signing/security settings.
+for path in [root] + [root / name for name, _, _ in units]:
+    try:
+        os.utime(path, None)
+    except PermissionError:
+        # System-wide PKG files belong to root; the installer already updated
+        # these paths. Validation itself must run as the normal host user.
+        print(f'Using installer-owned timestamp: {path}', flush=True)
+restart = subprocess.run(['killall', '-9', 'AudioComponentRegistrar'], text=True,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+(logs / 'au-registrar.log').write_text(f'exit={restart.returncode}\n{restart.stdout}')
+time.sleep(2)
 for attempt in range(15):
     listing = subprocess.run(['auval', '-a'], text=True, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT).stdout
@@ -28,6 +41,10 @@ for attempt in range(15):
     time.sleep(1)
 else:
     print(listing, flush=True)
+    diagnostics = subprocess.run(['log', 'show', '--last', '2m', '--style', 'compact',
+                                  '--predicate', 'process == "AudioComponentRegistrar"'],
+                                 text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    (logs / 'au-registration-diagnostics.log').write_text(diagnostics.stdout)
     raise RuntimeError('Installed AU components were not discovered')
 for _, subtype, filename in units:
     result = subprocess.run(['auval', '-v', 'aufx', subtype, 'Iisa'], text=True,
