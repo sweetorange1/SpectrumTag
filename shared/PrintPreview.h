@@ -50,7 +50,9 @@ inline juce::Image printPreview(const RecordingSnapshot& source,const PrintEdit&
     static const auto powers=[] {std::array<float,256> values{};for(int i=1;i<256;++i)values[i]=std::pow(10.f,(i*96.f/255.f-96.f)/10.f);return values;}();
     std::array<juce::PixelRGB,256> colours;
     for(int i=0;i<256;++i){auto c=spectrumColour(palette,i/255.f);colours[i].setARGB(255,c.getRed(),c.getGreen(),c.getBlue());}
-    juce::Image image(juce::Image::RGB,w,h,false);juce::Image::BitmapData pixels(image,juce::Image::BitmapData::writeOnly);
+    // macOS native RGB images are actually ARGB. Keep this CPU-side preview in
+    // packed software RGB so PixelRGB stores cannot corrupt alpha or neighbours.
+    juce::Image image(juce::Image::RGB,w,h,false,juce::SoftwareImageType{});juce::Image::BitmapData pixels(image,juce::Image::BitmapData::writeOnly);
     for(int y=0;y<h;++y){
         auto* row=reinterpret_cast<juce::PixelRGB*>(pixels.getLinePointer(y));
         for(int x=0;x<w;++x){const auto* frame=columns[x];float energy=0;
