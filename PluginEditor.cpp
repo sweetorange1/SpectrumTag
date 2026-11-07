@@ -526,7 +526,9 @@ public:
         // actual time/frequency footprint before fitting the source image to it.
         // This is view-only: selection must not move or re-render the audio.
         const auto footprint=editBounds(e);
-        if(footprint.getWidth()>0&&footprint.getHeight()>0&&e.imageAspect>0)
+        // Preserve the original pixel-rounded width when it already matches.
+        if(footprint.getWidth()>0&&footprint.getHeight()>0&&e.imageAspect>0
+            &&std::abs(e.imageAspect*footprint.getHeight()-footprint.getWidth())>1.f)
             view.zoomX*=e.imageAspect*footprint.getHeight()/footprint.getWidth();
         view.endTime=e.start+e.duration*.5+timeSpan()*.5;
         alignImageToPrint(e);
@@ -1583,7 +1585,7 @@ spectrumtag::PrintEdit SpectrumTagAudioProcessorEditor::editedSelection(bool reb
     auto& v=processor.getAPVTS();auto value=[&](const juce::String& id){return v.getRawParameterValue(id)->load();};auto& box=spectrumView->getImageBox();
     const int fft=1024<<juce::jlimit(0,2,(int)value(ParameterIDs::fftSize));
     const bool newMask=pendingFrequency||e.imagePath!=box.getImagePath()||e.imageMode!=(int)value(ParameterIDs::imageMode)||e.amount!=value(ParameterIDs::imageAmount)||e.fftSize!=fft;
-    if(pendingDuration){const float speed=value(ParameterIDs::speed);e.duration*=e.speed/speed;e.speed=speed;}
+    if(pendingDuration){const float speed=value(ParameterIDs::speed);e.duration*=e.speed/speed;e.speed=speed;e.viewZoom=spectrumView->zoom();}
     if(pendingFrequency){
         auto source=processor.recording().snapshot();const float nyquist=(float)(source?source->sampleRate:juce::jmax(44100.,processor.getSampleRate()))*.5f;
         const float oldTop=juce::jmin(e.displayTop,nyquist);const int oldScale=e.scaleMode;
