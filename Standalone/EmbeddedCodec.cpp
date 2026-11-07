@@ -15,7 +15,9 @@ juce::File resolveEncoder(juce::String& error){
     static std::mutex mutex;static juce::File verified;
     std::lock_guard<std::mutex> guard(mutex);
     if(verified.existsAsFile())return verified;
-    const auto cache=juce::SystemStats::getEnvironmentVariable("SPECTRUMTAG_RUNTIME_CACHE","D:/Codex/Temp/SpectrumTag-Standalone/Runtime");
+    const auto defaultCache=juce::File("D:/").isDirectory() ? juce::File("D:/Codex/Temp/SpectrumTag-Standalone/Runtime")
+        : juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("SpectrumTag/Runtime");
+    const auto cache=juce::SystemStats::getEnvironmentVariable("SPECTRUMTAG_RUNTIME_CACHE",defaultCache.getFullPathName());
     const auto folder=juce::File(cache).getChildFile(juce::String(embedded::exeHash).substring(0,20));
     juce::InterProcessLock lock("SpectrumTagCodec-"+juce::String(embedded::exeHash).substring(0,20));
     if(!lock.enter(30000)){error="Codec cache is busy. Please try again.";return {};}
@@ -41,10 +43,21 @@ juce::File resolveEncoder(juce::String& error){
         if(!temporary.overwriteTargetFileWithTemporary()){error="Cannot update codec cache: "+target.getFullPathName();return {};}
     }
     verified=folder.getChildFile("ffmpeg.exe");return verified;
+#elif JUCE_MAC
+    // The running slice, rather than the hardware, determines the helper. This
+    // also works when the universal application is launched through Rosetta.
+   #if defined(__arm64__) || defined(__aarch64__)
+    constexpr auto architecture = "arm64";
+   #else
+    constexpr auto architecture = "x86_64";
+   #endif
+    const auto contents = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+        .getParentDirectory().getParentDirectory();
+    const auto codec = contents.getChildFile("Helpers").getChildFile(architecture).getChildFile("ffmpeg");
+    if (codec.existsAsFile()) return codec;
+    error = "The bundled audio/video codec is missing. Reinstall the complete SpectrumTag application.";
+    return {};
 #else
-    // Non-Windows packaging is a separate platform task. Windows development
-    // builds without an embedded resource give a clear error, never silently
-    // depend on a folder beside a supposedly portable executable.
     error="This standalone build has no embedded codec. Build with SPECTRUMTAG_STANDALONE_RUNTIME_DIR.";return {};
 #endif
 }

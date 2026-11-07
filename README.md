@@ -1,5 +1,13 @@
 # SpectrumTag
 
+本 Fork 用于 Ziqing-Gu 的开发与测试；原版项目请访问 [sweetorange1/SpectrumTag](https://github.com/sweetorange1/SpectrumTag)。
+
+## 1.4.20 跨平台构建
+
+当前开发版本统一为 **1.4.20**：Windows 实时 VST3、ARA VST3、独立 EXE，以及 macOS Universal 实时/ARA VST3、实时/ARA AU、独立 App。macOS 音视频编解码器随 App 封装，按运行架构选取；不依赖用户安装 Homebrew 或 FFmpeg。下面的 Windows Stable 交接记录保留历史版本信息，1.4.20 尚未由用户指定为 Stable。
+
+手动运行 Actions 的 `Cross-platform installers` 工作流可构建和验证两个 Mac 架构，再合并为可选择组件的 PKG。安装包使用 macOS 15 构建基线，尚无 Apple Developer ID 签名或公证。详见 `docs/INSTALL-ZH-CN.txt` 和 `docs/INSTALL-EN.txt`（与安装包一并提供）。
+
 把图片转换成黑白频域掩模，将图形打印进音频的频谱。基于 iisaacbeats.cn / sweetorange1 的 SpectrumTag，保留原项目署名、资源与 AGPL-3.0 许可。
 
 ## 本次 Windows Stable 交接

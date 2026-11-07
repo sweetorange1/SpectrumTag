@@ -36,10 +36,10 @@ struct Preferences {
         auto overridePath=juce::SystemStats::getEnvironmentVariable("SPECTRUMTAG_PREFS_DIR",{});
         if(overridePath.isNotEmpty())return juce::File(overridePath).getChildFile("preferences.xml");
        #if JUCE_WINDOWS
-        return juce::File("D:\\Codex\\PluginData\\SpectrumTag\\preferences.xml");
-       #else
-        return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("SpectrumTag/preferences.xml");
+        if (juce::File("D:/").isDirectory())
+            return juce::File("D:\\Codex\\PluginData\\SpectrumTag\\preferences.xml");
        #endif
+        return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("SpectrumTag/preferences.xml");
     }
     static Preferences read() {
         Preferences p;

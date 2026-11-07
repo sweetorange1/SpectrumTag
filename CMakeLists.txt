@@ -24,7 +24,7 @@ if(APPLE)
     message(STATUS "[SpectrumTag] macOS deployment    : ${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif()
 
-project(SpectrumTag VERSION 1.4.18 LANGUAGES C CXX)
+project(SpectrumTag VERSION 1.4.20 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,7 +41,7 @@ FetchContent_MakeAvailable(juce)
 juce_add_plugin(
         SpectrumTag
         PRODUCT_NAME "SpectrumTag"
-        VERSION 1.4.18
+        VERSION ${PROJECT_VERSION}
         COMPANY_NAME "iisaacbeats.cn"
         BUNDLE_ID "cn.iisaacbeats.SpectrumTag"
         # 四字符码必须全局唯一：VST3 / AU 的 class ID 由
@@ -116,7 +116,7 @@ target_link_libraries(SpectrumTag PRIVATE juce::juce_audio_utils juce::juce_dsp 
 juce_add_gui_app(
         SpectrumTagStandalone
         PRODUCT_NAME "SpectrumTag"
-        VERSION 1.4.19
+        VERSION ${PROJECT_VERSION}
         COMPANY_NAME "iisaacbeats.cn"
         BUNDLE_ID "cn.iisaacbeats.SpectrumTagStandalone"
         ICON_BIG "UI.png"
@@ -220,7 +220,7 @@ if(SPECTRUMTAG_BUILD_ARA)
     endif()
     juce_add_plugin(SpectrumTagARA
         PRODUCT_NAME "SpectrumTag ARA"
-        VERSION 1.4.18
+        VERSION ${PROJECT_VERSION}
         COMPANY_NAME "iisaacbeats.cn"
         BUNDLE_ID "cn.iisaacbeats.SpectrumTagARA"
         PLUGIN_MANUFACTURER_CODE Iisa PLUGIN_CODE SpAr

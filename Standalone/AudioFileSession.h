@@ -6,7 +6,8 @@ namespace spectrumtag::standalone {
 struct FileInfo {juce::File file;double rate=0;int channels=0,bits=24;bool floating=false,video=false;juce::String codec;};
 inline juce::File workFolder(){
 #if JUCE_WINDOWS
-    juce::File folder("D:/Codex/Temp/SpectrumTag-Standalone");
+    auto folder=juce::File("D:/").isDirectory() ? juce::File("D:/Codex/Temp/SpectrumTag-Standalone")
+        : juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("SpectrumTag/Temporary");
 #else
     auto folder=juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("SpectrumTag/Temporary");
 #endif

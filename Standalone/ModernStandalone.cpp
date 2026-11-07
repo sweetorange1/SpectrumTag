@@ -6,6 +6,12 @@
 using namespace spectrumtag;
 using namespace spectrumtag::standalone;
 namespace {
+juce::File defaultMediaFolder() {
+#if JUCE_WINDOWS
+    if (juce::File("D:/").isDirectory()) return juce::File("D:/Codex/Outputs");
+#endif
+    return juce::File::getSpecialLocation(juce::File::userMusicDirectory);
+}
 class Player final : public juce::AudioAppComponent,private juce::Timer {
 public:
     SpectrumTagAudioProcessor processor;
@@ -38,7 +44,7 @@ private:
     std::unique_ptr<juce::AudioProcessorEditor> editor;std::unique_ptr<Session> session;std::unique_ptr<juce::FileChooser> chooser;
     juce::TextButton play,stop,exportButton,device;juce::Label status;std::atomic<bool> playing{false};std::atomic<double> position{0},seek{-1};double rate=48000;uint64_t seen=0;
     void load(const juce::File& file){if(session->busy())return;playing=false;session->load(file);}
-    void chooseAudio(){if(session->busy())return;chooser=std::make_unique<juce::FileChooser>(processor.getEditorState().chinese?juce::String::fromUTF8("加载音频 / 视频"):"Load audio / video",juce::File("D:/Codex/Outputs"),"*.wav;*.wave;*.aif;*.aiff;*.flac;*.ogg;*.mp3;*.m4a;*.aac;*.wma;*.opus;*.mp4;*.m4v;*.mov;*.mkv;*.webm;*.avi");
+    void chooseAudio(){if(session->busy())return;chooser=std::make_unique<juce::FileChooser>(processor.getEditorState().chinese?juce::String::fromUTF8("加载音频 / 视频"):"Load audio / video",defaultMediaFolder(),"*.wav;*.wave;*.aif;*.aiff;*.flac;*.ogg;*.mp3;*.m4a;*.aac;*.wma;*.opus;*.mp4;*.m4v;*.mov;*.mkv;*.webm;*.avi");
         chooser->launchAsync(juce::FileBrowserComponent::openMode|juce::FileBrowserComponent::canSelectFiles,[safe=juce::Component::SafePointer<Player>(this)](const juce::FileChooser& c){if(safe&&c.getResult().existsAsFile())safe->load(c.getResult());});}
     void chooseExport(){
         if(session->busy()||processor.recording().isBusy()||!session->exportable())return;
@@ -51,7 +57,7 @@ private:
     void chooseExportFile(bool audioOnly){
         const auto info=session->current();const auto ext=info.video&&audioOnly?audioExtension(info):info.file.getFileExtension();
         if(ext.isEmpty()){juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,"SpectrumTag",processor.getEditorState().chinese?juce::String::fromUTF8("暂不支持以原音轨编码导出此文件。原文件保持不变。"):"This source audio codec cannot be exported without changing format.");return;}
-        auto target=juce::File("D:/Codex/Outputs").getNonexistentChildFile(info.file.getFileNameWithoutExtension()+"_SpectrumTag",ext);
+        auto target=defaultMediaFolder().getNonexistentChildFile(info.file.getFileNameWithoutExtension()+"_SpectrumTag",ext);
         chooser=std::make_unique<juce::FileChooser>(processor.getEditorState().chinese?juce::String::fromUTF8(audioOnly?"导出原格式音轨":"按原格式导出"):audioOnly?"Export audio in source codec":"Export in original format",target,"*"+ext);
         chooser->launchAsync(juce::FileBrowserComponent::saveMode|juce::FileBrowserComponent::canSelectFiles|juce::FileBrowserComponent::warnAboutOverwriting,[safe=juce::Component::SafePointer<Player>(this),audioOnly](const juce::FileChooser& c){if(safe&&c.getResult()!=juce::File{})safe->session->exportTo(c.getResult(),audioOnly);});
     }
