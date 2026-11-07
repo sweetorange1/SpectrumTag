@@ -14,6 +14,15 @@ def rpaths(path):
 
 def main():
     p = argparse.ArgumentParser(); p.add_argument('encoder'); p.add_argument('app'); p.add_argument('arch'); a = p.parse_args()
+    # Recent Homebrew bottles can contain linker metadata unsupported by the
+    # runner's default Xcode 16 tools. Use the newest installed stable tools for
+    # relocation only; this does not change the plug-in compiler or minimum OS.
+    xc = []
+    for item in pathlib.Path('/Applications').glob('Xcode_*.app'):
+        match = re.fullmatch(r'Xcode_([0-9.]+)\.app', item.name)
+        if match: xc.append((tuple(map(int, match[1].split('.'))), item))
+    if xc: os.environ['DEVELOPER_DIR'] = str(max(xc)[1] / 'Contents/Developer')
+    print('Relocation tool:', run('xcrun', '--find', 'install_name_tool'), flush=True)
     source = pathlib.Path(a.encoder).resolve()
     dest = pathlib.Path(a.app) / 'Contents' / 'Helpers' / a.arch
     libs = dest / 'lib'; libs.mkdir(parents=True, exist_ok=True)
@@ -38,14 +47,18 @@ def main():
                 names[dependency.name] = dependency; mapped[dependency] = libs / dependency.name; pending.append(dependency)
     for original, copied in mapped.items():
         shutil.copy2(original, copied); copied.chmod(0o755)
-        subprocess.run(['codesign', '--remove-signature', str(copied)], capture_output=True)
-        if copied != dest / 'ffmpeg': subprocess.check_call(['install_name_tool', '-id', '@rpath/' + copied.name, str(copied)])
+        # Keep the original signature's link-edit layout while editing and
+        # replace the signature afterwards. Removing it first can leave an
+        # invalid __LINKEDIT extent in newer bottles with older OS tools.
+        edits = ['install_name_tool']
+        if copied != dest / 'ffmpeg': edits += ['-id', '@rpath/' + copied.name]
         for old, dependency in edges[original]:
             replacement = '@loader_path/' + ('lib/' if original == source else '') + mapped[dependency].name
-            subprocess.check_call(['install_name_tool', '-change', old, replacement, str(copied)])
+            edits += ['-change', old, replacement]
         for rpath in rpaths(copied):
             if rpath.startswith(('/opt/homebrew', '/usr/local')):
-                subprocess.check_call(['install_name_tool', '-delete_rpath', rpath, str(copied)])
+                edits += ['-delete_rpath', rpath]
+        if len(edits) > 1: subprocess.check_call(edits + [str(copied)])
         # These are copied helpers, never files in the build machine's Homebrew cellar.
         subprocess.check_call(['codesign', '--force', '--sign', '-', str(copied)])
         for link in dependencies(copied):

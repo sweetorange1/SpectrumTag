@@ -1,6 +1,20 @@
 # SpectrumTag 项目总览与开发过程
 
-维护日期：2026-11-06。本文件是后续维护的统一入口：记录当前架构、需求演变、1.4.4–1.4.19 的实施过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
+维护日期：2026-11-07。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
+
+## 1.4.20 跨平台构建进展
+
+用户追加要求把当前源码同步到自己的 Fork，并生成 Windows 和 macOS 安装包，因此不再仅把 Mac 编译交给上游。新一轮产品版本统一为 **1.4.20**；历史 Stable 和已冻结 Plan B 保留不动。
+
+- 用户 Fork 的 `main` 已在保留原有 README 提交历史的前提下合入现代源码；新增 `cross-platform-1.4.20` 开发分支。朋友的 PR #2 不自动合并，也不把本轮 Mac 工作写成此前的交付结果。
+- Windows 实时/ARA VST3 和独立程序均已编译为 1.4.20；完整处理器回归、ARA 模拟宿主回归、两个 pluginval strictness 5 验证，以及独立版音视频加载/原格式导出回归通过。
+- Mac 使用独立的 Apple Silicon 和 Intel 原生构建，再用 lipo 合并 VST3、AU 与独立 App。独立版从 App 内的对应架构 Helpers 目录启动 FFmpeg；封装依赖闭包并改写加载路径，不要求用户安装 Homebrew。
+- 文件选择器使用平台合适的目录。Windows 保留现有 D 盘习惯，无 D 盘的机器回退用户数据目录；Mac 不使用 Windows 盘符，不向 App bundle 写入缓存。
+- 首轮 Apple 编译发现测试 harness 的 CoreFoundation 头文件与 JUCE 的 Point 名称冲突，已调整系统头文件的包含顺序。这个问题位于测试入口，不是 Print DSP 的算法变化。
+- Windows 新安装器延续上游 AppId，提供三个组件选项并携带按需安装的微软 x64 运行库；Mac 安装器规划五个组件。双语说明区分 Cubase ARA 扩展与 Logic 首插槽/Rosetta 的入口，说明签名、扫描、字体、缓存与媒体限制。
+- Mac 自动验证和 PKG 交付结果仍待本轮构建完成后补充；不能据 Windows 测试通过推定 Mac 或真实 DAW 工程已通过。
+
+后文中“当前 Windows Stable”“Mac 交给上游”等内容为 2026-11-06 的历史交接基线；本节记录追加工作的范围与进度。
 
 本次记录依据活动源码、逐版开发/交付记录和已提交的 [PR #2](https://github.com/sweetorange1/SpectrumTag/pull/2) 整理，不将讨论过但取消的方案写成当前功能，也不将自动测试通过写成完整宿主验收。末尾保留原作者 1.4.3 基线文档的完整原文供追溯。
 

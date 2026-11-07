@@ -53,11 +53,12 @@ Windows 若显示“Windows 已保护你的电脑”，确认文件来自本次�
 
 五、在宿主中打开正确的版本
 实时版：在普通音频效果器插入菜单中选择 SpectrumTag。未 Record 时为实时打印试听；Record 后可在录音范围编辑已打印内容。Clear Record 回到未录制模式。
-ARA：使用宿主的“扩展 / ARA”入口，将 SpectrumTag ARA 应用到音频事件。Cubase 中先选中音频事件，再使用扩展入口；不要把 ARA 专用容器当成普通插入效果。
+ARA：通过宿主的 ARA 集成加载 SpectrumTag ARA。Cubase 中先选中音频事件，再使用“扩展 / ARA”入口；在 Cubase 里不要把 ARA 专用容器当成普通插入效果。
 ARA 版只有 Load / Clear，没有 Record。Load 从宿主读取当前轨道相关音频；Clear 清空已加载内容及 Print 修改。宿主时间位置必须由 ARA 模型提供，不要手动拼接文件起点。
 ARA 是否可用取决于宿主、版本、授权版本和 ARA 支持；“支持 AU”或“支持 VST3”本身不代表支持 ARA。
 Logic 使用 AU，Cubase 使用 VST3。ARA AU 还需要宿主实际提供 ARA 扩展支持。若 Apple Silicon 上的宿主没有显示 ARA 入口，请按该宿主的官方说明确认是否需要 Rosetta；不要为了普通实时版一律强制 Rosetta。
 Apple 当前说明：在 Apple Silicon 上，Logic Pro 使用第三方 ARA 需要以 Rosetta 启动。完全退出 Logic 后，在 Finder 中选择 Logic Pro，打开“显示简介”，勾选“使用 Rosetta 打开”再启动。这里的限制来自 Logic 的 ARA 运行方式；实时 AU 和独立版可原生运行。参考：https://support.apple.com/102082
+Logic 的 ARA 入口不同于 Cubase：应选中目标音频轨，将 SpectrumTag ARA（AU）放在第一个 Audio FX 插槽。初次打开为空时，可播放后停止，再点击 Load。此处遵循 Logic 的 ARA 接入约定，不代表本包已完成真实 Logic 工程验收；若仍提示未绑定 ARA，检查 Rosetta、轨道选择、插槽位置与宿主版本。接入流程参考：https://helpcenter.celemony.com/M5/doc/melodyneStudio5/en/M5tour_LogicARA_InsertVorbereitungen?env=logic
 独立版：打开 SpectrumTag，点击 Load 或从资源管理器/Finder 拖入音频或视频，选择音频设备后播放。视频导出可选择保留原画面的视频，或只导出音轨。
 
 六、常见问题
