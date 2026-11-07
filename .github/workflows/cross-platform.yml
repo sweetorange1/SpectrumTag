@@ -20,9 +20,10 @@ jobs:
     timeout-minutes: 90
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
-      SPECTRUMTAG_PREFS_DIR: ${{ runner.temp }}/spectrumtag-preferences
     steps:
       - uses: actions/checkout@v4
+      - name: Isolate validation preferences
+        run: echo "SPECTRUMTAG_PREFS_DIR=$RUNNER_TEMP/spectrumtag-preferences" >> "$GITHUB_ENV"
       - name: Build native VST3, ARA, AU and standalone
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
