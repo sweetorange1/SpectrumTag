@@ -3,8 +3,13 @@ on:
   workflow_dispatch:
     inputs:
       native_run_id:
-        description: Successful native build run containing both native architecture archives
+        description: Validated native build run containing the arm64 archive
         required: true
+        type: string
+      intel_run_id:
+        description: Optional separately resumed Intel archive run
+        required: false
+        default: ''
         type: string
 permissions:
   contents: read
@@ -27,17 +32,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NATIVE_RUN: ${{ inputs.native_run_id }}
+          INTEL_RUN: ${{ inputs.intel_run_id || inputs.native_run_id }}
         run: |
           [[ "$NATIVE_RUN" =~ ^[0-9]+$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NATIVE_RUN" > native-run.json
-          native_sha=$(python3 -c 'import json; print(json.load(open("native-run.json"))["head_sha"])')
-          git diff --exit-code "$native_sha" HEAD -- CMakeLists.txt PluginProcessor.cpp PluginProcessor.h PluginEditor.cpp PluginEditor.h shared ARA Standalone source otf packaging/macos/bundle_codec.py
+          [[ "$INTEL_RUN" =~ ^[0-9]+$ ]]
+          for run in "$NATIVE_RUN" "$INTEL_RUN"; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" > "native-run-$run.json"
+            native_sha=$(python3 -c "import json; print(json.load(open('native-run-$run.json'))['head_sha'])")
+            git diff --exit-code "$native_sha" HEAD -- CMakeLists.txt PluginProcessor.cpp PluginProcessor.h PluginEditor.cpp PluginEditor.h shared ARA Standalone source otf packaging/macos/bundle_codec.py
+          done
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.native_run_id }}
-          pattern: native-*
-          merge-multiple: true
+          name: native-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.intel_run_id || inputs.native_run_id }}
+          name: native-x86_64
       - name: Reuse native binaries and package current installation guides
         run: |
           mkdir arm64 x86_64
@@ -62,7 +75,7 @@ jobs:
         with:
           name: macOS-package-validation
           path: |
-            native-run.json
+            native-run-*.json
             package.log
             install.log
             installed-codec.json

@@ -13,7 +13,7 @@ def merge_bundle(arm, intel, target):
         if 'Mach-O' in kind:
             if not other.is_file(): raise RuntimeError(f'Missing Intel slice: {other}')
             call('lipo', '-create', file, other, '-output', target / file.relative_to(arm))
-            call('lipo', '-verify_arch', 'arm64', 'x86_64', target / file.relative_to(arm))
+            call('lipo', target / file.relative_to(arm), '-verify_arch', 'arm64', 'x86_64')
     helpers = intel / 'Contents' / 'Helpers' / 'x86_64'
     if helpers.exists(): shutil.copytree(helpers, target / 'Contents' / 'Helpers' / 'x86_64')
     notices = intel / 'Contents' / 'Resources' / 'ThirdParty' / 'x86_64'
