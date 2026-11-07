@@ -1,5 +1,7 @@
 # SpectrumTag 1.4.27 diagnostics and installer verification
 
+Status update, 2026-11-08: after the delivery recorded below, the user designated **1.4.27 Stable** and requested a new Plan B. See [the Stable record](STABLE_1.4.27.md). This is a documentation-only designation; existing installers and test results are reused. The original delivery-stage status statements below are retained as history. The friend's Mac display issue is still unconfirmed, and this designation does not authorize a new upstream PR.
+
 2026-11-08. Product source: `f7e4b1e17f2aeab73fe3a0f6b2c51d01246ec363`. This is a numbered diagnostic delivery, not a user-designated Stable release. The friend's Mac display failure is still under investigation; exported audio reportedly contains the Print. The user explicitly excludes opposite-polarity source music. The separate phase-cancellation test must not be presented as the proven cause of that field report.
 
 ## Diagnostic workflow

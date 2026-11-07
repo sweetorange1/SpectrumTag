@@ -1,5 +1,7 @@
 # Windows implementation handoff
 
+> Current status (2026-11-08): all delivered targets now use **1.4.27**, designated Stable by the user. Existing Windows Setup, Universal macOS PKG and platform validation are documented in [INSTALLERS_1.4.27.md](INSTALLERS_1.4.27.md). The user has authorized a new upstream PR; start with [UPSTREAM_HANDOFF_1.4.27.md](UPSTREAM_HANDOFF_1.4.27.md). The version split and Windows-only delivery statements below are historical.
+
 > Historical baseline: this document records the 1.4.18/1.4.19 Stable handoff. The subsequent 1.4.20 cross-platform work is tracked in PROJECT_OVERVIEW.md and the installation guides. Do not infer current target versions from the historical values below.
 
 ## Scope and version identity

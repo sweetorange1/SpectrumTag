@@ -19,11 +19,11 @@ SpectrumTag 将图片转换成黑白掩模，并通过处理音频的频率成�
 | 项目 | 当前状态 |
 | --- | --- |
 | 当前交付 | **1.4.27**，带“导出诊断”的 Windows Setup 与 macOS Universal PKG，附中英文 TXT 安装说明 |
-| 已确认 Stable | **Windows 独立版 1.4.24**；其他组件沿用各自历史状态，详见[开发总览](PROJECT_OVERVIEW.md) |
+| 用户指定 Stable | **1.4.27**（2026-11-08），沿用已交付的 Windows 与 Mac 安装包；见 [Stable / Plan B 记录](docs/STABLE_1.4.27.md) |
 | Windows 安装包 | 实时 VST3、ARA 专用 VST3、独立程序；适用于 Windows 10/11 x64 |
 | macOS 安装包 | 实时/ARA VST3、实时/ARA AU、独立 App；目标为 macOS 15+，Apple Silicon + Intel |
 
-下载 [1.4.27 安装包与 TXT 说明](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.27)。Windows 实际安装检查、两个 Mac 架构的音视频及 AU/VST3 检查、Universal PKG 实际安装检查均已通过，详见[验证记录](docs/INSTALLERS_1.4.27.md)。**本版用于调查 Mac“Print 完成但内部不显示”的现场问题，尚未确认该问题修复，也未指定为 Stable。** 复现后点右上角“导出诊断”，将保存的 JSON 手动发回；报告不包含音乐、图片或工程，也不自动上传。上游旧 PR 已关闭，等待用户亲自确认 Mac 版后再提交新 PR。
+下载 [1.4.27 安装包与 TXT 说明](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.27)。Windows 实际安装检查、两个 Mac 架构的音视频及 AU/VST3 检查、Universal PKG 实际安装检查均已通过，详见[验证记录](docs/INSTALLERS_1.4.27.md)。**用户已指定本版为 Stable，并确认本次 Mac 独立版打印显示正常；这不代表所有 DAW 已逐一实测。** 如再次遇到显示问题，可点右上角“导出诊断”保存 JSON；报告不包含音乐、图片或工程，也不自动上传。用户已授权向原作者提交新的合并请求，详见[合并交接](docs/UPSTREAM_HANDOFF_1.4.27.md)。
 
 ### 三个版本怎么选？
 
@@ -107,11 +107,11 @@ SpectrumTag converts an image to a monochrome mask and processes audio frequenci
 | Item | Status |
 | --- | --- |
 | Current delivery | **1.4.27**, Windows Setup and macOS Universal PKG with Diagnostics, plus Chinese/English TXT installation guides |
-| User-designated Stable | **Windows standalone 1.4.24**; other components retain their documented historical status |
+| User-designated Stable | **1.4.27** (2026-11-08), reusing the delivered Windows and Mac installers; see the [Stable / Plan B record](docs/STABLE_1.4.27.md) |
 | Windows installer | Realtime VST3, dedicated ARA VST3 and standalone; Windows 10/11 x64 |
 | macOS installer | Realtime/ARA VST3, realtime/ARA AU and standalone App; macOS 15+, Apple Silicon + Intel |
 
-Download the [1.4.27 installers and TXT guides](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.27). Actual Windows installation, native media/AU/VST3 checks on both Mac architectures, and Universal PKG installation have passed; see the [verification record](docs/INSTALLERS_1.4.27.md). **This version investigates the Mac report that completed Prints are missing from the internal display; that field issue is not yet confirmed fixed, and this version is not designated Stable.** Click Diagnostics immediately after reproducing the issue and send the saved JSON manually. No media, images, project files or automatic upload. The old upstream PR is closed; a new PR must wait for the user's personal Mac validation and explicit confirmation.
+Download the [1.4.27 installers and TXT guides](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.27). Actual Windows installation, native media/AU/VST3 checks on both Mac architectures, and Universal PKG installation have passed; see the [verification record](docs/INSTALLERS_1.4.27.md). **The user designated this version Stable and confirmed visible Prints in the reported Mac standalone test; this does not constitute field validation of every DAW.** If a display issue recurs, Diagnostics saves a JSON with no media, images, project files or automatic upload. The user has now authorized a new upstream pull request; see the [merge handoff](docs/UPSTREAM_HANDOFF_1.4.27.md).
 
 ### Choose your edition
 

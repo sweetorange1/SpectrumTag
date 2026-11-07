@@ -1,5 +1,7 @@
 # Change history
 
+2026-11-08: the user designated the delivered **1.4.27 Stable** and requested a new Plan B source snapshot. The existing Windows and macOS installers, product version and verification are reused; only status/documentation changes. The reported Mac Print display issue remains under investigation, and installer destination changes are deferred by the user. See `docs/STABLE_1.4.27.md`.
+
 2026-11-07: the user designated the delivered Windows standalone **1.4.24 Stable** and requested a new Plan B source snapshot. This is a status/documentation change only; the existing EXE and version are retained. See `docs/STABLE_1.4.24.md`. The earlier version history below retains its original identities.
 
 This is a concise record of the Windows development delivered after upstream 1.4.3. Features were iterated during development; the README and handoff describe the current behaviour. Windows plugins 1.4.18 and standalone 1.4.19 were designated Stable on 2026-11-06. Earlier Stable decisions and delivery versions are not retroactively renamed.
