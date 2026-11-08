@@ -1,12 +1,18 @@
 # SpectrumTag
 
+> ### 特别感谢 / Special Thanks — [@Ziqing-Gu](https://github.com/Ziqing-Gu)
+>
+> 从 1.4.4 到 1.4.27，录音与 Print 编辑、专用 ARA 版本、独立版重构、频谱视频导出，以及 Windows / macOS 全套安装包与跨平台验证，几乎都由 **Ziqing-Gu** 完成。这些工作全部无偿贡献给本项目 —— 没有他的投入，就没有今天这个版本。谢谢！
+>
+> From 1.4.4 through 1.4.27, **Ziqing-Gu** built nearly everything: recorded and editable Prints, the dedicated ARA edition, the rebuilt standalone, spectrum video export, and the full Windows / macOS installer and cross-platform validation pipeline. All of it was contributed to this project for free. This release would not exist without him. Thank you!
+
 **把图片打印进声音的频谱。 / Print images into the spectrum of sound.**
 
 [中文](#中文) · [English](#english) · [下载 / Downloads](https://github.com/sweetorange1/SpectrumTag/releases) · [更新记录 / Changelog](CHANGELOG.md) · [开发总览 / Development overview](PROJECT_OVERVIEW.md)
 
-[SpectrumTag](https://github.com/sweetorange1/SpectrumTag) 由 **iisaacbeats.cn / sweetorange1** 创作。1.4.4–1.4.27 的录音编辑、ARA、独立版与跨平台改进由 **Ziqing-Gu** 贡献，保留原作者署名与 AGPL-3.0 许可。
+[SpectrumTag](https://github.com/sweetorange1/SpectrumTag) 由 **iisaacbeats.cn / sweetorange1** 创作。1.4.4–1.4.27 的录音编辑、ARA、独立版与跨平台改进由 **Ziqing-Gu** 贡献（详见上方致谢），保留原作者署名与 AGPL-3.0 许可。
 
-[SpectrumTag](https://github.com/sweetorange1/SpectrumTag) was created by **iisaacbeats.cn / sweetorange1**. Recording/editing, ARA, standalone and cross-platform improvements through 1.4.4–1.4.27 are contributed by **Ziqing-Gu**, retaining the original attribution and AGPL-3.0 license.
+[SpectrumTag](https://github.com/sweetorange1/SpectrumTag) was created by **iisaacbeats.cn / sweetorange1**. Recording/editing, ARA, standalone and cross-platform improvements through 1.4.4–1.4.27 are contributed by **Ziqing-Gu** (see the dedication above), retaining the original attribution and AGPL-3.0 license.
 
 ## 中文
 
@@ -171,7 +177,7 @@ See the [development overview](PROJECT_OVERVIEW.md), [changelog](CHANGELOG.md), 
 
 ## 署名与许可 / Credits and license
 
-原项目与资源 / Original project and assets: **iisaacbeats.cn / sweetorange1**. Fork development: **Ziqing-Gu**.
+原项目与资源 / Original project and assets: **iisaacbeats.cn / sweetorange1**. 1.4.4–1.4.27 的开发贡献 / Development contributions for 1.4.4–1.4.27: **Ziqing-Gu** — 特别感谢 / with special thanks.
 
 项目许可保持 **GNU Affero General Public License v3.0 (AGPL-3.0)**，以 [LICENSE](LICENSE) 完整文本为准。第三方依赖及媒体编解码器保留各自许可与声明，随相应安装组件提供。
 
