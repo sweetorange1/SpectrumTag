@@ -52,3 +52,5 @@ test/
 # Temporary files
 *.log
 *.tmp
+__pycache__/
+*.pyc

@@ -1,0 +1,94 @@
+SpectrumTag 1.4.27 — Windows / macOS 安装与常见问题
+
+本次用途：收集 Mac“Print 已完成但内部不显示”的现场信息。
+尚未确认该现场问题已经修复；反相立体声测试发现的是另一个显示缺陷。
+安装后先确认插件左上角显示 1.4.27。复现问题后，先不要关闭窗口、播放或切换刻度，直接点右上角“导出诊断”（英文界面为 Diagnostics）。
+保存对话框默认桌面，可以选择其他位置。把生成的 SpectrumTag-1.4.27-Diagnostics-日期时间.json 手动发回来即可；VST3、AU、ARA 如都发生，可分别保存一份。
+JSON 只含系统/宿主规格、参数和显示处理状态及聚合统计。不包含音乐、图片、截图、工程、原文件名或路径，不会自动上传。无需单独安装扫描软件，也无需提供工程。
+诊断不会重新执行 Print 或强制刷新显示；报告在保存对话框出现前取得。若新版恰好已经正常，也可以保存报告并告知“已显示”。
+
+一、选择安装包
+Windows：SpectrumTag-1.4.27-Windows-Setup.exe，适用于 Windows 10/11 64 位。
+macOS：SpectrumTag-1.4.27-macOS.pkg，适用于 macOS 15 或更新版本，包含 Apple Silicon 和 Intel 双架构。
+这两个包的所有组件版本均为 1.4.27。此前 Windows 独立版 1.4.24 保留其 Stable 状态；本版未自动指定为 Stable。自动验证与真实 DAW 工程验收应分别看待。
+
+Windows 包：实时 VST3、ARA 专用 VST3、独立 EXE。
+Mac 包：实时 VST3、ARA 专用 VST3、实时 AU、ARA AU、独立 App。
+“VST”在此指 VST3，没有 VST2 文件。安装时可以选择需要的组件。
+独立程序可加载/拖入音频或视频音轨，播放、Print、导出；不包含视频画面编辑器。
+
+二、安装前
+保存工程，完全退出 Cubase、Logic、Studio One、REAPER 及其他使用该插件的宿主，并关闭正在运行的 SpectrumTag 独立版。
+先在测试工程验证新版本。请保留旧工程、原始音视频和旧版安装包。
+不要只复制 VST3 或 App 文件夹内部的某个二进制文件；整个 bundle 才是完整产品。
+不要同时在用户级和系统级目录保留多个同名版本，否则宿主可能扫描到旧版本。
+升级同路径版本：关闭宿主后运行新安装包，覆盖对应组件，再重启宿主扫描。若旧版是手工复制到其他目录的，先把确认过的旧 SpectrumTag 完整 bundle 移到插件目录之外备份，再安装新版；不要删除原音频、工程、用户设置或整个插件目录。
+Mac 还要检查 ~/Library/Audio/Plug-Ins/VST3 和 ~/Library/Audio/Plug-Ins/Components，避免它们与本包的 /Library 路径同时存在旧副本。Windows 则检查先前自行设置的 VST3 扫描目录。
+
+三、Windows
+双击安装 EXE，允许系统安装权限，选择组件和独立程序目录。
+插件固定安装到：C:\Program Files\Common Files\VST3\iisaacbeats.cn\
+  SpectrumTag.vst3
+  SpectrumTag ARA.vst3
+独立程序默认安装到：C:\Program Files\iisaacbeats.cn\SpectrumTag\SpectrumTag.exe
+可以在安装界面为独立程序选择其他磁盘；插件仍使用标准 VST3 路径。
+安装包附带 Microsoft Visual C++ x64 运行库，仅在缺少所需版本时安装。若提示 VCRUNTIME140/MSVCP140 缺失，请重新运行安装包或使用微软官方运行库安装程序，不要从第三方网站单独下载 DLL。
+无需把独立程序旁边再放一个 Runtime 文件夹：编码器已嵌入 EXE，首次使用时会验证并解压到缓存。
+有 D 盘时默认缓存位于 D:\Codex\Temp\SpectrumTag-Standalone，偏好设置和录音数据位于 D:\Codex\PluginData\SpectrumTag。
+没有 D 盘的电脑使用当前用户应用数据目录下的 SpectrumTag；不要将插件安装目录当成可写缓存目录。
+卸载可使用 Windows“已安装的应用”。卸载不会主动清理用户工程、原始媒体或外部录音缓存。
+
+四、macOS
+双击 PKG，按步骤安装。可在自定安装中选择组件。
+独立程序：/Applications/SpectrumTag.app
+VST3：/Library/Audio/Plug-Ins/VST3/SpectrumTag.vst3
+      /Library/Audio/Plug-Ins/VST3/SpectrumTag ARA.vst3
+AU：/Library/Audio/Plug-Ins/Components/SpectrumTag.component
+    /Library/Audio/Plug-Ins/Components/SpectrumTag ARA.component
+两个处理器架构均已合并在同一套应用/插件中，无需另选 ARM 或 Intel 包。独立版内含两种架构的编解码器，不需要安装 Homebrew 或 FFmpeg。
+用户数据位于 ~/Library/SpectrumTag；加载对话框从“音乐”目录开始，导出默认保存到桌面，也可选择其他目录。请给缓存和导出预留足够空间。
+
+签名状态：本次 Mac 应用/插件使用 ad-hoc 签名；PKG 没有 Apple Developer ID Installer 签名，也没有 Apple 公证。Windows 安装 EXE 没有商业代码签名。
+这不等于已通过 Apple/Microsoft 的发行者认证。仅在你确认文件来源和版本后继续安装。
+Mac 若提示无法验证开发者：先尝试打开一次，然后进入“系统设置 → 隐私与安全性”，在对应阻止记录旁选择“仍要打开”。不要关闭整个系统的 Gatekeeper 或 SIP。
+如果已成功安装，但 DAW 仍因隔离属性拒绝扫描，可在确认来源后只对需要的 SpectrumTag bundle 执行以下对应命令，再重启宿主：
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/SpectrumTag.vst3"
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/SpectrumTag ARA.vst3"
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/SpectrumTag.component"
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/SpectrumTag ARA.component"
+  sudo xattr -dr com.apple.quarantine "/Applications/SpectrumTag.app"
+不要把这些命令扩大到整个插件目录、用户目录或磁盘。若系统明确报告恶意软件，请停止并重新核实来源，不要绕过该检测。
+Windows 若显示“Windows 已保护你的电脑”，确认文件来自本次交付后可查看“更多信息”。如果按钮被组织策略禁用，请联系设备管理员；不要全局关闭安全软件。
+
+五、在宿主中打开正确的版本
+实时版：在普通音频效果器插入菜单中选择 SpectrumTag。未 Record 时为实时打印试听；Record 后可在录音范围编辑已打印内容。Clear Record 回到未录制模式。
+ARA：通过宿主的 ARA 集成加载 SpectrumTag ARA。Cubase 中先选中音频事件，再使用“扩展 / ARA”入口；在 Cubase 里不要把 ARA 专用容器当成普通插入效果。
+ARA 版只有 Load / Clear，没有 Record。Load 从宿主读取当前轨道相关音频；Clear 清空已加载内容及 Print 修改。宿主时间位置必须由 ARA 模型提供，不要手动拼接文件起点。
+ARA 是否可用取决于宿主、版本、授权版本和 ARA 支持；“支持 AU”或“支持 VST3”本身不代表支持 ARA。
+Logic 使用 AU，Cubase 使用 VST3。ARA AU 还需要宿主实际提供 ARA 扩展支持。若 Apple Silicon 上的宿主没有显示 ARA 入口，请按该宿主的官方说明确认是否需要 Rosetta；不要为了普通实时版一律强制 Rosetta。
+Apple 当前说明：在 Apple Silicon 上，Logic Pro 使用第三方 ARA 需要以 Rosetta 启动。完全退出 Logic 后，在 Finder 中选择 Logic Pro，打开“显示简介”，勾选“使用 Rosetta 打开”再启动。这里的限制来自 Logic 的 ARA 运行方式；实时 AU 和独立版可原生运行。参考：https://support.apple.com/102082
+Logic 的 ARA 入口不同于 Cubase：应选中目标音频轨，将 SpectrumTag ARA（AU）放在第一个 Audio FX 插槽。初次打开为空时，可播放后停止，再点击 Load。此处遵循 Logic 的 ARA 接入约定，不代表本包已完成真实 Logic 工程验收；若仍提示未绑定 ARA，检查 Rosetta、轨道选择、插槽位置与宿主版本。接入流程参考：https://helpcenter.celemony.com/M5/doc/melodyneStudio5/en/M5tour_LogicARA_InsertVorbereitungen?env=logic
+独立版：打开 SpectrumTag，点击 Load 或从资源管理器/Finder 拖入音频或视频，选择音频设备后播放。视频导出可选择保留原画面的视频，或只导出音轨。
+
+六、常见问题
+1. 找不到插件或仍显示旧版本：先确认组件已安装、路径正确、无同名旧副本；完全退出并重新打开宿主，在插件管理器重新扫描/重新验证。被加入阻止列表的项目要按宿主说明重新扫描。不要删除整个 DAW 配置目录。
+2. ARA 出现在插件管理器里：管理器列出扫描信息不等于普通插入效果。请从音频事件扩展入口使用。如果普通插入菜单仍可加载，记录宿主版本和扫描路径后反馈。
+3. 独立版无声：检查“音频设备”的输出设备、采样率、输出通道和其他程序是否独占设备；先用普通立体声 WAV 验证。插件版还要检查轨道监听、旁路及路由。
+4. 视频不能加载：文件必须含可解码的音轨。当前只处理第一条音轨的单声道/立体声内容；多声道、无音轨、加密/受保护或损坏文件不支持。当前载入上限为 15 分钟，且受 6400 万采样点限制，较高采样率可能更早达到限制。
+5. “原格式导出”不是有损音频的逐字节保留：音轨处理后需要重新编码，保留支持的原容器/音频编码类别、采样率和声道数。视频画面及其他可复制流直接复制；若原编码不能重建，程序会报告错误，不会悄悄改为另一种格式。请另存输出，原文件保持不变。若 Print 超出原视频范围，导出会增加对应时长并在超出的部分补黑帧，原音画保持同步。
+6. 第一次使用慢：Windows 首次需要解压并校验内置编码器；长音频加载和 Print 渲染也需要时间。等待进度结束后导出；预留缓存磁盘空间，避免多实例同时处理大文件。
+7. 中文字符不完整：Mac 使用系统中文字体回退，Windows 使用微软雅黑等系统字体；请不要删除系统中文字体。反馈时提供系统版本、宿主版本、缩放比例和截图。
+8. 工程迁移：录音缓存、原媒体和独立版导出文件不是仅靠插件文件即可恢复。迁移或清理之前保存工程并保留相关文件；不要在工程仍使用缓存时删除它。
+
+七、验证边界与反馈
+自动处理器/ARA 模拟宿主检查、pluginval 和 auval 用于发现构建及接口问题，不能代替在你自己的 Cubase、Logic 或其他宿主中的真实工程验证。首次使用请检查工程保存/重开、Load/Record、Print、删除、撤销/重做和导出结果。
+反馈请提供：SpectrumTag 版本、系统与 CPU、宿主及版本、使用的组件（实时 VST3 / ARA VST3 / AU / ARA AU / 独立版）、复现步骤、报错和音源格式。
+源码与构建工作流：https://github.com/Ziqing-Gu/Spectrum-Tag-Private
+原始项目：https://github.com/sweetorange1/SpectrumTag
+许可：保留 SpectrumTag 原项目 AGPL-3.0；FFmpeg 和其他第三方许可随程序附带，详见应用资源或安装目录中的许可说明。
+Apple 安装安全说明：https://support.apple.com/102445
+
+八、1.4.27 独立版补充
+可在未导入音频的空白时间轴 Print；Noise Fill 大于零才会在空白处生成声音。可按原格式导出音频/视频，也可单独导出满屏纯频谱动画。频谱从最右侧逐渐出现，按 Tag 参数平滑匹配视图；视频可选格式、分辨率和帧率。导出有独立进度弹窗，可取消。
+独立版记住上次媒体和处理内容；所需文件/缓存不可用时静默显示空白，可继续重新加载。工程迁移仍需保留原媒体和缓存。
+Windows 安装程序的扩展名是 .exe，但交付的是含组件选择、运行库和卸载功能的 Setup，不是裸独立版 EXE；Mac 交付 PKG，不需要 DMG。

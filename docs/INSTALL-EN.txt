@@ -1,0 +1,87 @@
+SpectrumTag 1.4.27 — Windows / macOS Installation and Troubleshooting
+
+This delivery adds diagnostics for the Mac report "Print finishes but is not displayed". That field issue is not yet confirmed fixed; the opposite-polarity stereo finding is a separate display defect.
+After installation, confirm 1.4.27 in the plug-in header. Reproduce the issue, then click Diagnostics at the top right BEFORE closing the editor, starting playback or changing the frequency scale.
+Save the JSON report (Desktop by default; location selectable) and send it back manually. If VST3, AU and ARA all reproduce it, save one report from each affected format.
+The report contains system/host details, parameters, processing/display status and aggregate statistics. No audio, images, screenshots, project data, source names/paths or automatic upload. No separate scanner or project transfer is required.
+Capturing diagnostics does not trigger Print, FFT or a forced redraw. The report is captured before the Save dialog opens. If this version displays the Print correctly, a report and a note saying so are still useful.
+
+1. Packages and requirements
+Windows: SpectrumTag-1.4.27-Windows-Setup.exe, Windows 10/11 x64.
+macOS: SpectrumTag-1.4.27-macOS.pkg, macOS 15 or later, Apple Silicon and Intel universal binaries.
+All components in these packages are version 1.4.27. The previously delivered Windows standalone 1.4.24 retains its Stable designation. This version is not automatically designated Stable; automated checks and real DAW project acceptance are distinct.
+Windows includes realtime VST3, dedicated ARA VST3 and the standalone EXE.
+Mac includes realtime VST3, ARA VST3, realtime AU, ARA AU and the standalone App.
+There is no VST2 build. Components can be selected during installation.
+
+2. Before installing
+Save your work and completely quit all DAWs and SpectrumTag standalone instances. Keep your original media, existing projects and previous installer. Test the update in a separate project first.
+Install complete .vst3/.component/.app bundles, not just their inner executables. Avoid duplicate versions in user and system plug-in directories.
+For an upgrade at the same path, quit the host, run the new installer to replace the chosen components, then restart and rescan. For old manually installed copies elsewhere, move only the confirmed complete SpectrumTag bundles outside scanned plug-in folders as a backup before installing. Do not remove source media, projects, preferences or entire plug-in directories.
+On Mac also check ~/Library/Audio/Plug-Ins/VST3 and ~/Library/Audio/Plug-Ins/Components for duplicates of this installer's /Library locations. On Windows check any previously configured custom VST3 scan folders.
+
+3. Windows installation
+Run Setup, accept the system installation permission and select components.
+VST3 location: C:\Program Files\Common Files\VST3\iisaacbeats.cn\
+  SpectrumTag.vst3
+  SpectrumTag ARA.vst3
+Default standalone location: C:\Program Files\iisaacbeats.cn\SpectrumTag\SpectrumTag.exe
+The standalone location is selectable; plug-ins use the standard VST3 location.
+Setup includes the Microsoft Visual C++ x64 runtime and installs it only when the required version is missing. For VCRUNTIME140/MSVCP140 errors, rerun Setup or use Microsoft's official runtime installer; do not download individual DLLs from third-party sites.
+The standalone EXE embeds its codec. No companion Runtime folder is required. First use extracts and verifies the codec in the cache.
+When D: exists, defaults are D:\Codex\Temp\SpectrumTag-Standalone for temporary media and codec files, and D:\Codex\PluginData\SpectrumTag for preferences/recorded data. Computers without D: use SpectrumTag in the user's application-data directory.
+Uninstall through Windows Installed Apps. User projects, original media and external recording caches are not intentionally removed by the uninstaller.
+
+4. macOS installation
+Open the PKG and select components using the installer customization controls.
+Standalone: /Applications/SpectrumTag.app
+VST3: /Library/Audio/Plug-Ins/VST3/SpectrumTag.vst3
+      /Library/Audio/Plug-Ins/VST3/SpectrumTag ARA.vst3
+AU: /Library/Audio/Plug-Ins/Components/SpectrumTag.component
+    /Library/Audio/Plug-Ins/Components/SpectrumTag ARA.component
+Every app/plug-in has Apple Silicon and Intel slices. The App contains matching native codecs and does not require Homebrew or a separate FFmpeg installation.
+User data is stored in ~/Library/SpectrumTag. Load dialogs start in Music; export dialogs default to Desktop and allow another destination. Keep sufficient free space for temporary decoded audio and exports.
+
+5. Signing and first-launch messages
+Mac bundles are ad-hoc signed. The PKG is not Developer ID Installer signed, and this delivery is not Apple notarized. The Windows installer is not commercially code-signed. Do not interpret successful validation as publisher certification.
+For a trusted Mac download blocked because its developer cannot be verified, try opening it once, then use System Settings > Privacy & Security > Open Anyway for that specific item. Do not disable Gatekeeper or SIP globally.
+If an installed, trusted bundle is still blocked by quarantine during DAW scanning, use only the corresponding exact command below, then restart the DAW:
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/SpectrumTag.vst3"
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/SpectrumTag ARA.vst3"
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/SpectrumTag.component"
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/SpectrumTag ARA.component"
+  sudo xattr -dr com.apple.quarantine "/Applications/SpectrumTag.app"
+Never apply these commands to an entire plug-in directory, user directory or disk. Stop and verify the source if the system explicitly detects malware.
+Windows SmartScreen may show Windows protected your PC for an unsigned installer. Inspect More info only after confirming the source. If organization policy blocks installation, contact the administrator; do not disable protection globally.
+
+6. Choosing the correct component
+Realtime: insert SpectrumTag as an ordinary audio effect. Without Record it provides live Print audition; after Record it can edit captured material. Clear Record returns to live mode.
+ARA: load SpectrumTag ARA through the host's ARA integration. In Cubase, select the audio event and use its extension entry, not an ordinary insert slot.
+ARA has Load/Clear, not Record. Load reads host audio; Clear removes the loaded material and Print edits. Event positions come from the host timeline.
+VST3/AU support alone does not imply ARA support: the host, version and license tier must support ARA. Cubase uses VST3; Logic uses AU. ARA AU needs a host that actually exposes ARA. If an Apple Silicon host does not expose its ARA entry, consult that host's official Rosetta requirements; ordinary realtime use does not automatically require Rosetta.
+Apple currently states that third-party ARA in Logic Pro on Apple Silicon requires Logic to run using Rosetta. Quit Logic, select Logic Pro in Finder, open Get Info and enable Open using Rosetta, then relaunch. This is a Logic ARA host requirement; realtime AU and the standalone App can run natively. Reference: https://support.apple.com/102082
+Logic uses a different ARA entry: select the target audio track and put SpectrumTag ARA (AU) in the first Audio FX slot. If initially empty, play briefly, stop, then use Load. This follows Logic's ARA integration convention and is not a claim of real-project Logic acceptance testing. If ARA is unbound, check Rosetta, track selection, slot position and host version. Integration reference: https://helpcenter.celemony.com/M5/doc/melodyneStudio5/en/M5tour_LogicARA_InsertVorbereitungen?env=logic
+Standalone: use Load or drag audio/video from Explorer/Finder, choose an audio output device, then play/edit/export. For video input, choose video export with unchanged pictures or audio-only export. The app is an audio editor, not a video-picture editor.
+
+7. Troubleshooting
+Missing/old plug-in: verify component selection and installed paths, remove ambiguity from duplicate versions, restart the host and rescan/revalidate in its plug-in manager. Follow the host's instructions for a blocked plug-in; do not delete the entire host configuration.
+ARA listed in a plug-in manager: a scan listing is not the same as a normal insert. Use the event-extension entry. If it still loads as an ordinary insert, report the host version and scanned path.
+No sound: check output device, sample rate, channels, exclusive-device use, track routing, monitoring and bypass. Test with a normal stereo WAV.
+Unsupported media: input must have a decodable first audio stream. Mono/stereo is supported; multichannel, encrypted, damaged or silent video is not. Loading is limited to 15 minutes and 64 million sample frames; high sample rates can reach the sample limit sooner.
+Original-format export: processed lossy audio must be re-encoded. Supported source container/codec family, rate and channel count are retained; unchanged video and other copyable streams are copied. Unsupported source encoders produce an error rather than silently changing format. Save to a new file; keep the original. Prints outside the source video extend the output with black pictures in those regions while retaining original audio-picture alignment.
+Slow first use: Windows extracts and checks the embedded codec once. Long files and Print rendering take time; wait for completion before exporting and leave cache disk space available.
+Missing Chinese text: keep OS Chinese fallback fonts installed. Report OS/host version, UI scale and a screenshot.
+Project migration: keep original media, recorded caches and exports along with project files. Copying the plug-in alone does not transfer project audio. Do not clean caches that are still used by a project.
+
+8. Validation and reporting
+Processor checks, simulated ARA-host tests, pluginval and auval do not replace real-project testing in your own Cubase/Logic/other host. Check save/reopen, Load/Record, Print, Delete, Undo/Redo and exported media before committing important work.
+Include product version, OS/CPU, host/version, component, reproduction steps, errors and media format in reports.
+Fork/build workflow: https://github.com/Ziqing-Gu/Spectrum-Tag-Private
+Original project: https://github.com/sweetorange1/SpectrumTag
+SpectrumTag retains its original AGPL-3.0 license. FFmpeg and dependency notices accompany the installed program/resources.
+Apple security instructions: https://support.apple.com/102445
+
+9. Standalone additions in 1.4.27
+Print on an empty timeline without loading media. Noise Fill above zero generates sound in blank regions. Export source-format audio/video or a full-frame spectrum animation, revealing from the extreme right and smoothly following Tag parameters. Choose video format, resolution and fps. A separate progress window supports cancellation.
+The standalone remembers its previous media and edits. If required files/cache are unavailable it opens blank without an error prompt so you can load new content. Keep source media/cache when moving projects.
+The Windows .exe is a Setup installer with component selection, runtime support and uninstallation, not a bare standalone executable. The Mac delivery is a PKG installer, not a DMG.

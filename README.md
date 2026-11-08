@@ -1,209 +1,180 @@
-# SpectrumTag v1.4.3
+# SpectrumTag
 
-**SpectrumTag** 把 **图片轮廓** 变成 **频域掩码**，再用 STFT / OLA 把它"印章"（Print）到音频的频谱上 —— 于是你的音频里会真的"长出"这张图的形状，在任意频谱分析软件里都能看到它。
+**把图片打印进声音的频谱。 / Print images into the spectrum of sound.**
 
-> **先用哪个？**
-> SpectrumTag 有两个形态：**独立程序（`SpectrumTag.exe` / `SpectrumTag.app`，推荐）** 和 **VST3 / AU 插件（补充）**。
-> 日常使用请直接用独立程序：拖进音频 → 拖进图片 → 点 Print → 得到 WAV，全程离线、一次成型。
-> 插件形态需要在宿主里实时播放、并用自动化曲线去控制 Print 的触发时机，只在"想在 DAW 工程内做实时/自动化处理"时才用。
+[中文](#中文) · [English](#english) · [下载 / Downloads](https://github.com/sweetorange1/SpectrumTag/releases) · [更新记录 / Changelog](CHANGELOG.md) · [开发总览 / Development overview](PROJECT_OVERVIEW.md)
 
-![SpectrumTag 独立程序界面](readme_1.png)
+[SpectrumTag](https://github.com/sweetorange1/SpectrumTag) 由 **iisaacbeats.cn / sweetorange1** 创作。1.4.4–1.4.27 的录音编辑、ARA、独立版与跨平台改进由 **Ziqing-Gu** 贡献，保留原作者署名与 AGPL-3.0 许可。
 
----
+[SpectrumTag](https://github.com/sweetorange1/SpectrumTag) was created by **iisaacbeats.cn / sweetorange1**. Recording/editing, ARA, standalone and cross-platform improvements through 1.4.4–1.4.27 are contributed by **Ziqing-Gu**, retaining the original attribution and AGPL-3.0 license.
 
-## 1. 两种形态怎么选
+## 中文
 
-| | **独立程序（Standalone）** | **VST3 / AU 插件** |
-| --- | --- | --- |
-| 典型用途 | 把一整段音频文件一次性处理完并导出 | 在 DAW 工程里做实时效果 / 自动化 |
-| 输入 | 本地音频文件（WAV / MP3 / FLAC / AIFF / OGG） | 宿主轨道的实时音频流 |
-| 频谱显示 | 整段音频的**静态完整时频图**，可缩放、可拖动 | 随播放**实时滚动**的瀑布图 |
-| 触发方式 | 点一次 **Print**，后台离线合成 | 手动点按钮，或用 `Print Trigger` 自动化 / MIDI Learn |
-| 输出 | 导出 `<原文件名>_tagged.wav` 到指定目录 | 走宿主播放 / bounce 输出 |
-| 需要宿主 | 不需要 | 需要 |
-| 推荐度 | **推荐（主用法）** | 补充用法 |
+### 这是什么？
 
----
+SpectrumTag 将图片转换成黑白掩模，并通过处理音频的频率成分，在频谱中留下图形。可以实时试听，也可以在录制或加载音频后编辑 Print，再导出处理结果。独立版还支持直接在空白时间轴上打印，并导出声音或纯频谱动画。
 
-## 2. 独立程序：三步上手
+### 版本与下载
 
-1. **拖入音频**：把音频文件拖到窗口任意位置（或点击频谱空白区选择文件）。左侧会立刻画出整段音频的时频图。
-2. **拖入图片**：把 `png / jpg / jpeg / bmp / gif` 图片拖进来。频谱上会出现一个可拖动、可缩放的**图片框**。
-3. **点 Print**：右下角圆形按钮 → 选择输出目录 → 后台渲染 → 得到 `<原文件名>_tagged.wav`。
-
-图片框**框住哪里，印章就盖在哪里**：横向 = 音频时间位置，纵向 = 频率位置（顶部高频、底部低频）。
-
----
-
-## 3. 界面与操作
-
-### 3.1 频谱区（左侧）
-
-- 载入音频后立即计算并缓存整段时频图，不再滚动。
-- **Speed** 滑杆 / 鼠标按住频谱**横向拖动** / **鼠标滚轮**：缩放和平移时间轴，用来精确对齐图片框的位置；按住 **Ctrl + 滚轮**可横向缩放（等价调节 Speed）。
-- 频谱底部显示**时间轴**（`mm:ss`），刻度随缩放与拖动自适应变化，方便按时间定位。
-- **FFT scale = mel** 时，左侧频率轴显示对数刻度并附带**钢琴键盘**（C1–C8 标注），方便把印章对准音高。
-- 顶部标题栏右侧显示当前文件信息：文件名 / 时长 / 采样率 / 声道数。
-
-### 3.2 图片框（右侧频谱上的黄框）
-
-| 操作 | 说明 |
+| 项目 | 当前状态 |
 | --- | --- |
-| 未选图时**单击**框内 | 弹出图片选择对话框 |
-| **拖动**框体 | 移动位置（改变印章的时间 / 频率落点） |
-| **拖动**右下角小方块 | 等比缩放（改变印章的大小） |
+| 当前交付 | **1.4.27**，带“导出诊断”的 Windows Setup 与 macOS Universal PKG，附中英文 TXT 安装说明 |
+| 贡献者指定 Stable | **1.4.27**（2026-11-08），沿用已交付的 Windows 与 Mac 安装包；见 [Stable / Plan B 记录](docs/STABLE_1.4.27.md) |
+| Windows 安装包 | 实时 VST3、ARA 专用 VST3、独立程序；适用于 Windows 10/11 x64 |
+| macOS 安装包 | 实时/ARA VST3、实时/ARA AU、独立 App；目标为 macOS 15+，Apple Silicon + Intel |
 
-图片载入后会自动做预处理：缩放到最长边 2048 px → 按亮度（或 Alpha 通道，透明像素占比高时自动切到 Alpha 模式）**二值化**，框内显示的就是最终用于生成掩码的黑白图。
+供审阅的 [1.4.27 安装包与 TXT 说明](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.27) 发布在贡献者的 Fork；上游正式发布由原作者决定。Windows 实际安装检查、两个 Mac 架构的音视频及 AU/VST3 检查、Universal PKG 实际安装检查均已通过，详见[验证记录](docs/INSTALLERS_1.4.27.md)。**贡献者已指定本版为 Stable，并确认本次 Mac 独立版打印显示正常；这不代表所有 DAW 已逐一实测。** 如再次遇到显示问题，可点右上角“导出诊断”保存 JSON；报告不包含音乐、图片或工程，也不自动上传。开发入口和待验证事项见[合并交接](docs/UPSTREAM_HANDOFF_1.4.27.md)。
 
-### 3.3 参数区（右侧）
+### 三个版本怎么选？
 
-| 参数 | 取值 | 说明 |
-| --- | --- | --- |
-| `FFT Size` | 1024 / 2048 / 4096（默认）/ 8192 | 时频分辨率。越大频率越细、时间越粗；印章细节也随之变化 |
-| `FFT scale` | `linear` / `mel` | 频率轴映射方式。**mel 时图片框的纵向位置按对数频率解释**，适合对准音高 |
-| `Speed` | 0.1 – 4.0（默认 1.0） | 时频图横向缩放。放大后图片框覆盖的**音频时长变短**（印章更短促），缩小则覆盖更长时间 |
-| `Amplitude Ratio` | 0.0 – 1.5 | 印章强度。见下方说明 |
-| `Invert` | 开 / 关 | 掩码反相（图形区域与背景区域互换处理） |
+| 版本 | 适合的工作方式 |
+| --- | --- |
+| **实时 VST3 / AU** | 插入 DAW 轨道，边播放边体验 Print。Record 后可在录制的时间线上编辑、删除、撤销 Print；Clear Record 返回未录制模式。 |
+| **ARA** | 从支持 ARA 的宿主入口使用，Load 获取宿主音频，同轨事件保留工程位置。无录音按钮；支持请求宿主定位，Clear 后可重新加载。 |
+| **独立版** | Load 或拖入音频/视频音轨，本地播放、Print 并另存导出。不需要 DAW，也可以不导入文件直接开始。 |
 
-**Amplitude Ratio 怎么理解**（`gain = 1 → ratio` 映射到掩码亮暗）：
+实时插件内部点击试听不会改变 DAW 指针。正常跟随宿主时，已录区域输出处理结果，未录区域保留宿主输入；内部独立试听进入未录空隙时静音，停止后重新跟随宿主。ARA 和独立版则使用各自的定位接口。
 
-- `0.0`：图形轮廓区域被**完全抹掉**（在频谱上挖出一个"图形形状的洞"，最直观的效果）；
-- `1.0`：无变化（等于没盖章）；
-- `1.0 – 1.5`：图形轮廓区域被**提升**；
-- `0.0 – 1.0` 之间：轮廓区域按比例**衰减**；
-- 勾上 `Invert` 后，图形区域与背景区域的处理方向互换。
+### 主要功能
 
-### 3.4 Print 按钮（右下角）
+- **图像转换**：自动阈值 Otsu、局部自适应、手动阈值和透明度剪影；支持黑白强度、反转及效果预览。
+- **可编辑 Print**：移动、右下角等比例缩放、修改参数、删除、撤销与重做。拖动时先显示预览，再后台计算；同位置重新 Print 不叠加加深，删除同时移除对应补偿噪声。
+- **噪声补偿**：为静音或能量不足的频段合成目标频谱，补偿量可调，仅作用于 Print 范围。独立版空白打印需要提高 Noise Fill 才会生成声音。
+- **频谱视图**：默认 Mel (RX)、20 kHz；提供 Linear、Bark、Log、Extended Log 和 insight。共用时间尺度，insight 不改变显示上限；实际频率受采样率限制。
+- **操作与外观**：8 种记忆配色、中英文界面和悬停说明、原图显示/隐藏、录音/加载范围全览。原图始终保持正确长宽比。
+- **恢复与缓存**：保存 Print 编辑及处理缓存；独立版可恢复上次会话。可用缓存能够避免重复渲染，缓存缺失或内容变化时会重新分析；无法恢复的媒体静默留空。
 
-- 没有音频时点击 → 直接弹出音频选择器（不报错）。
-- 没有图片时点击 → 提示先载入图片。
-- 有音频有图片 → 弹出**输出目录**选择框 → 后台线程离线合成 → 完成后弹窗告知输出路径。
-- 输出为 **WAV**，保持原音频的采样率、位深（16 / 24 / 32）与声道数；文件名 `<原名>_tagged.wav`，若已存在则自动追加 `_1`、`_2` …
+### 独立版的音视频导出
 
----
+支持常见音频及 MP4、M4V、MOV、MKV、WebM、AVI 的音轨。导入视频后，可选择保留原画面、替换处理后的音轨，或仅导出音频。它不包含视频画面编辑器。原格式导出保留受支持的编码族和适合的容器；压缩音频会重新编码，不承诺与原文件逐字节相同。
 
-## 4. VST3 / AU 插件形态（补充用法）
+Print 可以超出原始文件的开始或结尾，导出时长会相应延长。视频超出原范围的部分补黑画面，原音画保持同步。源文件不被覆盖。
 
-插件形态是**实时流式**的：把 SpectrumTag 挂到轨道上，播放时频谱才会滚动，印章也只在 Print 被触发的那段时间写入。
+**导出频谱视频**生成满屏纯频谱，无标题、刻度和时间文字，从最右侧逐渐显现并向左滚动。画面按 Tag 的时间、比例和频率刻度平滑调整，声音保持正常速度；重叠 Tag 优先跟随较早开始者。可选 MP4/MOV/MKV/WebM、720p/1080p/1440p/4K、30/60 fps，提供进度弹窗及取消。导出默认打开桌面目录，也可自行选择位置。
 
-- **Print 触发有三种方式**：
-  1. 直接点 UI 上的 Print 按钮；
-  2. DAW **自动化曲线**写 `Print Trigger`（布尔参数，仅在 `false → true` 上升沿响应一次）；
-  3. DAW **MIDI Learn** 绑定 `Print Trigger`，用 MIDI 控制器物理触发。
-- **离线导出（bounce / freeze）同样有效**：宿主不创建插件界面时，由音频线程自行消费触发请求，导出音频里也会有印章。
-- **工程持久化**：工程会记录当前图片路径与图片框位置，重新打开自动恢复；图片文件丢失时不阻塞，仅回退到"Choose picture"占位。
-- 参数除 `Print Trigger` 外与独立程序一致（`FFT Size` / `FFT scale` / `Speed` / `Amplitude Ratio` / `Invert`）。
+### 常用操作
 
-> 也就是说：如果你只是想"给一个音频文件盖章"，用独立程序；只有在需要实时听、或用自动化精确编排触发时机时，才用插件。
+| 操作 | 功能 |
+| --- | --- |
+| 鼠标滚轮 | 左右平移频谱 |
+| Ctrl / Shift + 滚轮 | 调整横向视图缩放；选中 Print 时只改变视图，不重新渲染 |
+| 选中 Print 后拖动 Speed 拉杆 | 改变打印时长，完成操作后重新渲染 |
+| 单击已打印图形 | 选中并恢复其参数和正常显示比例，不移动播放指针 |
+| 拖动已选 Print / 右下角 | 移动位置 / 等比例缩放 |
+| 双击原图 | 选择新图片 |
+| 频谱右键 / 眼睛图标 | 显示或隐藏原图 |
+| 频谱右上角全览图标 | 适应已录制/加载的范围 |
+| Delete | 删除选中的 Print |
+| Ctrl+Z / Ctrl+Shift+Z | 撤销 / 重做 |
+| Shift 拖动参数 / Alt+左键 | 微调 / 恢复默认值 |
 
----
+### 安装与常见问题
 
-## 5. 安装
+完整说明：[中文 TXT](docs/INSTALL-ZH-CN.txt) · [English TXT](docs/INSTALL-EN.txt)。安装前保存工程并完全退出宿主及独立版，安装时按需选择组件。
 
-### 5.1 Windows
+- **Windows**：运行 `SpectrumTag-1.4.27-Windows-Setup.exe` 安装向导。VST3 安装到系统标准目录，独立程序目录可选择；包含所需微软 x64 运行库和媒体编解码器。
+- **macOS**：运行 `SpectrumTag-1.4.27-macOS.pkg`，安装到标准的 Applications / Audio Plug-Ins 目录，App 内含双架构媒体依赖，无需另装 Homebrew 或 FFmpeg。
+- 当前没有 Windows 发布者签名或 Apple Developer ID 签名/公证。macOS bundle 使用 ad-hoc 签名。系统提示、重扫插件、旧版本冲突、Logic ARA/Rosetta 和字体等问题均见安装说明。
+- ARA 需要宿主支持及正确的扩展入口。OnlyARA 标记不能保证所有宿主都从普通插入菜单隐藏它。自动化构建/验证通过也不代表所有 DAW 工程都已实测。
 
-运行 `SpectrumTag_Setup_1.4.3_x64.exe`，安装时可选组件：
+### 构建与开发记录
 
-- **VST3 plug-in** → 默认装到 `%CommonProgramFiles%\VST3\iisaacbeats.cn\SpectrumTag.vst3`
-- **standalone application** → 装到 `C:\Program Files\iisaacbeats.cn\SpectrumTag\SpectrumTag.exe`（开始菜单有快捷方式，可勾选创建桌面快捷方式）
+使用 CMake 3.22+、C++17、JUCE 8.0.15；Windows 使用 Visual Studio 2022 C++ 工具，Mac 使用 Xcode 命令行工具。ARA SDK 通过 CMake 的固定版本配置获取，也可指定本地 SDK。
 
-> 若把 VST3 装到非默认目录，安装后会提示你需要在 DAW 中手动添加该目录并重新扫描插件。
-
-### 5.2 macOS
-
-打开 `.dmg`，运行其中的 `.pkg`，会安装：
-
-- `SpectrumTag.vst3` → `/Library/Audio/Plug-Ins/VST3/`
-- `SpectrumTag.component`（AU）→ `/Library/Audio/Plug-Ins/Components/`
-- `SpectrumTag.app`（独立程序）→ `/Applications/`
-
----
-
-## 6. 从源码构建
-
-依赖：CMake 3.22+、支持 C++17 的编译器（MSVC 19.30+ / Clang 13+ / GCC 10+）。JUCE 通过 `FetchContent` 自动拉取，无需手动安装。
-
-```bash
-# 一次性构建插件 + 独立程序
-cmake -S . -B cmake-build-release -DCMAKE_BUILD_TYPE=Release
-cmake --build cmake-build-release --config Release --target SpectrumTag_All
+```powershell
+.\build-windows.ps1 -BuildDir D:\Codex\Temp\SpectrumTag-Windows
+.\build-ara-windows.ps1 -BuildDir D:\Codex\Temp\SpectrumTag-ARA -AraSdkDir D:\Dependencies\ARA_SDK
+.\build-standalone-windows.ps1 -BuildDir D:\Codex\Temp\SpectrumTag-Standalone -RuntimeDir D:\Dependencies\SpectrumTagRuntime
 ```
 
-产物：
+Windows 独立版的 RuntimeDir 需要 `ffmpeg.exe`、`COPYING.GPLv3` 和 `FFmpeg-NOTICE.txt`，构建时嵌入 EXE。Mac 的 [Cross-platform installers](.github/workflows/cross-platform.yml) 工作流分别构建两个架构，再合并并制作 PKG。当前安装入口位于 [packaging](packaging)，旧安装脚本和旧 Standalone 实现仅作历史参考。
 
-- 独立程序：`cmake-build-release/SpectrumTagStandalone_artefacts/Release/SpectrumTag.exe`（macOS 为 `SpectrumTag.app`）
-- VST3：`cmake-build-release/SpectrumTag_artefacts/Release/VST3/SpectrumTag.vst3`
-
-打包：
-
-- Windows：`build_installer.bat`（需 Inno Setup 6），输出到 `dist\`
-- macOS：`build_macos_installer.sh`，输出 `.pkg` 与 `.dmg`
+- [项目总览与完整开发过程](PROJECT_OVERVIEW.md)
+- [逐版更新](CHANGELOG.md)
+- [Windows 架构与历史交接](docs/WINDOWS_HANDOFF.md)
+- [Mac / AU 历史交接](docs/MAC_AU_HANDOFF.md)
 
 ---
 
-## 7. 常见问题
+## English
 
-**Q：图片盖上去没反应 / 效果很弱？**
-检查 `Amplitude Ratio` 是否为 0 附近（0 = 图形被抹除，1 = 无变化，>1 = 提升），以及是否误勾了 `Invert`。
+### What is SpectrumTag?
 
-**Q：印章出现在了错误的时间点？**
-图片框的横向位置决定时间。用 `Speed` 放大时间轴后再精确定位，会更准。
+SpectrumTag converts an image to a monochrome mask and processes audio frequencies so the image appears in a spectrogram. Use it as a realtime effect, edit Prints in recorded or loaded audio, or start with an empty standalone timeline and export sound or a spectrum animation.
 
-**Q：切换 FFT scale 后频谱没变？**
-v1.3.0 起切换 `linear / mel` 会立即重新计算时频图。若仍无变化，请确认使用的是最新构建。
+### Version and downloads
 
-**Q：支持哪些文件？**
-音频：`.wav .mp3 .flac .aif .aiff .ogg`；图片：`.png .jpg .jpeg .bmp .gif`；输出固定为 `.wav`。
-
----
-
-## 8. 版本历史
-
-- **v1.4.3**：
-  - 修正公司名与 Bundle ID 拼写（`iisaacbeas` → `iisaacbeats`）。
-- **v1.4.2**：
-  - 安装包改为以 **独立程序（Standalone）为主体**（必装），VST3 / AU 插件改为可选组件，默认创建桌面快捷方式。
-  - 选择 VST3 组件时可自定义安装目录；装到非默认目录后仍会提示在 DAW 中手动添加并重新扫描。
-- **v1.4.1**：
-  - 修复：独立程序「加载新音频」按钮在 macOS 上点击后崩溃。根因是导出结果弹窗回调里先 `exportOverlay.reset()` 再读取闭包捕获的 `file`，构成 use-after-free（Windows 因堆行为差异碰巧不崩，macOS 上 `strlen(NULL)` 触发 SIGSEGV）；现改为把「关闭弹窗 + 加载音频」延后到消息循环下一次迭代执行。
-  - 加固：后台渲染线程的完成通知改为按值捕获 `outputFile` / `success`、按引用捕获主组件，消除同类悬垂指针隐患。
-- **v1.4.0**：
-  - 修复独立程序导出音频开头约 0.07 秒整体延迟（STFT/OLA 延迟补偿错误）与印章区「开头加速、结尾延后」的时序畸变（干/湿信号延迟错位），并同步修正插件（VST3/AU）的延迟上报与干湿对齐。
-  - 新增：鼠标滚轮平移时间轴、Ctrl+滚轮横向缩放频谱；频谱底部新增自适应时间轴。
-  - 新增：导出成功改用自定义弹窗，并提供「加载新音频」按钮一键载入刚导出的文件。
-  - 优化：滚轮滚动速度、界面图片显示与实际音频处理对齐（所见即所得）。
-- **v1.3.0**：新增启动后自动检查更新（延迟 5 秒、异步、失败静默，插件与独立程序均生效）；修复切换 `FFT scale` 后频谱未实时重算的问题；安装包同时包含 **独立程序** 与 VST3 插件。
-- **v1.2.3**：离线渲染 / 导出自动化支持（实时路径由 Editor timer 消费触发，离线路径由音频线程消费）；加载抑制窗口改用 sample-clock；`imgBoxWidthPx` 持久化，离线与预览结果精确对齐。
-- **v1.2.0**：首个正式发布版本。完整 STFT / OLA / WOLA 归一化、图片打印起始完整性、工程持久化（图片路径与图片框位置）、Print 自动化与 MIDI Learn（五层防误触保护）、Windows / macOS 一键打包。
-
----
-
-## 9. 许可证（License）
-
-### 9.1 许可协议
-
-本项目采用 **GNU Affero General Public License v3.0（AGPL-3.0）**，完整条款见 [LICENSE](LICENSE)。
-
-| 条款 | 说明 |
+| Item | Status |
 | --- | --- |
-| **源码强制公开** | 任何分发（含二进制 / 编译产物）必须随附完整源代码，或提供可获取源码的书面承诺 |
-| **衍生作品必须继承** | 任何基于本项目的修改、衍生或二次开发，无论以源码还是目标码发布，**必须同样以 AGPL-3.0 开源** |
-| **网络交互触发 Copyleft** | 即使通过远程网络服务（SaaS / 云端）提供本软件功能，也**必须向所有使用者提供完整源代码**（AGPL 第 13 条） |
-| **禁止附加限制** | 不得对 AGPL 授予的权利施加额外收费、授权费或其它限制 |
-| **无担保** | 不提供任何明示或默示担保，使用者自行承担风险 |
+| Current delivery | **1.4.27**, Windows Setup and macOS Universal PKG with Diagnostics, plus Chinese/English TXT installation guides |
+| Contributor-designated Stable | **1.4.27** (2026-11-08), reusing the delivered Windows and Mac installers; see the [Stable / Plan B record](docs/STABLE_1.4.27.md) |
+| Windows installer | Realtime VST3, dedicated ARA VST3 and standalone; Windows 10/11 x64 |
+| macOS installer | Realtime/ARA VST3, realtime/ARA AU and standalone App; macOS 15+, Apple Silicon + Intel |
 
-> 简要理解：可以自由使用、修改、学习本项目代码，但**任何形式的再分发（销售、打包进商业产品、云服务提供），都必须将你的全部修改以 AGPL-3.0 完整开源**。这是法律强制要求。
+The [1.4.27 installers and TXT guides](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.27) are review builds published in the contributor's fork; the original author decides upstream releases. Actual Windows installation, native media/AU/VST3 checks on both Mac architectures, and Universal PKG installation have passed; see the [verification record](docs/INSTALLERS_1.4.27.md). **The contributor designated this version Stable and confirmed visible Prints in the reported Mac standalone test; this does not constitute field validation of every DAW.** If a display issue recurs, Diagnostics saves a JSON with no media, images, project files or automatic upload. See the [merge handoff](docs/UPSTREAM_HANDOFF_1.4.27.md) for implementation entry points and remaining validation boundaries.
 
-### 9.2 反商业化滥用声明
+### Choose your edition
 
-源代码公开旨在促进音频 DSP 技术社区的学习与交流。**我们明确保留追究以下行为的法律权利**：
+| Edition | Workflow |
+| --- | --- |
+| **Realtime VST3 / AU** | Print while your DAW plays. Record captures a timeline for editable Prints; Clear Record returns to live operation. |
+| **ARA** | Load host-provided audio with same-track events at their project positions. No Record button; host seeking and Clear/reload are available. |
+| **Standalone** | Load or drop audio/video soundtracks, play locally, edit and export. No DAW or source file is required to begin. |
 
-- 未经授权将本项目编译产物打包为商业软件并收取授权费用；
-- 在未遵守 AGPL-3.0 完整义务（包括公开衍生源代码）的情况下投入商业分发渠道（应用商店、付费插件平台等）；
-- 去除、隐藏或篡改版权与许可证声明以掩盖来源。
+Realtime internal audition does not move the DAW cursor. When following the host, recorded areas play processed audio and unrecorded areas pass through the host input. Independent internal audition is silent in unrecorded gaps; stopping restores host follow. ARA and standalone use their own seeking interfaces.
 
-如需商业授权（不在 AGPL-3.0 下公开你的修改），请联系作者协商 **双许可证（Dual Licensing）**。
+### Features
 
-### 9.3 版权
+- **Image conversion:** Otsu, adaptive, manual threshold and alpha silhouette, with amount, invert and processing previews.
+- **Editable Prints:** move, resize proportionally from the corner, change parameters, delete, undo and redo. Edits show a preview before background rendering; printing again at the same position replaces the prior operation, and deletion removes its Noise Fill too.
+- **Noise Fill:** adjustable target-spectrum synthesis for silent or weak frequency content, confined to the Print area. Source-free standalone Prints need nonzero Noise Fill to produce sound.
+- **Spectrum display:** Mel (RX) and 20 kHz by default; Linear, Bark, Log, Extended Log and insight are available. All share a time scale; insight leaves Range unchanged, and the source sample rate limits usable frequencies.
+- **Interface:** eight remembered palettes, Chinese/English controls and tooltips, source-image visibility and recorded/loaded-range overview. The original image retains its aspect ratio.
+- **Persistence:** saved edits and content-checked render caches, plus standalone session restoration. Missing or changed caches require analysis; unavailable media restores to a blank workspace without a missing-file prompt.
 
-© iisaacbeats.cn — 保留所有权利。
+### Standalone export
+
+Load common audio formats or the soundtrack of MP4/M4V/MOV/MKV/WebM/AVI files. Export processed audio alone or preserve the original video with a replaced soundtrack. There is no video picture editor. Original-format export retains supported codec families and suitable containers; compressed audio is re-encoded and is not byte-identical to the original.
+
+Prints may extend before or after the source. Export duration expands accordingly; video receives black padding while the original audio and picture stay aligned. Source files are not overwritten.
+
+**Spectrum video export** fills the frame with the actual processed spectrum, without titles, axes or time labels. New content enters from the right edge and scrolls left. The view smoothly follows each Tag's time, proportions and frequency scale without changing audio playback speed; earlier-starting Tags take priority during overlaps. Choose MP4/MOV/MKV/WebM, 720p/1080p/1440p/4K and 30/60 fps. A progress dialog supports cancellation. Export dialogs start at the Desktop and allow another destination.
+
+### Controls
+
+| Action | Result |
+| --- | --- |
+| Mouse wheel | Pan horizontally |
+| Ctrl / Shift + wheel | Change horizontal view zoom; selected Prints do not re-render |
+| Drag Speed with a Print selected | Change Print duration and render after the edit |
+| Click a printed shape | Select it and recall its parameters and normal display proportions without seeking |
+| Drag a selected Print / its lower-right corner | Move / resize proportionally |
+| Double-click the original image | Choose another image |
+| Right-click the spectrum / eye icon | Toggle the original image |
+| Top-right overview icon | Fit the recorded/loaded range |
+| Delete | Remove the selected Print |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
+| Shift-drag a parameter / Alt-click | Fine adjustment / reset to default |
+
+### Installation and development
+
+Read [English TXT instructions](docs/INSTALL-EN.txt) or [中文 TXT](docs/INSTALL-ZH-CN.txt). Save your project and quit hosts and SpectrumTag before installing; select the components you need.
+
+- **Windows:** `SpectrumTag-1.4.27-Windows-Setup.exe` is an installation wizard. It uses the standard VST3 location, allows a standalone destination, and includes the required Microsoft x64 runtime and media codec.
+- **macOS:** `SpectrumTag-1.4.27-macOS.pkg` installs to standard Applications / Audio Plug-Ins locations. Bundled media dependencies require neither Homebrew nor a separate FFmpeg installation.
+- There is no Windows publisher signature or Apple Developer ID signing/notarization. Mac bundles are ad-hoc signed. The guides cover system prompts, rescanning, duplicate versions, Logic ARA/Rosetta and fonts.
+- ARA requires a compatible host and the correct extension entry point. OnlyARA metadata cannot guarantee hiding from every host's ordinary insert menu. Automated validation is distinct from testing real projects in every DAW.
+
+Build with CMake 3.22+, C++17 and JUCE 8.0.15, using Visual Studio 2022 on Windows or Xcode command-line tools on Mac. See the Windows commands above. The standalone Windows codec input contains `ffmpeg.exe`, `COPYING.GPLv3` and `FFmpeg-NOTICE.txt`; it is embedded at build time. [Cross-platform installers](.github/workflows/cross-platform.yml) builds both Mac architectures and merges them into a PKG. Current packaging scripts are in [packaging](packaging).
+
+See the [development overview](PROJECT_OVERVIEW.md), [changelog](CHANGELOG.md), [Windows handoff](docs/WINDOWS_HANDOFF.md) and [Mac/AU handoff](docs/MAC_AU_HANDOFF.md) for implementation details and historical validation boundaries.
+
+## 署名与许可 / Credits and license
+
+原项目与资源 / Original project and assets: **iisaacbeats.cn / sweetorange1**. Fork development: **Ziqing-Gu**.
+
+项目许可保持 **GNU Affero General Public License v3.0 (AGPL-3.0)**，以 [LICENSE](LICENSE) 完整文本为准。第三方依赖及媒体编解码器保留各自许可与声明，随相应安装组件提供。
+
+The project remains under **GNU Affero General Public License v3.0 (AGPL-3.0)**; see [LICENSE](LICENSE) for the full terms. Third-party dependencies and media codecs retain their own licenses and notices, supplied with the corresponding components.
+
+© iisaacbeats.cn. 原作者署名与版权信息保留。 / Original author attribution and copyright notices retained.

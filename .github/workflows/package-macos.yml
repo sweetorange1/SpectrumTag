@@ -1,0 +1,82 @@
+name: Package verified macOS artifacts
+on:
+  workflow_dispatch:
+    inputs:
+      native_run_id:
+        description: Validated native build run containing the arm64 archive
+        required: true
+        type: string
+      intel_run_id:
+        description: Optional separately resumed Intel archive run
+        required: false
+        default: ''
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Read package version from source
+        id: version
+        run: |
+          version=$(sed -n 's/^project(SpectrumTag VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+      - name: Verify source compatibility with existing native artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_RUN: ${{ inputs.native_run_id }}
+          INTEL_RUN: ${{ inputs.intel_run_id || inputs.native_run_id }}
+        run: |
+          [[ "$NATIVE_RUN" =~ ^[0-9]+$ ]]
+          [[ "$INTEL_RUN" =~ ^[0-9]+$ ]]
+          for run in "$NATIVE_RUN" "$INTEL_RUN"; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" > "native-run-$run.json"
+            native_sha=$(python3 -c "import json; print(json.load(open('native-run-$run.json'))['head_sha'])")
+            git diff --exit-code "$native_sha" HEAD -- CMakeLists.txt PluginProcessor.cpp PluginProcessor.h PluginEditor.cpp PluginEditor.h shared ARA Standalone source otf packaging/macos/bundle_codec.py
+          done
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.native_run_id }}
+          name: native-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.intel_run_id || inputs.native_run_id }}
+          name: native-x86_64
+      - name: Reuse native binaries and package current installation guides
+        run: |
+          mkdir arm64 x86_64
+          tar -xzf native-arm64.tar.gz -C arm64
+          tar -xzf native-x86_64.tar.gz -C x86_64
+          python3 packaging/macos/package.py arm64 x86_64 installer --version '${{ steps.version.outputs.value }}' > package.log 2>&1
+      - name: Verify installation and installed components
+        run: |
+          sudo installer -pkg 'installer/SpectrumTag-${{ steps.version.outputs.value }}-macOS.pkg' -target / > install.log 2>&1
+          /Applications/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/installed-codec.json"
+          python3 packaging/macos/validate_au.py /Library/Audio/Plug-Ins/Components installed-au-checks
+          for name in 'SpectrumTag.vst3' 'SpectrumTag ARA.vst3'; do
+            codesign --verify --deep --strict "/Library/Audio/Plug-Ins/VST3/$name"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SpectrumTag-${{ steps.version.outputs.value }}-macOS-Installer
+          path: installer/SpectrumTag-${{ steps.version.outputs.value }}-macOS.pkg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macOS-package-validation
+          path: |
+            native-run-*.json
+            package.log
+            install.log
+            installed-codec.json
+            installed-au-checks/

@@ -1,0 +1,68 @@
+name: Validate Windows installer
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag containing the installer
+        required: true
+      sha256:
+        description: Expected installer SHA-256
+        required: true
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the exact installer and check its identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_HASH: ${{ inputs.sha256 }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $version=[regex]::Match((Get-Content CMakeLists.txt -Raw),'project\(SpectrumTag VERSION ([0-9.]+)').Groups[1].Value
+          if(!$version -or $env:RELEASE_TAG -ne "v$version"){throw 'Release and source version differ'}
+          $release=gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json targetCommitish | ConvertFrom-Json
+          if($release.targetCommitish -ne $env:GITHUB_SHA){throw 'Release is not pinned to this source commit'}
+          New-Item -ItemType Directory input,checks | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern "SpectrumTag-$version-Windows-Setup.exe" --dir input
+          if($LASTEXITCODE){throw 'Download failed'}
+          $setup=Get-Item "input/SpectrumTag-$version-Windows-Setup.exe"
+          if((Get-FileHash $setup.FullName -Algorithm SHA256).Hash -ne $env:EXPECTED_HASH){throw 'Installer hash mismatch'}
+          "PRODUCT_VERSION=$version" >> $env:GITHUB_ENV
+          "INSTALLER_PATH=$($setup.FullName)" >> $env:GITHUB_ENV
+      - name: Install all components on the disposable runner
+        shell: pwsh
+        run: |
+          $target=Join-Path $env:RUNNER_TEMP 'SpectrumTag-Installed'
+          $log=Join-Path $PWD 'checks/install.log'
+          $process=Start-Process -FilePath $env:INSTALLER_PATH -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=`"$target`"","/LOG=`"$log`"") -WindowStyle Hidden -Wait -PassThru
+          if($process.ExitCode -ne 0){throw "Installer exit $($process.ExitCode)"}
+          $vst3=Join-Path ${env:CommonProgramFiles} 'VST3/iisaacbeats.cn'
+          $binaries=@("$target/SpectrumTag.exe","$vst3/SpectrumTag.vst3/Contents/x86_64-win/SpectrumTag.vst3","$vst3/SpectrumTag ARA.vst3/Contents/x86_64-win/SpectrumTag ARA.vst3")
+          foreach($file in $binaries){if((Get-Item $file).VersionInfo.ProductVersion -ne $env:PRODUCT_VERSION){throw "Wrong installed version: $file"}}
+          foreach($guide in @('INSTALL-ZH-CN.txt','INSTALL-EN.txt','LICENSE.txt')){if(!(Test-Path "$target/Docs/$guide")){throw "Missing installed guide: $guide"}}
+          Get-FileHash $binaries -Algorithm SHA256 | ConvertTo-Json | Set-Content checks/installed-hashes.json
+          "INSTALLED_APP=$target/SpectrumTag.exe" >> $env:GITHUB_ENV
+      - name: Verify the installed embedded codec and standalone media operations
+        shell: pwsh
+        run: |
+          $env:SPECTRUMTAG_PREFS_DIR=Join-Path $env:RUNNER_TEMP 'spectrumtag-installer-preferences'
+          $codec=Join-Path $PWD 'checks/codec.json'
+          $process=Start-Process -FilePath $env:INSTALLED_APP -ArgumentList @('--codec-check',"`"$codec`"") -WindowStyle Hidden -Wait -PassThru
+          if($process.ExitCode -ne 0){throw "Codec check exit $($process.ExitCode)"}
+          $self=Join-Path $PWD 'checks/media'
+          $process=Start-Process -FilePath $env:INSTALLED_APP -ArgumentList @('--self-test',"`"$self`"") -WindowStyle Hidden -Wait -PassThru
+          if($process.ExitCode -ne 0){throw "Media check exit $($process.ExitCode)"}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-installer-validation
+          path: |
+            checks/**/*.log
+            checks/**/*.json
+            checks/**/*failure.txt
