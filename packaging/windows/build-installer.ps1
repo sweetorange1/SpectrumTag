@@ -26,7 +26,7 @@ foreach($item in $items){
 if((Get-AuthenticodeSignature -LiteralPath $VCRuntime).Status -ne 'Valid'){throw 'Microsoft runtime signature verification failed'}
 Copy-Item -LiteralPath $VCRuntime -Destination (Join-Path $StageDir 'vc_redist.x64.exe') -Force
 Copy-Item -LiteralPath (Join-Path $source 'LICENSE') -Destination (Join-Path $StageDir 'Docs\LICENSE.txt') -Force
-Copy-Item -LiteralPath (Join-Path $source 'docs\INSTALL-ZH-CN.txt'),(Join-Path $source 'docs\INSTALL-EN.txt') -Destination (Join-Path $StageDir 'Docs') -Force
+Copy-Item -LiteralPath (Join-Path $source 'docs\安装说明.txt'),(Join-Path $source 'docs\INSTALL-EN.txt') -Destination (Join-Path $StageDir 'Docs') -Force
 Copy-Item -LiteralPath (Join-Path $CodecRuntimeDir 'COPYING.GPLv3'),(Join-Path $CodecRuntimeDir 'FFmpeg-NOTICE.txt') -Destination (Join-Path $StageDir 'Docs') -Force
 & $Compiler "/DVersion=$version" "/DPayload=$StageDir" "/DOutput=$OutputDir" (Join-Path $PSScriptRoot 'installer.iss')
 if($LASTEXITCODE -ne 0){throw 'Installer compiler failed'}

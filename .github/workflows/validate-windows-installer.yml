@@ -45,7 +45,7 @@ jobs:
           $vst3=Join-Path ${env:CommonProgramFiles} 'VST3/iisaacbeats.cn'
           $binaries=@("$target/SpectrumTag.exe","$vst3/SpectrumTag.vst3/Contents/x86_64-win/SpectrumTag.vst3","$vst3/SpectrumTag ARA.vst3/Contents/x86_64-win/SpectrumTag ARA.vst3")
           foreach($file in $binaries){if((Get-Item $file).VersionInfo.ProductVersion -ne $env:PRODUCT_VERSION){throw "Wrong installed version: $file"}}
-          foreach($guide in @('INSTALL-ZH-CN.txt','INSTALL-EN.txt','LICENSE.txt')){if(!(Test-Path "$target/Docs/$guide")){throw "Missing installed guide: $guide"}}
+          foreach($guide in @('安装说明.txt','INSTALL-EN.txt','LICENSE.txt')){if(!(Test-Path "$target/Docs/$guide")){throw "Missing installed guide: $guide"}}
           Get-FileHash $binaries -Algorithm SHA256 | ConvertTo-Json | Set-Content checks/installed-hashes.json
           "INSTALLED_APP=$target/SpectrumTag.exe" >> $env:GITHUB_ENV
       - name: Verify the installed embedded codec and standalone media operations
@@ -58,6 +58,12 @@ jobs:
           $self=Join-Path $PWD 'checks/media'
           $process=Start-Process -FilePath $env:INSTALLED_APP -ArgumentList @('--self-test',"`"$self`"") -WindowStyle Hidden -Wait -PassThru
           if($process.ExitCode -ne 0){throw "Media check exit $($process.ExitCode)"}
+          foreach($kind in @('video','fileless-ui')){
+            $folder=Join-Path $PWD "checks/$kind"
+            $env:SPECTRUMTAG_PREFS_DIR=Join-Path $env:RUNNER_TEMP "spectrumtag-$kind-preferences"
+            $process=Start-Process -FilePath $env:INSTALLED_APP -ArgumentList @("--$kind-test","`"$folder`"") -WindowStyle Hidden -Wait -PassThru
+            if($process.ExitCode -ne 0){throw "$kind check exit $($process.ExitCode)"}
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

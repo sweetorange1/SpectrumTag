@@ -1,15 +1,14 @@
-SpectrumTag 1.4.27 — Windows / macOS Installation and Troubleshooting
+SpectrumTag 1.4.28 — Windows / macOS Installation and Troubleshooting
 
-This delivery adds diagnostics for the Mac report "Print finishes but is not displayed". That field issue is not yet confirmed fixed; the opposite-polarity stereo finding is a separate display defect.
-After installation, confirm 1.4.27 in the plug-in header. Reproduce the issue, then click Diagnostics at the top right BEFORE closing the editor, starting playback or changing the frequency scale.
-Save the JSON report (Desktop by default; location selectable) and send it back manually. If VST3, AU and ARA all reproduce it, save one report from each affected format.
-The report contains system/host details, parameters, processing/display status and aggregate statistics. No audio, images, screenshots, project data, source names/paths or automatic upload. No separate scanner or project transfer is required.
-Capturing diagnostics does not trigger Print, FFT or a forced redraw. The report is captured before the Save dialog opens. If this version displays the Print correctly, a report and a note saying so are still useful.
+New in this version: standalone spectrum-video export offers 4:3, 3:4, 16:9 and 9:16 with matching dimensions and a remembered choice. 4:3/16:9 are landscape; 3:4/9:16 are portrait. Tags retain their proportions. Original-picture video export retains the source framing.
+After installation, confirm version 1.4.28. The maintainer designated this version Stable; the previous complete cross-platform Stable is 1.4.27. This is not a claim of field acceptance in every DAW.
+If Print finishes but is not displayed, click Diagnostics BEFORE closing the editor, starting playback or changing scale. Save the JSON and send it back manually; capture each affected component separately.
+Reports include system/host details, parameters, processing/display status and aggregate statistics, without audio, images, screenshots, project data, source names/paths or automatic upload. Capturing a report does not trigger Print, FFT or a forced redraw.
 
 1. Packages and requirements
-Windows: SpectrumTag-1.4.27-Windows-Setup.exe, Windows 10/11 x64.
-macOS: SpectrumTag-1.4.27-macOS.pkg, macOS 15 or later, Apple Silicon and Intel universal binaries.
-All components in these packages are version 1.4.27. The previously delivered Windows standalone 1.4.24 retains its Stable designation. This version is not automatically designated Stable; automated checks and real DAW project acceptance are distinct.
+Windows: SpectrumTag-1.4.28-Windows-Setup.exe, Windows 10/11 x64.
+macOS: SpectrumTag-1.4.28-macOS.pkg, macOS 15 or later, Apple Silicon and Intel universal binaries.
+All packaged components are version 1.4.28. Existing VST3/ARA/AU audio Print processing is unchanged; this version adds standalone video export options.
 Windows includes realtime VST3, dedicated ARA VST3 and the standalone EXE.
 Mac includes realtime VST3, ARA VST3, realtime AU, ARA AU and the standalone App.
 There is no VST2 build. Components can be selected during installation.
@@ -81,7 +80,8 @@ Original project: https://github.com/sweetorange1/SpectrumTag
 SpectrumTag retains its original AGPL-3.0 license. FFmpeg and dependency notices accompany the installed program/resources.
 Apple security instructions: https://support.apple.com/102445
 
-9. Standalone additions in 1.4.27
+9. Standalone additions in 1.4.28
 Print on an empty timeline without loading media. Noise Fill above zero generates sound in blank regions. Export source-format audio/video or a full-frame spectrum animation, revealing from the extreme right and smoothly following Tag parameters. Choose video format, resolution and fps. A separate progress window supports cancellation.
 The standalone remembers its previous media and edits. If required files/cache are unavailable it opens blank without an error prompt so you can load new content. Keep source media/cache when moving projects.
+Export > Export spectrum video > Aspect ratio offers 4:3, 3:4, 16:9 and 9:16. The resolution menu shows actual width by height: for example, 4:3 is 1440x1080, 3:4 is 1080x1440, 16:9 is 1920x1080 and 9:16 is 1080x1920. Four quality tiers use short edges of 720, 1080, 1440 or 2160 pixels. The default is 16:9, and the last choice is remembered. Format (MP4/MOV/MKV/WebM), frame rate (30/60 fps) and destination remain selectable.
 The Windows .exe is a Setup installer with component selection, runtime support and uninstallation, not a bare standalone executable. The Mac delivery is a PKG installer, not a DMG.

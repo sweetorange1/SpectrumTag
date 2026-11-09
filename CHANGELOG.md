@@ -1,5 +1,7 @@
 # Change history
 
+2026-11-09: the user designated **1.4.28 Stable**, requested a new Plan B before publishing, then Windows/macOS installers with bilingual TXT guides and an incremental upstream PR. The delivered Windows standalone is reused; additional platforms/installers were pending at designation and subsequently passed the checks recorded in `docs/INSTALLERS_1.4.28.md`. See `docs/STABLE_1.4.28.md`.
+
 2026-11-08: the user designated the delivered **1.4.27 Stable** and requested a new Plan B source snapshot. The existing Windows and macOS installers, product version and verification are reused; only status/documentation changes. The reported Mac Print display issue remains under investigation, and installer destination changes are deferred by the user. See `docs/STABLE_1.4.27.md`.
 
 2026-11-07: the user designated the delivered Windows standalone **1.4.24 Stable** and requested a new Plan B source snapshot. This is a status/documentation change only; the existing EXE and version are retained. See `docs/STABLE_1.4.24.md`. The earlier version history below retains its original identities.
@@ -8,6 +10,7 @@ This is a concise record of the Windows development delivered after upstream 1.4
 
 | Version | Delivered change |
 | --- | --- |
+| 1.4.28 | Standalone spectrum video aspect selection: 4:3, 3:4, 16:9 and 9:16, matching dimensions, remembered choice and preserved Tag proportions. User-designated Stable, new frozen Plan B, validated Windows Setup and Universal Mac PKG with bilingual TXT guides. / 独立版频谱视频新增横竖画幅、联动分辨率与记忆选择；用户指定 Stable，新 Plan B 已冻结，Windows/Mac 安装包及实际安装检查完成，附中英文 TXT。 |
 | 1.4.27 | Manual privacy-limited diagnostics in all formats for the unresolved Mac display report; phase-safe spectrum analysis, display-only cache migration, and matching selected source/Print bounds. Native checks and installers passed; field diagnosis pending. / 所有格式新增手动导出诊断，定位尚未确认原因的 Mac 打印不显示；另修复反相频谱抵消、旧显示缓存和选中尺寸不一致。原生与实装验证通过，等待现场报告。 |
 | 1.4.26 | Encoder-compatible video timing, responsive POSIX video streaming, Windows Setup and Universal macOS PKG with realtime/ARA VST3, AU and standalone; automated native and installation checks passed. User Mac acceptance and Stable designation remain pending. / 兼容新旧编码器、修复 Mac 频谱视频传输超时；交付 Win 安装程序及 Mac 双架构 PKG，附 TXT 说明。原生及实际安装检查通过，等待用户 Mac 工程验收，不自动设 Stable。 |
 | 1.4.25 | Fix Clang/macOS scalar progress calculation selecting an unsupported JUCE SIMD overload; unify installer component versions. Packaging and platform validation in progress. / 修复 macOS 编译时进度计算误匹配 JUCE SIMD 模板，统一安装包组件版本；打包及平台验证进行中。 |

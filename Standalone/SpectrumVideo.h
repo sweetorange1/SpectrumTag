@@ -5,15 +5,21 @@
 
 namespace spectrumtag::standalone {
 struct VideoOptions {
+    enum Aspect { ratio4x3, ratio3x4, ratio16x9, ratio9x16 };
     int format=0, resolution=1, fps=30, palette=0, scale=frequency::mel;
+    int aspect=ratio16x9;
     float top=20000, speed=1;
     bool chinese=true;
-    static constexpr int widths[]{1280,1920,2560,3840};
-    static constexpr int heights[]{720,1080,1440,2160};
-    int width()const{return widths[juce::jlimit(0,3,resolution)];}
-    int height()const{return heights[juce::jlimit(0,3,resolution)];}
+    // Resolution is the short edge, so rotating the canvas preserves quality.
+    // Every offered dimension is even and can be encoded directly as yuv420p.
+    static constexpr int shortEdges[]{720,1080,1440,2160};
+    int shortEdge()const{return shortEdges[juce::jlimit(0,3,resolution)];}
+    int longEdge()const{return aspect==ratio4x3||aspect==ratio3x4?shortEdge()*4/3:shortEdge()*16/9;}
+    bool portrait()const{return aspect==ratio3x4||aspect==ratio9x16;}
+    int width()const{return portrait()?shortEdge():longEdge();}
+    int height()const{return portrait()?longEdge():shortEdge();}
     juce::String extension()const{return juce::StringArray{".mp4",".mov",".mkv",".webm"}[juce::jlimit(0,3,format)];}
-    void normalise(){format=juce::jlimit(0,3,format);resolution=juce::jlimit(0,3,resolution);fps=fps==60?60:30;}
+    void normalise(){format=juce::jlimit(0,3,format);resolution=juce::jlimit(0,3,resolution);fps=fps==60?60:30;if(aspect<ratio4x3||aspect>ratio9x16)aspect=ratio16x9;}
     static VideoOptions remembered();
     void remember()const;
 };
