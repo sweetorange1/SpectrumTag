@@ -13,21 +13,33 @@ namespace {
 class VideoSettings final : public juce::Component {
 public:
     VideoSettings(VideoOptions value,std::function<void(VideoOptions)> accepted):options(value),onAccept(std::move(accepted)){
+        options.normalise();
         const bool zh=options.chinese;
         formatLabel.setText(juce::String::fromUTF8(zh?"视频格式":"Video format"),juce::dontSendNotification);
+        aspectLabel.setText(juce::String::fromUTF8(zh?"画面比例":"Aspect ratio"),juce::dontSendNotification);
         resolutionLabel.setText(juce::String::fromUTF8(zh?"分辨率":"Resolution"),juce::dontSendNotification);
         fpsLabel.setText(juce::String::fromUTF8(zh?"帧率":"Frame rate"),juce::dontSendNotification);
         format.addItemList({"MP4 (H.264)","MOV (H.264)","MKV (H.264)","WebM (VP9)"},1);
-        resolution.addItemList({"1280 x 720 (720p)","1920 x 1080 (1080p)","2560 x 1440 (1440p)","3840 x 2160 (4K)"},1);fps.addItemList({"30 fps","60 fps"},1);
-        format.setSelectedId(options.format+1);resolution.setSelectedId(options.resolution+1);fps.setSelectedId(options.fps==60?2:1);
-        for(auto* label:{&formatLabel,&resolutionLabel,&fpsLabel}){if(zh)label->setFont(juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),16.f,juce::Font::plain)));addAndMakeVisible(label);}
-        for(auto* combo:{&format,&resolution,&fps})addAndMakeVisible(combo);
+        for(int i=0;i<4;++i)aspect.addItem(juce::StringArray{"4:3","3:4","16:9","9:16"}[i]+"  "+juce::String::fromUTF8(i%2?(zh?"竖屏":"Portrait"):(zh?"横屏":"Landscape")),i+1);
+        fps.addItemList({"30 fps","60 fps"},1);
+        format.setSelectedId(options.format+1,juce::dontSendNotification);aspect.setSelectedId(options.aspect+1,juce::dontSendNotification);fps.setSelectedId(options.fps==60?2:1,juce::dontSendNotification);
+        updateResolutions();aspect.onChange=[this]{updateResolutions();};
+        aspect.setComponentID("videoAspect");resolution.setComponentID("videoResolution");go.setComponentID("videoDestination");
+        for(auto* label:{&formatLabel,&aspectLabel,&resolutionLabel,&fpsLabel}){if(zh)label->setFont(juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),16.f,juce::Font::plain)));addAndMakeVisible(label);}
+        for(auto* combo:{&format,&aspect,&resolution,&fps})addAndMakeVisible(combo);
         go.setButtonText(juce::String::fromUTF8(zh?"选择保存位置…":"Choose destination…"));addAndMakeVisible(go);
-        go.onClick=[this]{auto next=options;next.format=format.getSelectedId()-1;next.resolution=resolution.getSelectedId()-1;next.fps=fps.getSelectedId()==2?60:30;next.remember();onAccept(next);if(auto* window=findParentComponentOfClass<juce::DialogWindow>())window->exitModalState(0);};setSize(440,218);
+        go.onClick=[this]{auto next=options;next.format=format.getSelectedId()-1;next.aspect=aspect.getSelectedId()-1;next.resolution=resolution.getSelectedId()-1;next.fps=fps.getSelectedId()==2?60:30;next.remember();onAccept(next);if(auto* window=findParentComponentOfClass<juce::DialogWindow>())window->exitModalState(0);};setSize(440,260);
     }
-    void resized()override{auto area=getLocalBounds().reduced(18);for(auto pair:{std::make_pair(&formatLabel,&format),std::make_pair(&resolutionLabel,&resolution),std::make_pair(&fpsLabel,&fps)}){auto row=area.removeFromTop(42);pair.first->setBounds(row.removeFromLeft(130));pair.second->setBounds(row.reduced(0,5));}area.removeFromTop(12);go.setBounds(area.removeFromTop(34));}
+    void resized()override{auto area=getLocalBounds().reduced(18);for(auto pair:{std::make_pair(&formatLabel,&format),std::make_pair(&aspectLabel,&aspect),std::make_pair(&resolutionLabel,&resolution),std::make_pair(&fpsLabel,&fps)}){auto row=area.removeFromTop(42);pair.first->setBounds(row.removeFromLeft(130));pair.second->setBounds(row.reduced(0,5));}area.removeFromTop(12);go.setBounds(area.removeFromTop(34));}
 private:
-    VideoOptions options;std::function<void(VideoOptions)> onAccept;juce::Label formatLabel,resolutionLabel,fpsLabel;juce::ComboBox format,resolution,fps;juce::TextButton go;
+    void updateResolutions(){
+        const int selected=resolution.getSelectedId()>0?resolution.getSelectedId():options.resolution+1;
+        auto next=options;next.aspect=aspect.getSelectedId()-1;next.normalise();
+        resolution.clear(juce::dontSendNotification);
+        for(int i=0;i<4;++i){next.resolution=i;resolution.addItem(juce::String(next.width())+" x "+juce::String(next.height()),i+1);}
+        resolution.setSelectedId(selected,juce::dontSendNotification);
+    }
+    VideoOptions options;std::function<void(VideoOptions)> onAccept;juce::Label formatLabel,aspectLabel,resolutionLabel,fpsLabel;juce::ComboBox format,aspect,resolution,fps;juce::TextButton go;
 };
 juce::File defaultMediaFolder() {
 #if JUCE_WINDOWS
@@ -146,7 +158,21 @@ int filelessUiTest(const juce::File& folder){try{
     folder.getChildFile("deletion-state.txt").replaceWithText("last="+juce::String(deleted->last)+" residual="+juce::String(residual)+" preview="+view->getProperties()["previewActive"].toString());
     need(residual==0&&!(bool)view->getProperties()["previewActive"],"Delete removes generated Print from actual visible spectrum");
     need(deleted->frameAt(deleted->end()+.01)==nullptr,"removed tail cannot read retained boundary FFT bins");
-    VideoOptions options;options.chinese=true;VideoSettings settings(options,[](auto){});auto settingsImage=settings.createComponentSnapshot(settings.getLocalBounds());{auto out=folder.getChildFile("export-settings.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(settingsImage,*out),"settings screenshot");}
+    for(bool zh:{true,false}){
+        VideoOptions options;options.chinese=zh;VideoOptions accepted;int accepts=0;
+        VideoSettings settings(options,[&](auto value){accepted=value;++accepts;});
+        auto* aspect=dynamic_cast<juce::ComboBox*>(revision1416::find(settings,"videoAspect"));
+        auto* resolution=dynamic_cast<juce::ComboBox*>(revision1416::find(settings,"videoResolution"));
+        auto* destination=dynamic_cast<juce::Button*>(revision1416::find(settings,"videoDestination"));
+        need(aspect&&resolution&&destination&&aspect->getSelectedId()==3&&resolution->getText()=="1920 x 1080","export UI defaults to the existing 16:9 resolution");
+        const char* expected[]{"1440 x 1080","1080 x 1440","1920 x 1080","1080 x 1920"};
+        for(int i=0;i<4;++i){aspect->setSelectedId(i+1,juce::sendNotificationSync);need(resolution->getSelectedId()==2&&resolution->getText()==expected[i],"aspect changes update dimensions without changing quality tier");}
+        destination->onClick();need(accepts==1&&accepted.aspect==VideoOptions::ratio9x16&&accepted.width()==1080&&accepted.height()==1920,"export callback uses selected portrait size");
+        need(VideoOptions::remembered().aspect==VideoOptions::ratio9x16,"export UI remembers aspect");
+        VideoSettings restored(VideoOptions::remembered(),[](auto){});need(dynamic_cast<juce::ComboBox*>(revision1416::find(restored,"videoAspect"))->getSelectedId()==4,"reopened export UI restores portrait selection");
+        for(int i=0;i<settings.getNumChildComponents();++i)need(settings.getLocalBounds().contains(settings.getChildComponent(i)->getBounds()),"export controls fit the taller dialog");
+        auto settingsImage=settings.createComponentSnapshot(settings.getLocalBounds());auto out=folder.getChildFile(zh?"export-settings-zh.png":"export-settings-en.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(settingsImage,*out),"bilingual export settings screenshot");
+    }
     int cancels=0,closes=0;ExportProgressContent progress(true,[&]{++cancels;});progress.onClose=[&]{++closes;};
     progress.update(SpectrumVideoExport::frames,.42f,"C:/Example/movie.mp4",{});need(progress.getProperties()["percent"].toString()=="42%","progress popup shows numeric progress");
     {auto out=folder.getChildFile("export-progress.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(progress.createComponentSnapshot(progress.getLocalBounds()),*out),"progress popup screenshot");}

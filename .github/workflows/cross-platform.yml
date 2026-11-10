@@ -148,6 +148,8 @@ jobs:
         run: |
           sudo installer -pkg 'installer/SpectrumTag-${{ steps.version.outputs.value }}-macOS.pkg' -target / > install.log 2>&1
           /Applications/SpectrumTag.app/Contents/MacOS/SpectrumTag --codec-check "$PWD/installed-codec.json"
+          test -f /Applications/SpectrumTag.app/Contents/Resources/安装说明.txt
+          test -f /Applications/SpectrumTag.app/Contents/Resources/INSTALL-EN.txt
           python3 packaging/macos/validate_au.py /Library/Audio/Plug-Ins/Components installed-au-checks
           for name in 'SpectrumTag.vst3' 'SpectrumTag ARA.vst3'; do
             codesign --verify --deep --strict "/Library/Audio/Plug-Ins/VST3/$name"

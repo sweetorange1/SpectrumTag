@@ -113,8 +113,8 @@ private:
 };
 }
 
-VideoOptions VideoOptions::remembered(){VideoOptions result;if(auto xml=juce::XmlDocument::parse(settingsFile())){result.format=xml->getIntAttribute("format");result.resolution=xml->getIntAttribute("resolution",1);result.fps=xml->getIntAttribute("fps",30);}result.normalise();return result;}
-void VideoOptions::remember()const{auto v=*this;v.normalise();juce::XmlElement xml("SpectrumVideo");xml.setAttribute("format",v.format);xml.setAttribute("resolution",v.resolution);xml.setAttribute("fps",v.fps);auto file=settingsFile();file.getParentDirectory().createDirectory();juce::TemporaryFile temporary(file);if(xml.writeTo(temporary.getFile()))temporary.overwriteTargetFileWithTemporary();}
+VideoOptions VideoOptions::remembered(){VideoOptions result;if(auto xml=juce::XmlDocument::parse(settingsFile())){result.format=xml->getIntAttribute("format");result.resolution=xml->getIntAttribute("resolution",1);result.fps=xml->getIntAttribute("fps",30);result.aspect=xml->getIntAttribute("aspect",ratio16x9);}result.normalise();return result;}
+void VideoOptions::remember()const{auto v=*this;v.normalise();juce::XmlElement xml("SpectrumVideo");xml.setAttribute("format",v.format);xml.setAttribute("resolution",v.resolution);xml.setAttribute("fps",v.fps);xml.setAttribute("aspect",v.aspect);auto file=settingsFile();file.getParentDirectory().createDirectory();juce::TemporaryFile temporary(file);if(xml.writeTo(temporary.getFile()))temporary.overwriteTargetFileWithTemporary();}
 
 SpectrumMovie::Camera SpectrumMovie::tagCamera(const PrintEdit& e,int index)const{
     Camera c;c.scale=e.scaleMode;c.top=juce::jlimit(21.f,(float)audio->sampleRate*.5f,e.displayTop);c.tag=index;

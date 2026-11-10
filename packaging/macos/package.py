@@ -20,7 +20,7 @@ def merge_bundle(arm, intel, target):
     if notices.exists(): shutil.copytree(notices, target / 'Contents' / 'Resources' / 'ThirdParty' / 'x86_64')
     resources=target/'Contents/Resources'; resources.mkdir(exist_ok=True)
     shutil.copy2('LICENSE', resources/'SpectrumTag-LICENSE.txt')
-    for guide in ['INSTALL-ZH-CN.txt', 'INSTALL-EN.txt']:
+    for guide in ['安装说明.txt', 'INSTALL-EN.txt']:
         shutil.copy2(pathlib.Path('docs')/guide, resources/guide)
     for file in target.rglob('*'):
         if file.is_file() and 'Mach-O' in subprocess.check_output(['file', '-b', str(file)], text=True):

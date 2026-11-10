@@ -1,6 +1,28 @@
 # SpectrumTag 项目总览与开发过程
 
-维护日期：2026-11-08。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
+维护日期：2026-11-09。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
+
+## 当前完成状态：1.4.28 安装包、公开 Release 与增量交接（2026-11-09）
+
+继承此前 Windows 独立版交付、Stable 指定和已完成的新 Plan B。本次补齐两个 Windows VST3、Mac 双架构 VST3/ARA/AU/独立版及两平台安装包；未重复独立版构建，未访问或刷新冻结备份。Windows 实装、安装后媒体/四种画幅/UI 检查，以及 Mac 原生和 Universal PKG 实装均通过。构建源码 `1bd36269f90bd3e99551620511ec12014d83a3c4`；详细哈希和范围见 [安装包验证](docs/INSTALLERS_1.4.28.md)。
+
+用户明确确认“验证完成后公开发布到 Release”，随后发布 [1.4.28 Stable](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.28)。桌面 `C:\Users\86189\Desktop\SpectrumTag-1.4.28-Installers` 为真实四文件交付：Win Setup、Mac PKG、`安装说明.txt` 和 `Installation-Guide.txt`，与 D 盘成品逐一哈希一致。GitHub 会自动改写中文附件名，因此另附完整下载 ZIP 保留中文文件名；安装包内部与本地文件均已使用中文名。
+
+验证：[Windows 实装](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/actions/runs/42564174659)、[Mac 双架构与 PKG 实装](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/actions/runs/42562703901)。本次只申请新的增量 PR，保留上游已添加的致谢和项目名，不自动合并。原作者的审阅入口见 [1.4.28 交接](docs/UPSTREAM_HANDOFF_1.4.28.md)。下文的“生成中”等文字是执行时的历史状态，以本节完成记录为准。
+
+## 当前状态：1.4.28 Stable，Plan B 后继续安装包与上游交接（2026-11-09）
+
+用户明确指定 1.4.28 为 Stable，要求先执行新的 Plan B，再将当前源码同步到个人 Fork，生成 Windows Setup 与 macOS Universal PKG（含 AU/ARA/独立版），附中英文 TXT 安装说明，中文版文件名使用中文，最后提交给原作者申请合并。此前 [PR #3](https://github.com/sweetorange1/SpectrumTag/pull/3) 已于 2026-11-08 合并；本轮应另建仅包含后续变化的增量 PR。
+
+1.4.28 Windows 独立版的编译、横竖画幅和界面测试及 D 盘覆盖记录直接复用。Stable 是用户对本版的指定，不代表尚未生成的 Mac/插件安装包已经验证。新的源码备份目标为 `D:\备份文件\Vibe Coding\SpectrumTag\源代码\SpectrumTag-1.4.28-Stable`，完成后冻结；后续只引用完成记录，安装说明或发布记录的后续变化不刷新该快照。上一完整跨平台 Stable 为 1.4.27，保留为回滚基线。详见 [Stable 记录](docs/STABLE_1.4.28.md)。
+
+Plan B 已完成并冻结：源提交 `b762eb9ef12a5010d16cc9cd8107d6bad320db06`，479 个文件、74,914,433 字节、17 项关键哈希一致；只引用 `D:\Codex\Temp\SpectrumTag-1.4.28\PLAN_B_COMPLETION.md`，不再访问备份。本轮后续将中文安装文档改名为 `安装说明.txt`，Windows/Mac 安装资源和验证流程同步采用中文文件名；完整安装包结果见 [1.4.28 安装包记录](docs/INSTALLERS_1.4.28.md)。这些发布文档和打包调整不改变已交付独立版的二进制，也不触发新备份。
+
+## 1.4.28：频谱视频横竖画幅（2026-11-09）
+
+用户要求导出视频可选择 4:3、3:4、16:9 和 9:16。独立版“导出频谱视频”新增画面比例菜单，分辨率按短边 720、1080、1440、2160 四档计算并直接显示实际像素尺寸；切换比例保持当前质量档位。默认 16:9，记住上次选择；旧设置未保存比例时沿用原有 16:9，不改变格式、分辨率和帧率。新画幅继续使用既有 Tag 镜头适配，以保持图形比例、画面铺满及最右侧逐渐显现。
+
+本轮先生成 Windows 独立版 1.4.28；Mac、插件和安装包不在本轮重建。1.4.27 Stable 与冻结 Plan B 保留原状。已提交的上游 [PR #3](https://github.com/sweetorange1/SpectrumTag/pull/3) 保持 1.4.27，本轮使用独立开发分支，未自动追加待验证功能。实现、验证与交付记录见 [1.4.28 Windows 记录](docs/WINDOWS_1.4.28.md)。
 
 ## 当前交接：获准向原作者提交 1.4.27（2026-11-08）
 

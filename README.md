@@ -24,12 +24,12 @@ SpectrumTag 将图片转换成黑白掩模，并通过处理音频的频率成�
 
 | 项目 | 当前状态 |
 | --- | --- |
-| 当前交付 | **1.4.27**，带“导出诊断”的 Windows Setup 与 macOS Universal PKG，附中英文 TXT 安装说明 |
-| 贡献者指定 Stable | **1.4.27**（2026-11-08），沿用已交付的 Windows 与 Mac 安装包；见 [Stable / Plan B 记录](docs/STABLE_1.4.27.md) |
+| 当前交付 | **1.4.28 Stable**，Windows Setup 与 macOS Universal PKG，附中文文件名的安装说明和英文 TXT |
+| 贡献者指定 Stable | **1.4.28**（2026-11-09），新 Plan B 已完成并冻结；见 [Stable / Plan B 记录](docs/STABLE_1.4.28.md) |
 | Windows 安装包 | 实时 VST3、ARA 专用 VST3、独立程序；适用于 Windows 10/11 x64 |
 | macOS 安装包 | 实时/ARA VST3、实时/ARA AU、独立 App；目标为 macOS 15+，Apple Silicon + Intel |
 
-供审阅的 [1.4.27 安装包与 TXT 说明](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.27) 发布在贡献者的 Fork；上游正式发布由原作者决定。Windows 实际安装检查、两个 Mac 架构的音视频及 AU/VST3 检查、Universal PKG 实际安装检查均已通过，详见[验证记录](docs/INSTALLERS_1.4.27.md)。**贡献者已指定本版为 Stable，并确认本次 Mac 独立版打印显示正常；这不代表所有 DAW 已逐一实测。** 如再次遇到显示问题，可点右上角“导出诊断”保存 JSON；报告不包含音乐、图片或工程，也不自动上传。开发入口和待验证事项见[合并交接](docs/UPSTREAM_HANDOFF_1.4.27.md)。
+供审阅的 [1.4.28 安装包与 TXT 说明](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.28) 发布在贡献者的 Fork；上游正式发布由原作者决定。Windows 实际安装、安装后媒体/横竖视频/UI 检查、两个 Mac 架构的音视频及 AU/VST3 检查、Universal PKG 实际安装均已通过，详见[验证记录](docs/INSTALLERS_1.4.28.md)。完整下载包保留 `安装说明.txt` 的中文文件名。**自动化验证不代表所有 DAW 已逐一实测。** 1.4.27 安装包保留为回滚版本；本轮插件音频打印逻辑不变。开发入口与验证边界见[合并交接](docs/UPSTREAM_HANDOFF_1.4.28.md)。
 
 ### 三个版本怎么选？
 
@@ -56,7 +56,7 @@ SpectrumTag 将图片转换成黑白掩模，并通过处理音频的频率成�
 
 Print 可以超出原始文件的开始或结尾，导出时长会相应延长。视频超出原范围的部分补黑画面，原音画保持同步。源文件不被覆盖。
 
-**导出频谱视频**生成满屏纯频谱，无标题、刻度和时间文字，从最右侧逐渐显现并向左滚动。画面按 Tag 的时间、比例和频率刻度平滑调整，声音保持正常速度；重叠 Tag 优先跟随较早开始者。可选 MP4/MOV/MKV/WebM、720p/1080p/1440p/4K、30/60 fps，提供进度弹窗及取消。导出默认打开桌面目录，也可自行选择位置。
+**导出频谱视频**生成满屏纯频谱，无标题、刻度和时间文字，从最右侧逐渐显现并向左滚动。画面按 Tag 的时间、比例和频率刻度平滑调整，声音保持正常速度；重叠 Tag 优先跟随较早开始者。可选 MP4/MOV/MKV/WebM、30/60 fps，提供进度弹窗及取消。1.4.28 新增 4:3、3:4、16:9、9:16；分辨率按短边 720/1080/1440/2160 四档联动，菜单显示实际宽×高，默认 16:9 并记住上次选择。导出默认打开桌面目录，也可自行选择位置。
 
 ### 常用操作
 
@@ -76,10 +76,10 @@ Print 可以超出原始文件的开始或结尾，导出时长会相应延长�
 
 ### 安装与常见问题
 
-完整说明：[中文 TXT](docs/INSTALL-ZH-CN.txt) · [English TXT](docs/INSTALL-EN.txt)。安装前保存工程并完全退出宿主及独立版，安装时按需选择组件。
+完整说明：[安装说明（中文 TXT）](docs/安装说明.txt) · [English TXT](docs/INSTALL-EN.txt)。安装前保存工程并完全退出宿主及独立版，安装时按需选择组件。说明对应本次 1.4.28 安装包。
 
-- **Windows**：运行 `SpectrumTag-1.4.27-Windows-Setup.exe` 安装向导。VST3 安装到系统标准目录，独立程序目录可选择；包含所需微软 x64 运行库和媒体编解码器。
-- **macOS**：运行 `SpectrumTag-1.4.27-macOS.pkg`，安装到标准的 Applications / Audio Plug-Ins 目录，App 内含双架构媒体依赖，无需另装 Homebrew 或 FFmpeg。
+- **Windows**：运行 `SpectrumTag-1.4.28-Windows-Setup.exe` 安装向导。VST3 安装到系统标准目录，独立程序目录可选择；包含所需微软 x64 运行库和媒体编解码器。
+- **macOS**：运行 `SpectrumTag-1.4.28-macOS.pkg`，安装到标准的 Applications / Audio Plug-Ins 目录，App 内含双架构媒体依赖，无需另装 Homebrew 或 FFmpeg。
 - 当前没有 Windows 发布者签名或 Apple Developer ID 签名/公证。macOS bundle 使用 ad-hoc 签名。系统提示、重扫插件、旧版本冲突、Logic ARA/Rosetta 和字体等问题均见安装说明。
 - ARA 需要宿主支持及正确的扩展入口。OnlyARA 标记不能保证所有宿主都从普通插入菜单隐藏它。自动化构建/验证通过也不代表所有 DAW 工程都已实测。
 
@@ -112,12 +112,12 @@ SpectrumTag converts an image to a monochrome mask and processes audio frequenci
 
 | Item | Status |
 | --- | --- |
-| Current delivery | **1.4.27**, Windows Setup and macOS Universal PKG with Diagnostics, plus Chinese/English TXT installation guides |
-| Contributor-designated Stable | **1.4.27** (2026-11-08), reusing the delivered Windows and Mac installers; see the [Stable / Plan B record](docs/STABLE_1.4.27.md) |
+| Current delivery | **1.4.28 Stable**, Windows Setup and macOS Universal PKG with Chinese/English TXT installation guides |
+| Contributor-designated Stable | **1.4.28** (2026-11-09); the new Plan B snapshot is complete and frozen. See the [Stable / Plan B record](docs/STABLE_1.4.28.md). |
 | Windows installer | Realtime VST3, dedicated ARA VST3 and standalone; Windows 10/11 x64 |
 | macOS installer | Realtime/ARA VST3, realtime/ARA AU and standalone App; macOS 15+, Apple Silicon + Intel |
 
-The [1.4.27 installers and TXT guides](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.27) are review builds published in the contributor's fork; the original author decides upstream releases. Actual Windows installation, native media/AU/VST3 checks on both Mac architectures, and Universal PKG installation have passed; see the [verification record](docs/INSTALLERS_1.4.27.md). **The contributor designated this version Stable and confirmed visible Prints in the reported Mac standalone test; this does not constitute field validation of every DAW.** If a display issue recurs, Diagnostics saves a JSON with no media, images, project files or automatic upload. See the [merge handoff](docs/UPSTREAM_HANDOFF_1.4.27.md) for implementation entry points and remaining validation boundaries.
+Review the [1.4.28 installers and TXT guides](https://github.com/Ziqing-Gu/Spectrum-Tag-Private/releases/tag/v1.4.28) in the contributor's fork; the original author decides upstream publication. Actual Windows installation and installed media/video/UI checks, native media/AU/VST3 checks on both Mac architectures, and Universal PKG installation have passed; see the [verification record](docs/INSTALLERS_1.4.28.md). The complete download bundle preserves the Chinese filename `安装说明.txt`. **Automated checks do not constitute field validation of every DAW.** The 1.4.27 installers remain available for rollback; plugin audio Print processing is unchanged in this release. See the [merge handoff](docs/UPSTREAM_HANDOFF_1.4.28.md) for entry points and boundaries.
 
 ### Choose your edition
 
@@ -144,7 +144,7 @@ Load common audio formats or the soundtrack of MP4/M4V/MOV/MKV/WebM/AVI files. E
 
 Prints may extend before or after the source. Export duration expands accordingly; video receives black padding while the original audio and picture stay aligned. Source files are not overwritten.
 
-**Spectrum video export** fills the frame with the actual processed spectrum, without titles, axes or time labels. New content enters from the right edge and scrolls left. The view smoothly follows each Tag's time, proportions and frequency scale without changing audio playback speed; earlier-starting Tags take priority during overlaps. Choose MP4/MOV/MKV/WebM, 720p/1080p/1440p/4K and 30/60 fps. A progress dialog supports cancellation. Export dialogs start at the Desktop and allow another destination.
+**Spectrum video export** fills the frame with the actual processed spectrum, without titles, axes or time labels. New content enters from the right edge and scrolls left. The view smoothly follows each Tag's time, proportions and frequency scale without changing audio playback speed; earlier-starting Tags take priority during overlaps. Choose MP4/MOV/MKV/WebM and 30/60 fps. Version 1.4.28 adds 4:3, 3:4, 16:9 and 9:16, with four short-edge quality levels (720/1080/1440/2160) and actual width-by-height dimensions in the menu. It defaults to 16:9 and remembers the last choice. A progress dialog supports cancellation. Export dialogs start at the Desktop and allow another destination.
 
 ### Controls
 
@@ -164,10 +164,10 @@ Prints may extend before or after the source. Export duration expands accordingl
 
 ### Installation and development
 
-Read [English TXT instructions](docs/INSTALL-EN.txt) or [中文 TXT](docs/INSTALL-ZH-CN.txt). Save your project and quit hosts and SpectrumTag before installing; select the components you need.
+Read [English TXT instructions](docs/INSTALL-EN.txt) or [安装说明（中文 TXT）](docs/安装说明.txt). Save your project and quit hosts and SpectrumTag before installing; select the components you need. The guides describe these 1.4.28 installers.
 
-- **Windows:** `SpectrumTag-1.4.27-Windows-Setup.exe` is an installation wizard. It uses the standard VST3 location, allows a standalone destination, and includes the required Microsoft x64 runtime and media codec.
-- **macOS:** `SpectrumTag-1.4.27-macOS.pkg` installs to standard Applications / Audio Plug-Ins locations. Bundled media dependencies require neither Homebrew nor a separate FFmpeg installation.
+- **Windows:** `SpectrumTag-1.4.28-Windows-Setup.exe` is an installation wizard. It uses the standard VST3 location, allows a standalone destination, and includes the required Microsoft x64 runtime and media codec.
+- **macOS:** `SpectrumTag-1.4.28-macOS.pkg` installs to standard Applications / Audio Plug-Ins locations. Bundled media dependencies require neither Homebrew nor a separate FFmpeg installation.
 - There is no Windows publisher signature or Apple Developer ID signing/notarization. Mac bundles are ad-hoc signed. The guides cover system prompts, rescanning, duplicate versions, Logic ARA/Rosetta and fonts.
 - ARA requires a compatible host and the correct extension entry point. OnlyARA metadata cannot guarantee hiding from every host's ordinary insert menu. Automated validation is distinct from testing real projects in every DAW.
 
@@ -177,7 +177,7 @@ See the [development overview](PROJECT_OVERVIEW.md), [changelog](CHANGELOG.md), 
 
 ## 署名与许可 / Credits and license
 
-原项目与资源 / Original project and assets: **iisaacbeats.cn / sweetorange1**. 1.4.4–1.4.27 的开发贡献 / Development contributions for 1.4.4–1.4.27: **Ziqing-Gu** — 特别感谢 / with special thanks.
+原项目与资源 / Original project and assets: **iisaacbeats.cn / sweetorange1**. Fork development: **Ziqing-Gu**.
 
 项目许可保持 **GNU Affero General Public License v3.0 (AGPL-3.0)**，以 [LICENSE](LICENSE) 完整文本为准。第三方依赖及媒体编解码器保留各自许可与声明，随相应安装组件提供。
 
