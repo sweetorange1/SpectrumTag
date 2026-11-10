@@ -41,6 +41,17 @@ const juce::Colour kSpectrogramBgColour { 0xff000000 };
     const juce::Colour kPianoBlackKey  { 0xff202020 };
     const juce::Colour kAxisColour     { 0xff9a9a9a };
     const juce::Colour kAxisBgColour   { 0xff141517 };
+    const juce::Colour kButtonBg       { 0xff23282b };
+    const juce::Colour kButtonText     { 0xfff2f2f2 };
+    const juce::Colour kProgressTrack  { 0xff2b3033 };
+
+    inline bool containsWideCharacters (const juce::String& text)
+    {
+        for (int i = 0; i < text.length(); ++i)
+            if ((juce::juce_wchar) text[i] >= 0x2e80)
+                return true;
+        return false;
+    }
 
     constexpr int kFreqAxisWidth = 70;   // 左侧频率刻度宽度（mel 模式包含钢琴键）
     constexpr int kPianoWidth    = 28;   // mel 模式下钢琴键宽度
@@ -64,6 +75,10 @@ SpectrumTagLookAndFeel::SpectrumTagLookAndFeel()
         BinaryData::BasementGrotesqueBlack_v1_202_otf,
         BinaryData::BasementGrotesqueBlack_v1_202_otfSize);
 
+    // 解析一次并缓存：getTypefaceForFont 之后可能成为全局默认，
+    // 在内部再构造 Font 会重新进入本函数（栈溢出）。
+    chineseTypeface = spectrumtag::ui::chineseTypeface();
+
     setColour (juce::Label::textColourId,           kTextWhite);
     setColour (juce::Slider::backgroundColourId,    juce::Colours::transparentBlack);
     setColour (juce::Slider::trackColourId,         kSliderTrack);
@@ -78,12 +93,40 @@ SpectrumTagLookAndFeel::SpectrumTagLookAndFeel()
     setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::black);
     setColour (juce::ToggleButton::textColourId,    kTextWhite);
     setColour (juce::ToggleButton::tickColourId,    kTextWhite);
+
+    // 扁平按钮与进度条：与深色面板同一套语言，避免 JUCE 默认渐变外观。
+    setColour (juce::TextButton::buttonColourId,    kButtonBg);
+    setColour (juce::TextButton::buttonOnColourId,  kPrintBg);
+    setColour (juce::TextButton::textColourOffId,   kButtonText);
+    setColour (juce::TextButton::textColourOnId,    kPrintText);
+    setColour (juce::Slider::textBoxBackgroundColourId, kComboBg);
+    setColour (juce::Slider::textBoxTextColourId,   juce::Colours::black);
+    setColour (juce::Slider::textBoxOutlineColourId, kComboBorder);
+    setColour (juce::Slider::textBoxHighlightColourId, juce::Colour (0xffc8c8c8));
+    setColour (juce::ProgressBar::backgroundColourId, kProgressTrack);
+    setColour (juce::ProgressBar::foregroundColourId, kTextWhite);
 }
 
 juce::Typeface::Ptr SpectrumTagLookAndFeel::getTypefaceForFont (const juce::Font&)
 {
-    if(chinese)return juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),18.0f,juce::Font::plain)).getTypefacePtr();
+    // 直接返回缓存字体：本对象可能是全局默认 LookAndFeel，
+    // 若在此构造 Font 并解析字形会重新进入本函数。
+    if (chinese && chineseTypeface != nullptr) return chineseTypeface;
     return typeface;
+}
+
+juce::Font SpectrumTagLookAndFeel::getUiFont (float height) const
+{
+    if (chinese)
+        return spectrumtag::ui::chineseFont (height);
+    return juce::Font (typeface).withHeight (height);
+}
+
+juce::Font SpectrumTagLookAndFeel::getPopupMenuFont()
+{
+    if (chinese)
+        return spectrumtag::ui::chineseFont (15.0f);
+    return juce::Font (typeface).withHeight (15.0f);
 }
 
 void SpectrumTagLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
@@ -129,7 +172,9 @@ void SpectrumTagLookAndFeel::drawComboBox (juce::Graphics& g, int width, int hei
 
 juce::Font SpectrumTagLookAndFeel::getComboBoxFont (juce::ComboBox& box)
 {
-    return (chinese?juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),15.0f,juce::Font::plain)):juce::Font(typeface)).withHeight(juce::jmin(15.0f,box.getHeight()*.7f));
+    const float height = juce::jmin (15.0f, box.getHeight() * 0.7f);
+    if (chinese) return spectrumtag::ui::chineseFont (height);
+    return juce::Font (typeface).withHeight (height);
 }
 
 void SpectrumTagLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
@@ -154,6 +199,237 @@ void SpectrumTagLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleBu
         g.drawEllipse (dot.reduced (1.0f), 1.5f);
 }
 
+// ----------------------------------------------------------------------------
+//  TextButton：与工具栏圆角色块一致，默认不再使用 JUCE 的渐变/描边外观。
+//  "spectrumTagStyle"：primary（白底黑字，主操作）/ ghost（无底色，工具入口）
+// ----------------------------------------------------------------------------
+void SpectrumTagLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
+                                                   const juce::Colour& backgroundColour,
+                                                   bool isOver, bool isDown)
+{
+    const auto style   = button.getProperties()["spectrumTagStyle"].toString();
+    const bool primary = style == "primary";
+    const bool ghost   = style == "ghost";
+
+    auto bounds = button.getLocalBounds().toFloat().reduced (0.5f);
+    const float radius = juce::jmin (5.0f, bounds.getHeight() * 0.3f);
+
+    if (ghost)
+    {
+        if (isOver || isDown)
+        {
+            g.setColour (juce::Colours::white.withAlpha (isDown ? 0.10f : 0.06f));
+            g.fillRoundedRectangle (bounds, radius);
+        }
+        return;
+    }
+
+    juce::Colour fill = primary ? juce::Colour (0xfff5f5f5) : backgroundColour;
+    if (! button.isEnabled())
+        fill = fill.withMultipliedAlpha (0.40f);
+    else if (isDown)
+        fill = primary ? juce::Colour (0xffd6d6d6) : fill.brighter (0.16f);
+    else if (isOver)
+        fill = primary ? juce::Colours::white : fill.brighter (0.10f);
+
+    g.setColour (fill);
+    g.fillRoundedRectangle (bounds, radius);
+
+    if (! primary)
+    {
+        g.setColour (juce::Colours::white.withAlpha (button.isEnabled() ? 0.08f : 0.04f));
+        g.drawRoundedRectangle (bounds, radius, 1.0f);
+    }
+}
+
+void SpectrumTagLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
+                                             bool isOver, bool)
+{
+    const auto style   = button.getProperties()["spectrumTagStyle"].toString();
+    const bool primary = style == "primary";
+    const bool ghost   = style == "ghost";
+
+    auto colour = button.findColour (button.getToggleState()
+                                         ? juce::TextButton::textColourOnId
+                                         : juce::TextButton::textColourOffId);
+
+    if (primary && ! button.getToggleState())
+        colour = kPrintText;
+    else if (ghost)
+        colour = (isOver && button.isEnabled()) ? kTextWhite : kTextSub;
+
+    if (! button.isEnabled())
+        colour = colour.withMultipliedAlpha (0.45f);
+
+    g.setColour (colour);
+    g.setFont (getTextButtonFont (button, button.getHeight()));
+    g.drawFittedText (button.getButtonText(), button.getLocalBounds().reduced (5, 1),
+                      juce::Justification::centred, 1, 0.78f);
+}
+
+juce::Font SpectrumTagLookAndFeel::getTextButtonFont (juce::TextButton& button, int buttonHeight)
+{
+    const float height = juce::jlimit (11.0f, 15.0f, (float) buttonHeight * 0.52f);
+
+    if (chinese || containsWideCharacters (button.getButtonText()))
+        return spectrumtag::ui::chineseFont (height);
+
+    return juce::Font (typeface).withHeight (height);
+}
+
+juce::Label* SpectrumTagLookAndFeel::createSliderTextBox (juce::Slider& slider)
+{
+    auto* label = LookAndFeel_V4::createSliderTextBox (slider);
+
+    // 与 ComboBox 相同的浅灰数值块，替换 JUCE 默认的深色描边块。
+    label->setColour (juce::Label::backgroundColourId, kComboBg);
+    label->setColour (juce::Label::textColourId, juce::Colours::black);
+    label->setColour (juce::Label::outlineColourId, kComboBorder);
+    label->setColour (juce::TextEditor::backgroundColourId, kComboBg);
+    label->setColour (juce::TextEditor::textColourId, juce::Colours::black);
+    label->setColour (juce::TextEditor::outlineColourId, kComboBorder);
+    label->setFont (getUiFont (14.0f));
+    label->setJustificationType (juce::Justification::centred);
+
+    return label;
+}
+
+void SpectrumTagLookAndFeel::drawProgressBar (juce::Graphics& g, juce::ProgressBar& bar,
+                                              int width, int height, double progress,
+                                              const juce::String& textToShow)
+{
+    const float textWidth = textToShow.isEmpty() ? 0.0f : 54.0f;
+    auto track = juce::Rectangle<float> (0.0f, 0.0f, (float) width - textWidth, (float) height)
+                     .withSizeKeepingCentre ((float) width - textWidth, 8.0f);
+
+    g.setColour (bar.findColour (juce::ProgressBar::backgroundColourId));
+    g.fillRoundedRectangle (track, 4.0f);
+
+    const auto filled = track.withWidth (track.getWidth() * (float) juce::jlimit (0.0, 1.0, progress));
+    if (filled.getWidth() > 1.0f)
+    {
+        g.setColour (bar.findColour (juce::ProgressBar::foregroundColourId));
+        g.fillRoundedRectangle (filled, 4.0f);
+    }
+
+    if (textToShow.isNotEmpty())
+    {
+        g.setColour (kTextWhite);
+        g.setFont (chinese ? spectrumtag::ui::chineseFont (14.0f)
+                           : juce::Font (typeface).withHeight (14.0f));
+        g.drawText (textToShow, width - (int) textWidth, 0, (int) textWidth, height,
+                    juce::Justification::centredRight, false);
+    }
+}
+
+// ============================================================================
+//  TransportButton / TrashButton
+// ============================================================================
+namespace {
+    void paintIconChip (juce::Graphics& g, juce::Button& button, bool isOver, bool isDown)
+    {
+        auto bounds = button.getLocalBounds().toFloat().reduced (0.5f);
+        const float radius = juce::jmin (5.0f, bounds.getHeight() * 0.3f);
+
+        auto fill = kButtonBg;
+        if (! button.isEnabled())  fill = fill.withMultipliedAlpha (0.40f);
+        else if (isDown)           fill = fill.brighter (0.16f);
+        else if (isOver)           fill = fill.brighter (0.10f);
+
+        g.setColour (fill);
+        g.fillRoundedRectangle (bounds, radius);
+        g.setColour (juce::Colours::white.withAlpha (button.isEnabled() ? 0.08f : 0.04f));
+        g.drawRoundedRectangle (bounds, radius, 1.0f);
+    }
+
+    juce::Colour iconColour (const juce::Button& button)
+    {
+        return juce::Colours::white.withAlpha (button.isEnabled() ? 1.0f : 0.35f);
+    }
+}
+
+TransportButton::TransportButton() : juce::Button ("Play / Pause")
+{
+    setComponentID ("transportPlay");
+}
+
+void TransportButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
+{
+    paintIconChip (g, *this, isOver, isDown);
+
+    auto area = getLocalBounds().toFloat();
+    const float iconSize = juce::jmin (area.getHeight() * 0.46f, area.getWidth() * 0.42f);
+    auto icon = juce::Rectangle<float> (iconSize, iconSize).withCentre (area.getCentre());
+
+    g.setColour (iconColour (*this));
+
+    if (playing)
+    {
+        const float barW = icon.getWidth() * 0.28f;
+        const float gap = icon.getWidth() * 0.2f;
+        const float total = barW * 2.0f + gap;
+        const float x0 = icon.getCentreX() - total * 0.5f;
+        g.fillRoundedRectangle (x0, icon.getY(), barW, icon.getHeight(), 1.2f);
+        g.fillRoundedRectangle (x0 + barW + gap, icon.getY(), barW, icon.getHeight(), 1.2f);
+    }
+    else
+    {
+        // Slightly inset on the left so the triangle looks optically centred.
+        auto triangle = icon.reduced (icon.getWidth() * 0.08f, 0.0f);
+        juce::Path path;
+        path.addTriangle (triangle.getX(), triangle.getY(),
+                          triangle.getX(), triangle.getBottom(),
+                          triangle.getRight(), triangle.getCentreY());
+        g.fillPath (path);
+    }
+}
+
+TrashButton::TrashButton() : juce::Button ("Clear")
+{
+    setComponentID ("trashClear");
+}
+
+void TrashButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
+{
+    paintIconChip (g, *this, isOver, isDown);
+
+    auto area = getLocalBounds().toFloat();
+    const float size = juce::jmin (area.getHeight() * 0.52f, area.getWidth() * 0.42f);
+    auto icon = juce::Rectangle<float> (size * 0.82f, size).withCentre (area.getCentre());
+
+    g.setColour (iconColour (*this));
+    const float stroke = 1.5f;
+
+    // Lid + handle.
+    const float lidY = icon.getY() + icon.getHeight() * 0.20f;
+    g.drawLine (icon.getX(), lidY, icon.getRight(), lidY, stroke);
+    g.drawLine (icon.getX() + icon.getWidth() * 0.34f, lidY - icon.getHeight() * 0.12f,
+                icon.getX() + icon.getWidth() * 0.66f, lidY - icon.getHeight() * 0.12f, stroke);
+    g.drawLine (icon.getX() + icon.getWidth() * 0.34f, lidY - icon.getHeight() * 0.12f,
+                icon.getX() + icon.getWidth() * 0.34f, lidY, stroke);
+    g.drawLine (icon.getX() + icon.getWidth() * 0.66f, lidY - icon.getHeight() * 0.12f,
+                icon.getX() + icon.getWidth() * 0.66f, lidY, stroke);
+
+    // Body.
+    const float top = lidY + stroke;
+    const float bottom = icon.getBottom() - icon.getHeight() * 0.04f;
+    const float inset = icon.getWidth() * 0.14f;
+    juce::Path body;
+    body.startNewSubPath (icon.getX() + inset, top);
+    body.lineTo (icon.getX() + inset * 1.5f, bottom);
+    body.lineTo (icon.getRight() - inset * 1.5f, bottom);
+    body.lineTo (icon.getRight() - inset, top);
+    g.strokePath (body, juce::PathStrokeType (stroke));
+
+    // Two ribs.
+    const float ribTop = top + (bottom - top) * 0.24f;
+    const float ribBottom = bottom - (bottom - top) * 0.18f;
+    g.drawLine (icon.getCentreX() - icon.getWidth() * 0.16f, ribTop,
+                icon.getCentreX() - icon.getWidth() * 0.16f, ribBottom, stroke);
+    g.drawLine (icon.getCentreX() + icon.getWidth() * 0.16f, ribTop,
+                icon.getCentreX() + icon.getWidth() * 0.16f, ribBottom, stroke);
+}
+
 // ============================================================================
 //  RoundPrintButton
 // ============================================================================
@@ -176,7 +452,7 @@ void RoundPrintButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
     g.fillEllipse (circle);
 
     juce::Font f = (typeface != nullptr) ? juce::Font (typeface) : juce::Font();
-    f = f.withHeight (diameter * 0.32f);
+    f = f.withHeight (diameter * 0.32f * typeScale);
     g.setFont (f);
     g.setColour (kPrintText);
     g.drawText (getButtonText(), getLocalBounds(), juce::Justification::centred, false);
@@ -369,7 +645,7 @@ void ImageBoxComponent::paint (juce::Graphics& g)
         f = f.withHeight (juce::jlimit (14.0f, 28.0f, r.getHeight() * 0.18f));
         g.setFont (f);
         g.setColour (kImgBoxBlack);
-        if(chinese)g.setFont(juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),20.0f,juce::Font::plain)));
+        if(chinese)g.setFont(spectrumtag::ui::chineseFont(20.0f));
         g.drawText(chinese?juce::String::fromUTF8("双击选择图片"):juce::String("Double-click to load"),getLocalBounds(),juce::Justification::centred);
     }
 
@@ -779,7 +1055,7 @@ public:
                     const auto bar=panel.reduced(8.f).removeFromBottom(5.f);g.setColour(juce::Colours::white.withAlpha(.2f));g.fillRect(bar);g.setColour(juce::Colour(0xff80e2b5));g.fillRect(bar.withWidth(bar.getWidth()*progress));
                     const float phase=(float)(juce::Time::getMillisecondCounter()%1200)/1200*juce::MathConstants<float>::twoPi;
                     const auto centre=panel.getCentre().translated(0,-10);juce::Path arc;arc.addCentredArc(centre.x,centre.y,6,6,0,phase,phase+4.6f,true);g.strokePath(arc,juce::PathStrokeType(2.f));
-                    g.setColour(juce::Colours::white);g.setFont(12.f);const auto stage=processor.recording().renderStage();juce::String message;
+                    g.setColour(juce::Colours::white);g.setFont(chinese?spectrumtag::ui::chineseFont(12.f):juce::Font(12.f));const auto stage=processor.recording().renderStage();juce::String message;
                     if(stage==spectrumtag::RecordingEngine::RenderStage::queued)message=juce::String::fromUTF8(chinese?"等待渲染…":"Queued…");
                     else if(stage==spectrumtag::RecordingEngine::RenderStage::preparing)message=juce::String::fromUTF8(chinese?"准备音频与频谱…":"Preparing audio…");
                     else message=juce::String::fromUTF8(progress>=.85f?(chinese?"更新频谱 ":"Spectrum "):(chinese?"渲染 ":"Rendering "))+(progress<.01f?juce::String("<1"):juce::String((int)(progress*100)))+"%";
@@ -793,7 +1069,7 @@ public:
                 g.setColour(juce::Colour(0xff20282b));g.fillRect(handle);
                 g.setColour(juce::Colours::white);g.drawRect(handle,1.f);
                 g.drawLine(handle.getRight()-4,handle.getY()+4,handle.getX()+4,handle.getBottom()-4,1.5f);
-                g.setFont(12.0f);g.drawText(juce::String::fromUTF8(chinese?"Delete 键删除":"Press Delete to Remove"),box.withHeight(18).toNearestInt(),juce::Justification::centred);
+                g.setFont(chinese?spectrumtag::ui::chineseFont(12.0f):juce::Font(12.0f));g.drawText(juce::String::fromUTF8(chinese?"Delete 键删除":"Press Delete to Remove"),box.withHeight(18).toNearestInt(),juce::Justification::centred);
                 getProperties().set("selectedX",box.getX());getProperties().set("selectedY",box.getY());getProperties().set("selectedW",box.getWidth());getProperties().set("selectedH",box.getHeight());
             }
             paintCursor(g,contentBounds,timeX(processor.audition().position()),false);
@@ -834,13 +1110,13 @@ public:
                 g.fillRect(axisBounds.getX(),contentBounds.getY()+juce::roundToInt(y*contentBounds.getHeight()),black?17:26,black?3:1);
             }
         }
-        g.setColour(kBgColour);g.fillRect(statusBounds);g.setColour(kTextSub);g.setFont(juce::Font(11.0f));
+        g.setColour(kBgColour);g.fillRect(statusBounds);g.setColour(kTextSub);g.setFont(chinese?spectrumtag::ui::chineseFont(11.0f):juce::Font(11.0f));
         const double span=baseSpan()/view.zoomX;
         const auto label=(SPECTRUMTAG_ARA?juce::String::fromUTF8(chinese?"ARA 已加载  ":"ARA Loaded  "):processor.filePlayerMode?juce::String::fromUTF8(chinese?"已加载  ":"Loaded  "):recordMode?juce::String::fromUTF8(processor.recording().isArmed()?(chinese?"录音中  ":"Recording  "):(chinese?"已录制  ":"Recorded  ")):juce::String::fromUTF8(view.follow?(chinese?"实时  ":"Live  "):(chinese?"历史  ":"History  ")))+juce::String(view.endTime-span,1)+" - "+juce::String(view.endTime,1)+" s  |  "+juce::String::fromUTF8(chinese?"右键显示 / 隐藏原图":"Right-click: show / hide image")+(preview?juce::String::fromUTF8(previewReleased?(chinese?"  |  模拟预览 — 正在渲染…":"  |  Preview — rendering…"):(chinese?"  |  模拟预览 — 松手后渲染":"  |  Preview — render on release")):juce::String())+(processor.recording().isBusy()?juce::String::fromUTF8(chinese?"  |  正在渲染…":"  |  Rendering…"):juce::String());
         const char* errors[]={"","Recording stopped: capture queue full","Recording stopped: 15 min / 64 M sample limit","Recording stopped: sample rate / channel layout changed","Recording cache could not be saved or loaded","Audio import failed / exceeds 15 min or 64 M samples"};
 #if SPECTRUMTAG_ARA
         if(auto status=processor.araStatus();status.isNotEmpty()){
-            g.setColour(juce::Colour(0xee151a1d));g.fillRect(contentBounds.withHeight(45));g.setColour(juce::Colours::lightgrey);g.drawFittedText(status,contentBounds.withHeight(45).reduced(12,4),juce::Justification::centredLeft,2);
+            g.setColour(juce::Colour(0xee151a1d));g.fillRect(contentBounds.withHeight(45));g.setColour(juce::Colours::lightgrey);g.setFont(chinese?spectrumtag::ui::chineseFont(12.0f):juce::Font(12.0f));g.drawFittedText(status,contentBounds.withHeight(45).reduced(12,4),juce::Justification::centredLeft,2);
         }
 #endif
         const int error=juce::jlimit(0,5,processor.recording().errorCode());
@@ -882,7 +1158,7 @@ private:
     void paintOverview(juce::Graphics& g){
         if(overviewBounds.isEmpty())return;
         g.setColour(kPanelColour);g.fillRect(overviewBounds);
-        if(!recorded||recorded->empty()){g.setColour(kTextSub);g.setFont(12.0f);g.drawText(juce::String::fromUTF8(SPECTRUMTAG_ARA?(chinese?"选择 DAW 音频事件，然后点击加载":"Select DAW audio events, then click Load"):(chinese?"录音就绪 — 播放 DAW 开始采集":"Record armed - play the DAW to capture audio")),overviewBounds,juce::Justification::centred);return;}
+        if(!recorded||recorded->empty()){g.setColour(kTextSub);g.setFont(chinese?spectrumtag::ui::chineseFont(12.0f):juce::Font(12.0f));g.drawText(juce::String::fromUTF8(SPECTRUMTAG_ARA?(chinese?"选择 DAW 音频事件，然后点击加载":"Select DAW audio events, then click Load"):(chinese?"录音就绪 — 播放 DAW 开始采集":"Record armed - play the DAW to capture audio")),overviewBounds,juce::Justification::centred);return;}
         const double length=juce::jmax(.001,recorded->end()-timelineStart());
         const auto x=[&](double t){return overviewBounds.getX()+(float)((t-timelineStart())/length)*overviewBounds.getWidth();};
         {juce::Graphics::ScopedSaveState clipped(g);g.reduceClipRegion(overviewBounds);
@@ -985,15 +1261,13 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     setLookAndFeel (&lookAndFeel);
     tooltipLookAndFeel.setDefaultSansSerifTypefaceName(spectrumtag::ui::chineseFontName());
     tooltipWindow.setLookAndFeel(&tooltipLookAndFeel);
-    tooltipLanguageButton.setLookAndFeel(&tooltipLookAndFeel);
-    tooltipLanguageButton.setColour(juce::TextButton::buttonColourId,kPanelColour);
-    tooltipLanguageButton.setColour(juce::TextButton::textColourOffId,kTextWhite);
+    // 右上角工具入口沿用自绘扁平样式，只有悬停提示使用独立字体。
+    tooltipLanguageButton.getProperties().set("spectrumTagStyle","ghost");
     chineseTips=processor.getEditorState().chinese;
     tooltipLanguageButton.setComponentID("tooltipLanguage");
     tooltipLanguageButton.onClick=[this]{beginChange();chineseTips=!chineseTips;spectrumtag::Preferences::remember(nullptr,nullptr,&chineseTips);refreshLanguage();changed();finishChange(true);};
     addAndMakeVisible(tooltipLanguageButton);
-    diagnosticsButton.setLookAndFeel(&tooltipLookAndFeel);
-    diagnosticsButton.setColour(juce::TextButton::buttonColourId,kPanelColour);
+    diagnosticsButton.getProperties().set("spectrumTagStyle","ghost");
     diagnosticsButton.setComponentID("exportDiagnostics");
     diagnosticsButton.onClick=[this]{exportDiagnostics();};addAndMakeVisible(diagnosticsButton);
 
@@ -1346,8 +1620,13 @@ void SpectrumTagAudioProcessorEditor::resized()
     const int toolbarOffset=processor.isLoadMode()?105:0;
     for(int i=0;i<8;++i)if(paletteButtons[(size_t)i])paletteButtons[(size_t)i]->setBounds(px(125-toolbarOffset+i*35),px(52),px(30),px(30));
     imageVisibilityButton.setBounds(415-toolbarOffset,52,34,28);
-    recordButton.setBounds(459-toolbarOffset,52,84,28);clearRecordButton.setBounds(551-toolbarOffset,52,103,28);
-    removePrintButton.setBounds(662-toolbarOffset,52,75,28);previousPrintButton.setBounds(745-toolbarOffset,52,70,28);nextPrintButton.setBounds(823-toolbarOffset,52,70,28);
+    const int recordW=processor.isLoadMode()?104:84;
+    const int recordX=459-toolbarOffset;
+    recordButton.setBounds(recordX,52,recordW,28);
+    removePrintButton.setBounds(recordX+recordW+8,52,75,28);
+    previousPrintButton.setBounds(recordX+recordW+91,52,70,28);
+    nextPrintButton.setBounds(recordX+recordW+167,52,70,28);
+    clearRecordButton.setBounds(canvasWidth-300-46,52,34,28);
     frequencyRangeLabel.setBounds(canvasWidth-300,52,142,28);frequencyRangeCombo.setBounds(canvasWidth-158,52,138,28);
 
     titleLabel.setBounds (header.removeFromLeft (px (250)));
@@ -1376,7 +1655,7 @@ void SpectrumTagAudioProcessorEditor::resized()
     const int spacing  = px (10);
     const int rowGap   = px (16);
 
-    auto controlFont = chineseTips?juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),18.0f,juce::Font::plain)):juce::Font(basementTypeface).withHeight(18.0f);
+    auto controlFont = chineseTips?spectrumtag::ui::chineseFont(18.0f):juce::Font(basementTypeface).withHeight(18.0f);
     fftSizeLabel.setFont (controlFont);
     fftScaleLabel.setFont (controlFont);
     speedLabel.setFont (controlFont);
@@ -1397,7 +1676,7 @@ void SpectrumTagAudioProcessorEditor::resized()
 
     auto speedRow=rightPanel.removeFromTop(labelH);
     speedLabel.setBounds(speedRow.removeFromLeft(85));timeSpanLabel.setBounds(speedRow);
-    timeSpanLabel.setFont(juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),14.f,juce::Font::plain)));
+    timeSpanLabel.setFont(spectrumtag::ui::chineseFont(14.f));
     rightPanel.removeFromTop (spacing);
     speedSlider.setBounds (rightPanel.removeFromTop (sliderH));
     rightPanel.removeFromTop (rowGap);
@@ -1540,8 +1819,8 @@ void SpectrumTagAudioProcessorEditor::timerCallback()
     }
     printButton.setEnabled((!processor.filePlayerMode||processor.recording().isEnabled())&&!processor.isPrintRunning()&&(!SPECTRUMTAG_ARA||(processor.araBound()&&processor.recording().snapshot()!=nullptr)));
     processor.flushPrintMathLogToFile();
-    recordButton.setButtonText(juce::String::fromUTF8(processor.isLoadMode()?(chineseTips?"加载":"Load"):processor.recording().isArmed()?(chineseTips?"停止录音":"Stop Rec"):(chineseTips?"录音":"Record")));
-    recordButton.setColour(juce::TextButton::buttonColourId,processor.recording().isArmed()?juce::Colour(0xff983e56):kPanelColour);
+    recordButton.setButtonText(juce::String::fromUTF8(processor.isLoadMode()?(chineseTips?"加载音频":"Load audio"):processor.recording().isArmed()?(chineseTips?"停止录音":"Stop Rec"):(chineseTips?"录音":"Record")));
+    recordButton.setColour(juce::TextButton::buttonColourId,processor.recording().isArmed()?juce::Colour(0xff983e56):kButtonBg);
     removePrintButton.setEnabled(spectrumView->selectedPrint().has_value());clearRecordButton.setEnabled(processor.recording().isEnabled()&&!processor.isClearPending());recordButton.setEnabled(!processor.isClearPending());
     previousPrintButton.setEnabled(!processor.isClearPending()&&adjacentPrint(false).isNotEmpty());nextPrintButton.setEnabled(!processor.isClearPending()&&adjacentPrint(true).isNotEmpty());
 #if SPECTRUMTAG_ARA
@@ -1760,7 +2039,7 @@ void SpectrumTagAudioProcessorEditor::refreshLanguage(){
     auto tr=[this](const char* zh,const char* en){return juce::String::fromUTF8(chineseTips?zh:en);};lookAndFeel.setChinese(chineseTips);
     diagnosticsButton.setButtonText(tr("导出诊断","Diagnostics"));
     diagnosticsButton.setTooltip(tr("复现问题后保存诊断 JSON：仅包含系统、参数和显示状态，不包含音乐、图片、工程或截图，不会自动上传。","After reproducing a problem, save diagnostic JSON containing system, parameter and display status only. No audio, images, projects or screenshots; never uploaded automatically."));
-    for(auto* l:{&fftSizeLabel,&fftScaleLabel,&speedLabel,&amplitudeLabel,&invertLabel,&imageModeLabel,&imageAmountLabel,&noiseFillLabel,&frequencyRangeLabel})l->setFont(chineseTips?juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),18.f,juce::Font::plain)):juce::Font(basementTypeface).withHeight(18));
+    for(auto* l:{&fftSizeLabel,&fftScaleLabel,&speedLabel,&amplitudeLabel,&invertLabel,&imageModeLabel,&imageAmountLabel,&noiseFillLabel,&frequencyRangeLabel})l->setFont(chineseTips?spectrumtag::ui::chineseFont(18.f):juce::Font(basementTypeface).withHeight(18));
     fftSizeLabel.setText(tr("FFT 大小：","FFT Size:"),juce::dontSendNotification);fftScaleLabel.setText(tr("频率刻度：","FFT scale:"),juce::dontSendNotification);
     speedLabel.setText(tr("速度：","Speed:"),juce::dontSendNotification);amplitudeLabel.setText(tr("保留音量：","Amplitude Ratio:"),juce::dontSendNotification);
     imageModeLabel.setText(tr("图像黑白转换：","Image B/W:"),juce::dontSendNotification);imageAmountLabel.setText(tr("黑白强度：","B/W amount:"),juce::dontSendNotification);
@@ -1770,8 +2049,8 @@ void SpectrumTagAudioProcessorEditor::refreshLanguage(){
     imageModeCombo.setSelectedId(1+(int)*processor.getAPVTS().getRawParameterValue(ParameterIDs::imageMode),juce::dontSendNotification);
     fftScaleCombo.setSelectedId(1+processor.getFrequencyScale(),juce::dontSendNotification);
     imageModeCombo.sendLookAndFeelChange();fftScaleCombo.sendLookAndFeelChange();
-    removePrintButton.setButtonText(tr("删除","Delete"));clearRecordButton.setButtonText(processor.isLoadMode()?tr("清空","Clear"):tr("清空录音","Clear Record"));previousPrintButton.setButtonText(tr("上一个打印","Previous Print"));nextPrintButton.setButtonText(tr("下一个打印","Next Print"));
-    recordButton.setButtonText(processor.isLoadMode()?tr("加载","Load"):tr("录音","Record"));printButton.setButtonText(tr("打印","Print"));printButton.setTypeface(chineseTips?juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),32.f,juce::Font::bold)).getTypefacePtr():basementTypeface);
+    removePrintButton.setButtonText(tr("删除","Delete"));previousPrintButton.setButtonText(tr("上一个打印","Previous Print"));nextPrintButton.setButtonText(tr("下一个打印","Next Print"));
+    recordButton.setButtonText(processor.isLoadMode()?tr("加载音频","Load audio"):tr("录音","Record"));printButton.setButtonText(tr("打印","Print"));printButton.setTypeface(chineseTips?spectrumtag::ui::chineseTypeface():basementTypeface);printButton.setTypeScale(chineseTips?spectrumtag::ui::chineseScale:1.0f);
     spectrumView->setChinese(chineseTips);tooltipLanguageButton.setButtonText(juce::String::fromUTF8(chineseTips?"中文":"EN"));updateTooltips();resized();repaint();
 }
 void SpectrumTagAudioProcessorEditor::updateTooltips(){

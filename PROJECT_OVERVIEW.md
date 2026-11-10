@@ -1,6 +1,16 @@
 # SpectrumTag 项目总览与开发过程
 
-维护日期：2026-11-09。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
+维护日期：2026-11-10。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
+
+## 2.0.0 源码基线：界面与字体重做（2026-11-10）
+
+用户要求按原有视觉风格整体重做界面，并把源码版本提升为 **2.0.0**，作为换机继续开发的固定基线。
+
+- **按钮**：`SpectrumTagLookAndFeel` 新增扁平按钮绘制，按 `spectrumTagStyle` 区分 `primary`（白底黑字）、`ghost`（无底色，工具入口）和默认深灰次要按钮；所有 JUCE `TextButton`、弹出菜单、进度条和数值框统一，独立版顶栏与导出/进度/音频设备弹窗也套用同一主题。
+- **中文字体**：优先 `Noto Sans SC`，按 Black/Heavy/Bold/Semibold 取最重字重；无此字体时按 Source Han Sans SC → HarmonyOS Sans SC → MiSans → 微软雅黑 → 等线/黑体的顺序回退。实测墨迹高度（100 px）：Basement `H` 66、`x` 51、`Range:` 84；Noto `国` 64、`显示上限` 66。18 px 时英文 `Speed:` 墨迹 15 px/宽 58 px，中文 `速度:` 13 px/宽 29 px，因此中文统一乘 1.15 光学补偿（`shared/PlatformFonts.h` 的 `chineseScale`）。
+- **独立版顶栏**：播放改为自绘矢量图标（播放三角 / 暂停双竖条），移除停止按钮；加载按钮文案改为“加载音频 / Load audio”；清空改为垃圾桶图标并右置到“显示上限”左侧。
+- **验证**：`SpectrumTag_VST3` 与 `SpectrumTagStandalone` 编译通过；`--fileless-ui-test` 中英文均通过（`exit=0`）。本轮不重新生成安装包，1.4.28 的 Windows Setup / macOS PKG 仍是最近交付。
+- **版本来源**：只改 `CMakeLists.txt` 的 `project(SpectrumTag VERSION 2.0.0)`；`juce_add_plugin`、`juce_add_gui_app`、Windows 打包脚本和 CI 都从 CMake 读取版本。`packaging/windows/installer.iss` 的缺省 `Version` 已同步为 2.0.0。
 
 ## 当前完成状态：1.4.28 安装包、公开 Release 与增量交接（2026-11-09）
 

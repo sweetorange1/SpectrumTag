@@ -39,6 +39,8 @@ public:
     // 默认字体（所有控件未显式 setFont 时都会用这个）
     juce::Typeface::Ptr getTypefaceForFont (const juce::Font&) override;
     void setChinese(bool value){chinese=value;}
+    // 供独立版弹窗等外部组件复用同一套字体。
+    juce::Font getUiFont (float height) const;
 
     // 滑块：细线 + 圆形 thumb（参考 UI.png）
     void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
@@ -57,9 +59,24 @@ public:
                            bool shouldDrawButtonAsHighlighted,
                            bool shouldDrawButtonAsDown) override;
 
+    // TextButton：扁平圆角块，primary 为白底黑字，ghost 为无底色
+    void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour& backgroundColour,
+                               bool shouldDrawButtonAsHighlighted,
+                               bool shouldDrawButtonAsDown) override;
+    void drawButtonText (juce::Graphics&, juce::TextButton&,
+                         bool shouldDrawButtonAsHighlighted,
+                         bool shouldDrawButtonAsDown) override;
+    juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
+    juce::Font getPopupMenuFont() override;
+    juce::Label* createSliderTextBox (juce::Slider&) override;
+
+    void drawProgressBar (juce::Graphics&, juce::ProgressBar&, int width, int height,
+                          double progress, const juce::String& textToShow) override;
+
 private:
     bool chinese=false;
     juce::Typeface::Ptr typeface;
+    juce::Typeface::Ptr chineseTypeface;
 };
 
 // ----------------------------------------------------------------------------
@@ -71,8 +88,33 @@ public:
     explicit RoundPrintButton (const juce::String& name);
     void paintButton (juce::Graphics&, bool isMouseOverButton, bool isButtonDown) override;
     void setTypeface (juce::Typeface::Ptr tf) { typeface = std::move (tf); }
+    void setTypeScale (float scale) { typeScale = scale; repaint(); }
 private:
     juce::Typeface::Ptr typeface;
+    float typeScale = 1.0f;
+};
+
+// ----------------------------------------------------------------------------
+//  TransportButton：独立版顶栏的播放/暂停图标按钮（自绘三角与双竖条）
+// ----------------------------------------------------------------------------
+class TransportButton : public juce::Button
+{
+public:
+    TransportButton();
+    void setPlaying (bool value) { if (playing != value) { playing = value; repaint(); } }
+    void paintButton (juce::Graphics&, bool isMouseOverButton, bool isButtonDown) override;
+private:
+    bool playing = false;
+};
+
+// ----------------------------------------------------------------------------
+//  TrashButton：清空按钮的垃圾桶图标
+// ----------------------------------------------------------------------------
+class TrashButton : public juce::Button
+{
+public:
+    TrashButton();
+    void paintButton (juce::Graphics&, bool isMouseOverButton, bool isButtonDown) override;
 };
 
 // ----------------------------------------------------------------------------
@@ -290,7 +332,8 @@ private:
     private:
         const bool pointsRight;
     };
-    juce::TextButton recordButton {"Record"},removePrintButton {"Delete"},clearRecordButton {"Clear Record"};
+    juce::TextButton recordButton {"Record"},removePrintButton {"Delete"};
+    TrashButton clearRecordButton;
     PrintNavigationButton previousPrintButton {false},nextPrintButton {true};
     juce::ComboBox frequencyRangeCombo;
     juce::Label frequencyRangeLabel {{},"Range:"};

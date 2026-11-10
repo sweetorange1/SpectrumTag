@@ -1,5 +1,7 @@
 # Change history
 
+2026-11-10: source version raised to **2.0.0**. The interface was rebuilt on the existing visual language: flat styling for every JUCE text button, Noto Sans SC Black (heaviest available face) with a measured optical size compensation for Chinese, a vector play/pause icon in the standalone, Stop removed, the load button renamed to "Load audio", and Clear moved to a right-aligned trash icon. Verified with SpectrumTag_VST3 / SpectrumTagStandalone builds and the fileless UI regression; no 2.0.0 installers were produced yet.
+
 2026-11-09: the user designated **1.4.28 Stable**, requested a new Plan B before publishing, then Windows/macOS installers with bilingual TXT guides and an incremental upstream PR. The delivered Windows standalone is reused; additional platforms/installers were pending at designation and subsequently passed the checks recorded in `docs/INSTALLERS_1.4.28.md`. See `docs/STABLE_1.4.28.md`.
 
 2026-11-08: the user designated the delivered **1.4.27 Stable** and requested a new Plan B source snapshot. The existing Windows and macOS installers, product version and verification are reused; only status/documentation changes. The reported Mac Print display issue remains under investigation, and installer destination changes are deferred by the user. See `docs/STABLE_1.4.27.md`.
@@ -10,6 +12,7 @@ This is a concise record of the Windows development delivered after upstream 1.4
 
 | Version | Delivered change |
 | --- | --- |
+| 2.0.0 | UI refresh: unified flat button styling, Noto Sans SC Black with optical size compensation, standalone play/pause icon, Stop removed, "Load audio" wording and a right-aligned trash icon for Clear. Source baseline only; installers not rebuilt. / 界面重做：统一扁平按钮、Noto Sans SC Black 中文与光学字号补偿；独立版播放/暂停图标、移除停止按钮、加载按钮改为“加载音频”、清空改为右置垃圾桶。仅源码基线，未重新打包。 |
 | 1.4.28 | Standalone spectrum video aspect selection: 4:3, 3:4, 16:9 and 9:16, matching dimensions, remembered choice and preserved Tag proportions. User-designated Stable, new frozen Plan B, validated Windows Setup and Universal Mac PKG with bilingual TXT guides. / 独立版频谱视频新增横竖画幅、联动分辨率与记忆选择；用户指定 Stable，新 Plan B 已冻结，Windows/Mac 安装包及实际安装检查完成，附中英文 TXT。 |
 | 1.4.27 | Manual privacy-limited diagnostics in all formats for the unresolved Mac display report; phase-safe spectrum analysis, display-only cache migration, and matching selected source/Print bounds. Native checks and installers passed; field diagnosis pending. / 所有格式新增手动导出诊断，定位尚未确认原因的 Mac 打印不显示；另修复反相频谱抵消、旧显示缓存和选中尺寸不一致。原生与实装验证通过，等待现场报告。 |
 | 1.4.26 | Encoder-compatible video timing, responsive POSIX video streaming, Windows Setup and Universal macOS PKG with realtime/ARA VST3, AU and standalone; automated native and installation checks passed. User Mac acceptance and Stable designation remain pending. / 兼容新旧编码器、修复 Mac 频谱视频传输超时；交付 Win 安装程序及 Mac 双架构 PKG，附 TXT 说明。原生及实际安装检查通过，等待用户 Mac 工程验收，不自动设 Stable。 |

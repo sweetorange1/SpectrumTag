@@ -244,7 +244,7 @@ int main(int argc,char** argv){try{
         check(printBounds.getRight()<=editor->getWidth()&&printBounds.getBottom()<=editor->getHeight(),"embedded host rectangle must not clip the right-side controls");
         editor->setScaleFactor(1);editor->setSize(1240,680);
         auto* language=dynamic_cast<juce::Button*>(component(*editor,"tooltipLanguage"));check(language!=nullptr,"language switch exists");
-        language->onClick();check(dynamic_cast<juce::Button*>(component(*editor,"loadButton"))->getButtonText()=="Load","English ARA labels");language->onClick();
+        language->onClick();check(dynamic_cast<juce::Button*>(component(*editor,"loadButton"))->getButtonText()=="Load audio","English ARA labels");language->onClick();
         std::cout<<"PASS Load UI, bilingual controls, host bounds/scale, multi-event overview, empty gap, host seek request\n"<<std::flush;
         PrintEdit edit;edit.start=10.02;edit.duration=.075;edit.low=0;edit.high=.9f;edit.rows=129;edit.cols=32;edit.fftSize=1024;edit.ratio=0;edit.compensation=.4f;edit.mask=std::make_shared<const std::vector<float>>(edit.rows*edit.cols,1.f);
         auto before=p.captureUserState();p.recording().add(edit);auto after=p.captureUserState();p.commitUserChange(before,after);

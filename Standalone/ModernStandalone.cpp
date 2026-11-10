@@ -25,13 +25,16 @@ public:
         format.setSelectedId(options.format+1,juce::dontSendNotification);aspect.setSelectedId(options.aspect+1,juce::dontSendNotification);fps.setSelectedId(options.fps==60?2:1,juce::dontSendNotification);
         updateResolutions();aspect.onChange=[this]{updateResolutions();};
         aspect.setComponentID("videoAspect");resolution.setComponentID("videoResolution");go.setComponentID("videoDestination");
-        for(auto* label:{&formatLabel,&aspectLabel,&resolutionLabel,&fpsLabel}){if(zh)label->setFont(juce::Font(juce::FontOptions(spectrumtag::ui::chineseFontName(),16.f,juce::Font::plain)));addAndMakeVisible(label);}
+        const auto bodyFont=uiFont(15.f);
+        for(auto* label:{&formatLabel,&aspectLabel,&resolutionLabel,&fpsLabel}){label->setFont(bodyFont);label->setColour(juce::Label::textColourId,juce::Colour(0xfff2f2f2));addAndMakeVisible(label);}
         for(auto* combo:{&format,&aspect,&resolution,&fps})addAndMakeVisible(combo);
-        go.setButtonText(juce::String::fromUTF8(zh?"选择保存位置…":"Choose destination…"));addAndMakeVisible(go);
-        go.onClick=[this]{auto next=options;next.format=format.getSelectedId()-1;next.aspect=aspect.getSelectedId()-1;next.resolution=resolution.getSelectedId()-1;next.fps=fps.getSelectedId()==2?60:30;next.remember();onAccept(next);if(auto* window=findParentComponentOfClass<juce::DialogWindow>())window->exitModalState(0);};setSize(440,260);
+        go.setButtonText(juce::String::fromUTF8(zh?"选择保存位置…":"Choose destination..."));go.getProperties().set("spectrumTagStyle","primary");addAndMakeVisible(go);
+        go.onClick=[this]{auto next=options;next.format=format.getSelectedId()-1;next.aspect=aspect.getSelectedId()-1;next.resolution=resolution.getSelectedId()-1;next.fps=fps.getSelectedId()==2?60:30;next.remember();onAccept(next);if(auto* window=findParentComponentOfClass<juce::DialogWindow>())window->exitModalState(0);};setSize(460,272);
     }
-    void resized()override{auto area=getLocalBounds().reduced(18);for(auto pair:{std::make_pair(&formatLabel,&format),std::make_pair(&aspectLabel,&aspect),std::make_pair(&resolutionLabel,&resolution),std::make_pair(&fpsLabel,&fps)}){auto row=area.removeFromTop(42);pair.first->setBounds(row.removeFromLeft(130));pair.second->setBounds(row.reduced(0,5));}area.removeFromTop(12);go.setBounds(area.removeFromTop(34));}
+    void paint(juce::Graphics& g)override{g.fillAll(juce::Colour(0xff1a1c1f));}
+    void resized()override{auto area=getLocalBounds().reduced(20);for(auto pair:{std::make_pair(&formatLabel,&format),std::make_pair(&aspectLabel,&aspect),std::make_pair(&resolutionLabel,&resolution),std::make_pair(&fpsLabel,&fps)}){auto row=area.removeFromTop(44);pair.first->setBounds(row.removeFromLeft(132));pair.second->setBounds(row.reduced(0,6));}area.removeFromTop(10);go.setBounds(area.removeFromTop(36));}
 private:
+    static juce::Font uiFont(float height){if(auto* laf=dynamic_cast<SpectrumTagLookAndFeel*>(&juce::LookAndFeel::getDefaultLookAndFeel()))return laf->getUiFont(height);return juce::Font(juce::FontOptions(height));}
     void updateResolutions(){
         const int selected=resolution.getSelectedId()>0?resolution.getSelectedId():options.resolution+1;
         auto next=options;next.aspect=aspect.getSelectedId()-1;next.normalise();
@@ -51,17 +54,26 @@ juce::File defaultExportFolder(){return juce::File::getSpecialLocation(juce::Fil
 class Player final : public juce::AudioAppComponent,private juce::Timer {
 public:
     SpectrumTagAudioProcessor processor;
+    SpectrumTagLookAndFeel lookAndFeel;
     explicit Player(bool enableAudio=true){
+        juce::LookAndFeel::setDefaultLookAndFeel(&lookAndFeel);
+        lookAndFeel.setChinese(processor.getEditorState().chinese);
         processor.filePlayerMode=true;processor.filePlayerVersion=ProjectInfo::versionString;processor.onLoadAudioFile=[this]{chooseAudio();};processor.onDropAudioFile=[this](const juce::File& f){load(f);};
         processor.onFileSeek=[this](double seconds){const auto s=processor.recording().snapshot();if(s){const double t=juce::jlimit(s->start(),s->end(),seconds);seek=t;processor.publishFileTransport(playing,t);}};
         session=std::make_unique<Session>(processor,enableAudio);editor.reset(processor.createEditor());addAndMakeVisible(*editor);
-        for(auto* button:{&play,&stop,&exportButton,&device})addAndMakeVisible(button);addAndMakeVisible(status);
-        play.onClick=[this]{if(auto audio=processor.recording().snapshot()){if(position>=audio->end())seek=audio->start();playing=!playing;}};
-        stop.onClick=[this]{playing=false;processor.publishFileTransport(false,position);};exportButton.onClick=[this]{chooseExport();};
-        device.onClick=[this]{auto* settings=new juce::AudioDeviceSelectorComponent(deviceManager,0,0,1,2,false,false,true,false);settings->setSize(500,400);juce::DialogWindow::LaunchOptions options;options.content.setOwned(settings);options.dialogTitle=processor.getEditorState().chinese?juce::String::fromUTF8("音频设备"):"Audio device";options.dialogBackgroundColour=juce::Colour(0xff1a1c1e);options.useNativeTitleBar=true;options.resizable=false;options.launchAsync();};
+        addAndMakeVisible(play);addAndMakeVisible(exportButton);addAndMakeVisible(device);addAndMakeVisible(status);
+        device.getProperties().set("spectrumTagStyle","secondary");
+        exportButton.getProperties().set("spectrumTagStyle","primary");
+        status.setColour(juce::Label::textColourId,juce::Colour(0xffbfbfbf));
+        status.setFont(lookAndFeel.getUiFont(14.f));
+        lastChinese=processor.getEditorState().chinese;
+        play.setTooltip(lastChinese?juce::String::fromUTF8("播放 / 暂停"):"Play / Pause");
+        play.onClick=[this]{if(auto audio=processor.recording().snapshot()){if(position>=audio->end())seek=audio->start();playing=!playing;play.setPlaying(playing.load());}};
+        exportButton.onClick=[this]{chooseExport();};
+        device.onClick=[this]{auto* settings=new juce::AudioDeviceSelectorComponent(deviceManager,0,0,1,2,false,false,true,false);settings->setSize(500,400);juce::DialogWindow::LaunchOptions options;options.content.setOwned(settings);options.dialogTitle=processor.getEditorState().chinese?juce::String::fromUTF8("音频设备"):"Audio device";options.dialogBackgroundColour=juce::Colour(0xff1a1c1f);options.useNativeTitleBar=true;options.resizable=false;options.launchAsync();};
         setSize(1240,722);if(enableAudio)setAudioChannels(0,2);startTimerHz(30);
     }
-    ~Player()override{stopTimer();movie.cancel();exportProgress.reset();shutdownAudio();editor.reset();session.reset();processor.onFileSeek={};processor.onLoadAudioFile={};processor.onDropAudioFile={};}
+    ~Player()override{if(&juce::LookAndFeel::getDefaultLookAndFeel()==&lookAndFeel)juce::LookAndFeel::setDefaultLookAndFeel(nullptr);stopTimer();movie.cancel();exportProgress.reset();shutdownAudio();editor.reset();session.reset();processor.onFileSeek={};processor.onLoadAudioFile={};processor.onDropAudioFile={};}
     void prepareToPlay(int size,double sr)override{rate=sr;processor.setRateAndBufferSizeDetails(sr,size);processor.prepareToPlay(sr,size);}
     void releaseResources()override{processor.releaseResources();}
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& output)override{
@@ -72,13 +84,17 @@ public:
         processor.publishFileTransport(playing.load()&&audio!=nullptr,t);
     }
     void resized()override{
-        auto bar=getLocalBounds().removeFromTop(42).reduced(8,5);play.setBounds(bar.removeFromLeft(80));bar.removeFromLeft(6);stop.setBounds(bar.removeFromLeft(80));bar.removeFromLeft(6);exportButton.setBounds(bar.removeFromLeft(90));bar.removeFromLeft(6);device.setBounds(bar.removeFromLeft(100));bar.removeFromLeft(12);status.setBounds(bar);if(editor)editor->setBounds(getLocalBounds().withTrimmedTop(42));
+        auto bar=getLocalBounds().removeFromTop(42).reduced(10,5);play.setBounds(bar.removeFromLeft(44));bar.removeFromLeft(8);exportButton.setBounds(bar.removeFromLeft(96));bar.removeFromLeft(8);device.setBounds(bar.removeFromLeft(106));bar.removeFromLeft(14);status.setBounds(bar);if(editor)editor->setBounds(getLocalBounds().withTrimmedTop(42));
     }
-    void paint(juce::Graphics& g)override{g.fillAll(juce::Colour(0xff1a1c1e));}
+    void paint(juce::Graphics& g)override{
+        g.fillAll(juce::Colour(0xff1a1c1e));
+        g.setColour(juce::Colour(0xff141618));g.fillRect(getLocalBounds().removeFromTop(42));
+        g.setColour(juce::Colours::white.withAlpha(.06f));g.fillRect(0,41,getWidth(),1);
+    }
     bool keyPressed(const juce::KeyPress& key)override{if(movie.busy())return true;if(key==juce::KeyPress::spaceKey){play.onClick();return true;}return editor&&editor->keyPressed(key);}
 private:
     std::unique_ptr<juce::AudioProcessorEditor> editor;std::unique_ptr<Session> session;std::unique_ptr<juce::FileChooser> chooser;
-    juce::TextButton play,stop,exportButton,device;juce::Label status;std::atomic<bool> playing{false};std::atomic<double> position{0},seek{std::numeric_limits<double>::quiet_NaN()};double rate=48000;uint64_t seen=0;
+    TransportButton play;juce::TextButton exportButton,device;juce::Label status;bool lastChinese=false;std::atomic<bool> playing{false};std::atomic<double> position{0},seek{std::numeric_limits<double>::quiet_NaN()};double rate=48000;uint64_t seen=0;
     SpectrumVideoExport movie;SpectrumVideoExport::Stage seenMovieStage=SpectrumVideoExport::idle;juce::File movieTarget;
     std::unique_ptr<ExportProgressWindow> exportProgress;
     void load(const juce::File& file){if(session->busy()||movie.busy())return;playing=false;movieMessage.clear();session->load(file);}
@@ -88,7 +104,7 @@ private:
         if(movie.busy()){movie.cancel();return;}
         if(session->busy()||processor.recording().isBusy()||!processor.recording().snapshot())return;
         const bool zh=processor.getEditorState().chinese;juce::PopupMenu menu;
-        menu.addItem(3,juce::String::fromUTF8(zh?"导出频谱视频…":"Export spectrum video…"));menu.addSeparator();
+        menu.addItem(3,juce::String::fromUTF8(zh?"导出频谱视频…":"Export spectrum video..."));menu.addSeparator();
         const bool video=session->current().video;
         menu.addItem(1,juce::String::fromUTF8(video?(zh?"导出视频（保留画面）":"Export video (keep picture)"):(zh?"导出音频":"Export audio")),session->exportable());
         if(video)menu.addItem(2,juce::String::fromUTF8(zh?"仅导出音频（原音轨格式）":"Export audio only (source codec)"),session->exportable());
@@ -96,7 +112,7 @@ private:
     }
     void chooseMovieSettings(){
         auto options=VideoOptions::remembered();const auto state=processor.getEditorState();options.palette=state.palette;options.chinese=state.chinese;options.scale=processor.getFrequencyScale();options.speed=processor.getAPVTS().getRawParameterValue(ParameterIDs::speed)->load();const float tops[]{20000,24000,22050,48000};options.top=tops[juce::jlimit(0,3,(int)processor.getAPVTS().getRawParameterValue(ParameterIDs::frequencyRange)->load())];
-        juce::DialogWindow::LaunchOptions dialog;dialog.content.setOwned(new VideoSettings(options,[safe=juce::Component::SafePointer<Player>(this)](VideoOptions value){if(safe)safe->chooseMovieFile(value);}));dialog.dialogTitle=juce::String::fromUTF8(options.chinese?"导出频谱视频":"Export spectrum video");dialog.dialogBackgroundColour=juce::Colour(0xff1a1c1e);dialog.useNativeTitleBar=true;dialog.resizable=false;dialog.launchAsync();
+        juce::DialogWindow::LaunchOptions dialog;dialog.content.setOwned(new VideoSettings(options,[safe=juce::Component::SafePointer<Player>(this)](VideoOptions value){if(safe)safe->chooseMovieFile(value);}));dialog.dialogTitle=juce::String::fromUTF8(options.chinese?"导出频谱视频":"Export spectrum video");dialog.dialogBackgroundColour=juce::Colour(0xff1a1c1f);dialog.useNativeTitleBar=true;dialog.resizable=false;dialog.launchAsync();
     }
     void chooseMovieFile(VideoOptions options){
         auto name=session->current().file.getFileNameWithoutExtension();if(name.isEmpty())name="Untitled";
@@ -118,13 +134,16 @@ private:
         if(!movie.busy())session->ensureBlankCanvas();
         if(session->loadedRevision()!=seen){seen=session->loadedRevision();position=0;seek=0;if(!session->restoredLastSession())processor.resetFileView();processor.publishFileTransport(false,0);}
         const bool chinese=processor.getEditorState().chinese;auto tr=[&](const char* zh,const char* en){return juce::String::fromUTF8(chinese?zh:en);};
-        play.setButtonText(playing?tr("暂停","Pause"):tr("播放","Play"));stop.setButtonText(tr("停止","Stop"));exportButton.setButtonText(tr("导出","Export"));device.setButtonText(tr("音频设备","Audio device"));
-        auto text=session->status();if(movie.busy()){const auto stage=movie.stage();text=(stage==SpectrumVideoExport::preparing?tr("准备声音…","Preparing audio…"):stage==SpectrumVideoExport::finishing?tr("正在完成视频…","Finalising video…"):tr("导出频谱视频 ","Exporting spectrum video ")+juce::String(juce::roundToInt(movie.progress()*100))+"%");exportButton.setButtonText(tr("取消导出","Cancel export"));}
+        if(chinese!=lastChinese){lastChinese=chinese;lookAndFeel.setChinese(chinese);status.setFont(lookAndFeel.getUiFont(14.f));for(auto* button:{&exportButton,&device})button->sendLookAndFeelChange();play.setTooltip(chinese?juce::String::fromUTF8("播放 / 暂停"):"Play / Pause");}
+        play.setPlaying(playing.load());
+        exportButton.setButtonText(tr("导出","Export"));device.setButtonText(tr("音频设备","Audio device"));
+        auto text=session->status();if(movie.busy()){const auto stage=movie.stage();text=(stage==SpectrumVideoExport::preparing?tr("准备声音…","Preparing audio..."):stage==SpectrumVideoExport::finishing?tr("正在完成视频…","Finalising video..."):tr("导出频谱视频 ","Exporting spectrum video ")+juce::String(juce::roundToInt(movie.progress()*100))+"%");exportButton.setButtonText(tr("取消导出","Cancel export"));}
         else if(seenMovieStage!=movie.stage()){if(movie.stage()==SpectrumVideoExport::complete)text=tr("已导出：","Exported: ")+movieTarget.getFullPathName();else if(movie.stage()==SpectrumVideoExport::cancelled)text=tr("已取消导出","Export cancelled");else if(movie.stage()==SpectrumVideoExport::failed)text=movie.error();movieMessage=text;}
         if(!movie.busy()&&movieMessage.isNotEmpty())text=movieMessage;seenMovieStage=movie.stage();
-        status.setText(text,juce::dontSendNotification);status.setColour(juce::Label::textColourId,juce::Colours::lightgrey);editor->setEnabled(!movie.busy());device.setEnabled(!movie.busy());
+        status.setText(text,juce::dontSendNotification);status.setColour(juce::Label::textColourId,juce::Colour(0xffbfbfbf));editor->setEnabled(!movie.busy());device.setEnabled(!movie.busy());
         auto audio=processor.recording().snapshot();const bool hasContent=audio&&(!session->current().generated||!audio->edits.empty());
         play.setEnabled(!movie.busy()&&!session->busy()&&hasContent);exportButton.setEnabled(movie.busy()||(!session->busy()&&!processor.recording().isBusy()&&hasContent));
+        exportButton.getProperties().set("spectrumTagStyle",movie.busy()?"secondary":"primary");
     }
     juce::String movieMessage;
 };
