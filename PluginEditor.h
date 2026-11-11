@@ -153,6 +153,10 @@ public:
     // 设置当前图片（从文件加载并预处理）
     bool loadImageFromFile (const juce::File& file);
     bool hasImage() const { return sourceImage.isValid(); }
+    // 已记住的图片被隐藏、时间线上又没有任何打印时，画布上什么都没有：
+    // 此时该框改画“拖入图片”引导，而不是保持隐藏。
+    void setGuideMode (bool guide) { if (guideMode == guide) return; guideMode = guide; repaint(); }
+    bool isGuideMode() const { return guideMode; }
     void clearImage(){sourceImage={};binaryMask={};binaryPreview={};imagePath={};requestedConversion=converter.request({},conversionMode,conversionAmount);appliedConversion=0;repaint();}
     juce::String getImagePath() const { return imagePath; }
     void setImagePathForRecall(const juce::String& path){imagePath=path;}
@@ -212,6 +216,7 @@ private:
     bool chinese=false;
     juce::Image  sourceImage;           // 原图（彩色）
     juce::Image binaryMask;
+    bool guideMode=false;               // 有图但被隐藏且无打印内容：改画投放引导
     int conversionMode=0;
     float conversionAmount=0.5f;
     bool previewInverted=false;

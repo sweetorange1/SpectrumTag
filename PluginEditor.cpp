@@ -593,7 +593,7 @@ ImageBoxComponent::DragMode ImageBoxComponent::hitTest (juce::Point<int> p) cons
 
 void ImageBoxComponent::mouseMove (const juce::MouseEvent& e)
 {
-    auto m = hitTest (e.getPosition());
+    auto m = guideMode ? DragMode::None : hitTest (e.getPosition());
     if (m == DragMode::ResizeBR)      setMouseCursor (juce::MouseCursor::BottomRightCornerResizeCursor);
     else if (m == DragMode::Move)     setMouseCursor (juce::MouseCursor::DraggingHandCursor);
     else                              setMouseCursor (juce::MouseCursor::PointingHandCursor);
@@ -601,7 +601,7 @@ void ImageBoxComponent::mouseMove (const juce::MouseEvent& e)
 
 void ImageBoxComponent::mouseDown(const juce::MouseEvent& e){
     if(!e.mods.isLeftButtonDown())return;
-    if(onGestureStart)onGestureStart();dragMode=hitTest(e.getPosition());dragStartPos=e.getPosition()+getPosition();dragStartNormRect=normRect;
+    if(onGestureStart)onGestureStart();dragMode=guideMode?DragMode::None:hitTest(e.getPosition());dragStartPos=e.getPosition()+getPosition();dragStartNormRect=normRect;
 }
 void ImageBoxComponent::mouseDrag(const juce::MouseEvent& e){
     if(dragMode==DragMode::None||contentBounds.isEmpty())return;
@@ -617,7 +617,7 @@ void ImageBoxComponent::mouseDrag(const juce::MouseEvent& e){
     normRect=clampNormRect(next);resizedFromNorm();if(onChanged)onChanged();
 }
 void ImageBoxComponent::mouseUp(const juce::MouseEvent& e){
-    const bool wasEmpty=!hasImage();
+    const bool wasEmpty=!hasImage()||guideMode;
     const bool moved=(e.getPosition()+getPosition()-dragStartPos).getDistanceFromOrigin()>=4.f;
     dragMode=DragMode::None;
     if(onGestureEnd)onGestureEnd();
@@ -658,7 +658,7 @@ void ImageBoxComponent::paint (juce::Graphics& g)
     g.setColour (kImgBoxBg.withAlpha (0.55f));
     g.fillRect (r);
 
-    if(hasImage()&&binaryMask.isValid()){
+    if(hasImage()&&binaryMask.isValid()&&!guideMode){
         const auto shade=(juce::uint8)juce::roundToInt(255*std::sqrt(juce::jlimit(0.0f,1.0f,previewRatio)));
         const juce::Colour dim(shade,shade,shade);
         g.setColour(previewInverted?dim:juce::Colours::white);g.fillRect(r);
@@ -785,6 +785,9 @@ public:
         dirty=true;repaint();
     }
     void setImageVisible(bool visible){imageVisibleRequested=visible;refreshImageBoxVisibility();}
+    // 区分本窗口内主动隐藏（眼睛按钮、Print 后自动隐藏：要干净画布）和恢复
+    // 存档带来的旧隐藏状态（画布上什么都没有，需要投放引导）。
+    void setImageHiddenInSession(bool hidden){imageHiddenInSession=hidden;refreshImageBoxVisibility();}
     // Called when Print is refused because no real audio is loaded. Emphasise
     // the on-canvas guidance instead of silently doing nothing.
     void flashAudioHint(){audioHintFlashUntil=juce::Time::getMillisecondCounter()+2200;repaint(audioBannerBounds());}
@@ -826,7 +829,7 @@ public:
         preview=std::move(value);previewReleased=released;
         if(preview&&anchor){view.zoomX=preview->viewZoom;view.follow=false;fit=false;view.endTime=preview->start+(1.-(double)imageBox->getX()/juce::jmax(1,contentBounds.getWidth()))*timeSpan();}
         if(rebuild)previewImage={};
-        getProperties().set("previewActive",preview.has_value());dirty=true;repaint();
+        getProperties().set("previewActive",preview.has_value());refreshImageBoxVisibility();dirty=true;repaint();
     }
     void releasePreview(){previewReleased=true;dirty=true;repaint();}
     void constrainNavigation(bool allowEmpty=false){
@@ -900,10 +903,12 @@ public:
         if(lastClearSerial!=processor.getSpectrumClearSerial())clearDisplay();
         processor.drainSpectrumFrames(incoming);
         bool changed=false;
-        // The empty-workspace guide follows image presence, not the eye toggle:
-        // with nothing loaded there is no source image to hide.
+        // The empty-workspace guide follows image presence and print content:
+        // with nothing loaded, or with the only picture hidden and nothing
+        // printed, there is nothing on the canvas to hide.
         const bool hasImage=imageBox->hasImage();
-        if(hasImage!=lastHasImage){lastHasImage=hasImage;refreshImageBoxVisibility();repaint();}
+        if(hasImage!=lastHasImage){lastHasImage=hasImage;repaint();}
+        refreshImageBoxVisibility();
         const bool audioLoaded=processor.hasLoadedAudio();
         if(audioLoaded!=lastAudioLoaded){lastAudioLoaded=audioLoaded;repaint();}
         if(processor.recording().isEnabled()!=recordMode){
@@ -1047,7 +1052,7 @@ public:
         // 未加载音频时的引导条：点击等同"加载音频"按钮。
         if(event.mods.isLeftButtonDown()&&audioBannerBounds().toFloat().contains(point)){if(onRequestAudio)onRequestAudio();return;}
         // 图片放置模式：图片可见且未选中任何打印时，点击频谱任意处直接打印。
-        if(event.mods.isLeftButtonDown()&&event.eventComponent!=imageBox.get()&&imageBox->isVisible()&&imageBox->hasImage()&&selected.isEmpty()&&contentBounds.toFloat().contains(point)&&onAutoPrint){onAutoPrint();return;}
+        if(event.mods.isLeftButtonDown()&&event.eventComponent!=imageBox.get()&&imageBox->isVisible()&&imageBox->hasImage()&&!imageBox->isGuideMode()&&selected.isEmpty()&&contentBounds.toFloat().contains(point)&&onAutoPrint){onAutoPrint();return;}
         if(!recorded||recorded->empty())return;
         if(isShowing())grabKeyboardFocus();
         if(overviewBounds.toFloat().contains(point)){
@@ -1229,7 +1234,21 @@ public:
     }
 private:
     enum class OverviewHandle { None, Scrub, ResizeLeft, ResizeRight };
-    void refreshImageBoxVisibility(){imageBox->setVisible(imageVisibleRequested||!imageBox->hasImage());}
+    bool timelineHasPrintContent() const {
+        if(preview||selected.isNotEmpty()||processor.isPrintRunning())return true;
+        const auto edits=processor.recording().edits();
+        return edits&&!edits->empty();
+    }
+    void refreshImageBoxVisibility(){
+        // 无图时该框就是投放引导，不能被隐藏。恢复存档时保留下来的“隐藏图片”
+        // 状态、而时间线上又没有任何打印内容时，画布同样是空的：此时显示引导，
+        // 否则用户既看不到图也看不到入口。本窗口内主动隐藏（眼睛按钮、Print 后
+        // 自动隐藏）仍保留干净画布。
+        const bool hasImage=imageBox->hasImage();
+        const bool guideOnly=hasImage&&!imageVisibleRequested&&!imageHiddenInSession&&!timelineHasPrintContent();
+        imageBox->setGuideMode(guideOnly);
+        imageBox->setVisible(imageVisibleRequested||!hasImage||guideOnly);
+    }
     juce::Rectangle<int> audioBannerBounds() const {
         if(!processor.isLoadMode()||processor.hasLoadedAudio()||contentBounds.isEmpty())return {};
         const int w=juce::jlimit(1,juce::jmax(1,contentBounds.getWidth()-40),560);
@@ -1426,7 +1445,7 @@ private:
     std::optional<spectrumtag::PrintEdit> preview,dragEdit;bool previewReleased=false,movingPrint=false,resizingPrint=false;
     juce::Image previewImage;juce::Point<float> dragPoint;juce::Rectangle<float> dragBounds;
     bool recordMode=false,chinese=true,fit=false,restored=false,wasPlaying=false,wasArmed=false,fitAfterCapture=false;
-    bool imageVisibleRequested=true,lastHasImage=false,lastAudioLoaded=false;
+    bool imageVisibleRequested=true,imageHiddenInSession=false,lastHasImage=false,lastAudioLoaded=false;
     juce::uint32 audioHintFlashUntil=0;
     OverviewHandle overviewHandle=OverviewHandle::None;
     float lastTop=0;
@@ -1566,7 +1585,7 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     imageVisibilityButton.onClick=[this]{
         // Nothing loaded: the empty box is the drop guide and cannot be hidden.
         if(!spectrumView->getImageBox().hasImage())return;
-        beginChange();imageVisible=!imageVisible;spectrumView->setImageVisible(imageVisible);imageVisibilityButton.setToggleState(imageVisible,juce::dontSendNotification);changed();finishChange(true);
+        beginChange();imageVisible=!imageVisible;spectrumView->setImageHiddenInSession(!imageVisible);spectrumView->setImageVisible(imageVisible);imageVisibilityButton.setToggleState(imageVisible,juce::dontSendNotification);changed();finishChange(true);
     };
     addAndMakeVisible(imageVisibilityButton);
     spectrumView->onToggleImage=[this]{imageVisibilityButton.onClick();};
@@ -2262,7 +2281,7 @@ void SpectrumTagAudioProcessorEditor::enterImageMode(){
         auto& box=spectrumView->getImageBox();
         if(!box.hasImage()&&!edit->imagePath.isEmpty()&&juce::File(edit->imagePath).existsAsFile())box.loadImageFromFile(juce::File(edit->imagePath));
         spectrumView->alignImageToPrint(*edit);
-        imageVisible=true;spectrumView->setImageVisible(true);imageVisibilityButton.setToggleState(true,juce::dontSendNotification);
+        imageVisible=true;spectrumView->setImageHiddenInSession(false);spectrumView->setImageVisible(true);imageVisibilityButton.setToggleState(true,juce::dontSendNotification);
     }
 }
 void SpectrumTagAudioProcessorEditor::onPrintClicked(){
@@ -2287,7 +2306,9 @@ void SpectrumTagAudioProcessorEditor::onPrintClicked(){
     finishChange(true);beginChange();syncImagePreview();
     if(processor.recording().isEnabled()){
         auto source=processor.recording().snapshot();if(!source||source->empty()){finishChange(true);return;}
-        const auto hideSource=[this]{imageVisible=false;spectrumView->setImageVisible(false);imageVisibilityButton.setToggleState(false,juce::dontSendNotification);};
+        // 打印后隐藏原图是本窗口内的主动选择：删掉最后一个 Print 时保持干净
+        // 画布，不要用投放引导覆盖频谱。
+        const auto hideSource=[this]{imageVisible=false;spectrumView->setImageHiddenInSession(true);spectrumView->setImageVisible(false);imageVisibilityButton.setToggleState(false,juce::dontSendNotification);};
         if(auto selected=spectrumView->selectedPrint()){hideSource();pendingSelected=true;finishChange(true);return;}
         auto e=makeEdit();if(!processor.filePlayerMode&&(e.start>=source->end()||e.start+e.duration<=source->start())){finishChange(true);return;}
         if(processor.filePlayerMode&&juce::jmax(source->end(),e.start+e.duration)-juce::jmin(source->start(),e.start)>juce::jmin(900.,64000000./source->sampleRate)){finishChange(true);return;}
@@ -2312,6 +2333,9 @@ void SpectrumTagAudioProcessorEditor::restoreEditorStateFromProcessor(){
 #if !SPECTRUMTAG_ARA
         if(!processor.filePlayerMode)setSize(juce::roundToInt(kDefaultWidth*s.uiScale),juce::roundToInt(kDefaultHeight*s.uiScale));
 #endif
+    // 恢复/撤销只回放保存的可见性，不改“本窗口主动隐藏”的判断：否则一次
+    // Undo 就会把 Print 后的干净画布变成投放引导。编辑器构造时该标记为
+    // false，恢复存档里的隐藏状态因此能正确落到引导框。
     spectrumView->setImageVisible(imageVisible);imageVisibilityButton.setToggleState(imageVisible,juce::dontSendNotification);
     auto& box=spectrumView->getImageBox();
     if(box.getImagePath()!=s.imagePath){box.clearImage();if(juce::File(s.imagePath).existsAsFile())box.loadImageFromFile(juce::File(s.imagePath));else box.setImagePathForRecall(s.imagePath);}
@@ -2325,7 +2349,7 @@ void SpectrumTagAudioProcessorEditor::selectPalette(int index,bool remember){
     if(remember)spectrumtag::Preferences::remember(nullptr,&selectedPalette);persistEditorStateToProcessor();
 }
 void SpectrumTagAudioProcessorEditor::imagePicked(const juce::File& file){
-    imageVisible=true;spectrumView->setImageVisible(true);imageVisibilityButton.setToggleState(true,juce::dontSendNotification);
+    imageVisible=true;spectrumView->setImageHiddenInSession(false);spectrumView->setImageVisible(true);imageVisibilityButton.setToggleState(true,juce::dontSendNotification);
     auto path=file.getFullPathName();
     const auto folder=spectrumtag::Preferences::file().getParentDirectory().getChildFile("Images");const auto cached=folder.getChildFile(juce::Uuid().toString()+file.getFileExtension());
     if(folder.createDirectory().wasOk()&&file.copyFileTo(cached)){path=cached.getFullPathName();spectrumView->getImageBox().setImagePathForRecall(path);}
