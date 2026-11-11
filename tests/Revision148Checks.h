@@ -7,6 +7,9 @@ static void revision148Checks(const juce::File& dir){
     auto* view=componentWithID(*editor,"spectrumView");auto* box=imageBox(*editor);
     auto* eye=dynamic_cast<juce::Button*>(componentWithID(*editor,"imageVisibility"));
     auto* clear=dynamic_cast<juce::Button*>(componentWithID(*editor,"clearRecord"));
+    // The empty drop guide is intentionally not hideable; load a real image so
+    // this check still covers the eye toggle.
+    if(!box->hasImage()){dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();}
     const bool shown=box->isVisible();const double beforeRight=(double)view->getProperties()["displayEnd"];
     view->mouseDown(mouseAt(*view,{400,200},true));require(box->isVisible()!=shown,"148 right-click toggles source image");
     require((double)view->getProperties()["displayEnd"]==beforeRight,"148 right-click does not fit or move the timeline");

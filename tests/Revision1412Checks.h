@@ -39,6 +39,10 @@ static void revision1412Checks(const juce::File& dir) {
     // Selection recalls the Print's display FFT asynchronously. Finish that
     // work before measuring whether a subsequent gesture renders any audio.
     fill->onDragStart();require(p.recording().flush(),"1412 selection settled before Fill drag");
+    // Selecting a Print shows the editable source image over it; hide that
+    // overlay so the simulated Print preview itself can be measured.
+    auto* eye=dynamic_cast<juce::Button*>(componentWithID(*editor,"imageVisibility"));
+    if(imageBox(*editor)->isVisible()&&eye)eye->onClick();tickUI();
     const auto revision=p.recording().snapshot()->revision;
     fill->setValue(.1,juce::sendNotificationSync);tickUI();auto lowUI=view->createComponentSnapshot(view->getLocalBounds());
     const int x=juce::roundToInt((float)view->getProperties()["selectedX"]+(float)view->getProperties()["selectedW"]*30.5f/160);

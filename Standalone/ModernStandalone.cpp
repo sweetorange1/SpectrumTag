@@ -63,15 +63,16 @@ public:
         session=std::make_unique<Session>(processor,enableAudio);editor.reset(processor.createEditor());addAndMakeVisible(*editor);
         addAndMakeVisible(play);addAndMakeVisible(exportButton);addAndMakeVisible(device);addAndMakeVisible(status);
         device.getProperties().set("spectrumTagStyle","secondary");
-        exportButton.getProperties().set("spectrumTagStyle","primary");
+        exportButton.getProperties().set("spectrumTagStyle","round");
         status.setColour(juce::Label::textColourId,juce::Colour(0xffbfbfbf));
         status.setFont(lookAndFeel.getUiFont(14.f));
+        status.setJustificationType(juce::Justification::centredLeft);
         lastChinese=processor.getEditorState().chinese;
         play.setTooltip(lastChinese?juce::String::fromUTF8("播放 / 暂停"):"Play / Pause");
         play.onClick=[this]{if(auto audio=processor.recording().snapshot()){if(position>=audio->end())seek=audio->start();playing=!playing;play.setPlaying(playing.load());}};
         exportButton.onClick=[this]{chooseExport();};
         device.onClick=[this]{auto* settings=new juce::AudioDeviceSelectorComponent(deviceManager,0,0,1,2,false,false,true,false);settings->setSize(500,400);juce::DialogWindow::LaunchOptions options;options.content.setOwned(settings);options.dialogTitle=processor.getEditorState().chinese?juce::String::fromUTF8("音频设备"):"Audio device";options.dialogBackgroundColour=juce::Colour(0xff1a1c1f);options.useNativeTitleBar=true;options.resizable=false;options.launchAsync();};
-        setSize(1240,722);if(enableAudio)setAudioChannels(0,2);startTimerHz(30);
+        setSize(1240,680);if(enableAudio)setAudioChannels(0,2);startTimerHz(30);
     }
     ~Player()override{if(&juce::LookAndFeel::getDefaultLookAndFeel()==&lookAndFeel)juce::LookAndFeel::setDefaultLookAndFeel(nullptr);stopTimer();movie.cancel();exportProgress.reset();shutdownAudio();editor.reset();session.reset();processor.onFileSeek={};processor.onLoadAudioFile={};processor.onDropAudioFile={};}
     void prepareToPlay(int size,double sr)override{rate=sr;processor.setRateAndBufferSizeDetails(sr,size);processor.prepareToPlay(sr,size);}
@@ -84,13 +85,18 @@ public:
         processor.publishFileTransport(playing.load()&&audio!=nullptr,t);
     }
     void resized()override{
-        auto bar=getLocalBounds().removeFromTop(42).reduced(10,5);play.setBounds(bar.removeFromLeft(44));bar.removeFromLeft(8);exportButton.setBounds(bar.removeFromLeft(96));bar.removeFromLeft(8);device.setBounds(bar.removeFromLeft(106));bar.removeFromLeft(14);status.setBounds(bar);if(editor)editor->setBounds(getLocalBounds().withTrimmedTop(42));
+        if(!editor)return;
+        editor->setBounds(getLocalBounds());
+        // 播放/导出/音频设备/状态标签都叠放在编辑器上方，落点由编辑器换算。
+        if(auto* concrete=static_cast<SpectrumTagAudioProcessorEditor*>(editor.get())){
+            const auto slots=concrete->standaloneSlots();
+            play.setBounds(slots.play);
+            exportButton.setBounds(slots.exportButton);
+            device.setBounds(slots.device);
+            status.setBounds(slots.fileName);
+        }
     }
-    void paint(juce::Graphics& g)override{
-        g.fillAll(juce::Colour(0xff1a1c1e));
-        g.setColour(juce::Colour(0xff141618));g.fillRect(getLocalBounds().removeFromTop(42));
-        g.setColour(juce::Colours::white.withAlpha(.06f));g.fillRect(0,41,getWidth(),1);
-    }
+    void paint(juce::Graphics& g)override{g.fillAll(juce::Colour(0xff1a1c1e));}
     bool keyPressed(const juce::KeyPress& key)override{if(movie.busy())return true;if(key==juce::KeyPress::spaceKey){play.onClick();return true;}return editor&&editor->keyPressed(key);}
 private:
     std::unique_ptr<juce::AudioProcessorEditor> editor;std::unique_ptr<Session> session;std::unique_ptr<juce::FileChooser> chooser;
@@ -137,13 +143,13 @@ private:
         if(chinese!=lastChinese){lastChinese=chinese;lookAndFeel.setChinese(chinese);status.setFont(lookAndFeel.getUiFont(14.f));for(auto* button:{&exportButton,&device})button->sendLookAndFeelChange();play.setTooltip(chinese?juce::String::fromUTF8("播放 / 暂停"):"Play / Pause");}
         play.setPlaying(playing.load());
         exportButton.setButtonText(tr("导出","Export"));device.setButtonText(tr("音频设备","Audio device"));
-        auto text=session->status();if(movie.busy()){const auto stage=movie.stage();text=(stage==SpectrumVideoExport::preparing?tr("准备声音…","Preparing audio..."):stage==SpectrumVideoExport::finishing?tr("正在完成视频…","Finalising video..."):tr("导出频谱视频 ","Exporting spectrum video ")+juce::String(juce::roundToInt(movie.progress()*100))+"%");exportButton.setButtonText(tr("取消导出","Cancel export"));}
+        auto text=session->status();if(movie.busy()){const auto stage=movie.stage();text=(stage==SpectrumVideoExport::preparing?tr("准备声音…","Preparing audio..."):stage==SpectrumVideoExport::finishing?tr("正在完成视频…","Finalising video..."):tr("导出频谱视频 ","Exporting spectrum video ")+juce::String(juce::roundToInt(movie.progress()*100))+"%");exportButton.setButtonText(tr("取消","Cancel"));}
         else if(seenMovieStage!=movie.stage()){if(movie.stage()==SpectrumVideoExport::complete)text=tr("已导出：","Exported: ")+movieTarget.getFullPathName();else if(movie.stage()==SpectrumVideoExport::cancelled)text=tr("已取消导出","Export cancelled");else if(movie.stage()==SpectrumVideoExport::failed)text=movie.error();movieMessage=text;}
         if(!movie.busy()&&movieMessage.isNotEmpty())text=movieMessage;seenMovieStage=movie.stage();
         status.setText(text,juce::dontSendNotification);status.setColour(juce::Label::textColourId,juce::Colour(0xffbfbfbf));editor->setEnabled(!movie.busy());device.setEnabled(!movie.busy());
         auto audio=processor.recording().snapshot();const bool hasContent=audio&&(!session->current().generated||!audio->edits.empty());
         play.setEnabled(!movie.busy()&&!session->busy()&&hasContent);exportButton.setEnabled(movie.busy()||(!session->busy()&&!processor.recording().isBusy()&&hasContent));
-        exportButton.getProperties().set("spectrumTagStyle",movie.busy()?"secondary":"primary");
+        exportButton.getProperties().set("spectrumTagStyle",movie.busy()?"secondary":"round");
     }
     juce::String movieMessage;
 };
@@ -151,18 +157,56 @@ int filelessUiTest(const juce::File& folder){try{
     folder.createDirectory();auto need=[](bool ok,const char* why){if(!ok)throw std::runtime_error(why);};
     auto wait=[&](auto condition){const auto end=juce::Time::getMillisecondCounter()+30000;do{juce::MessageManager::getInstance()->runDispatchLoopUntil(10);juce::Timer::callPendingTimersSynchronously();if(condition())return;}while((int)(end-juce::Time::getMillisecondCounter())>0);throw std::runtime_error("fileless UI wait timed out");};
     Player panel(false);auto& processor=panel.processor;wait([&]{return processor.recording().snapshot()&&!processor.recording().isBusy();});
-    auto* image=revision1416::box(panel);auto* print=dynamic_cast<juce::Button*>(revision1416::find(panel,"printButton"));auto* fill=dynamic_cast<juce::Slider*>(revision1416::find(panel,"noiseFill"));auto* view=revision1416::find(panel,"spectrumView");
-    need(image&&print&&fill&&view,"blank canvas controls exist");wait([&]{return print->isEnabled()&&fill->isEnabled();});
+    auto* image=revision1416::box(panel);auto* fill=dynamic_cast<juce::Slider*>(revision1416::find(panel,"noiseFill"));auto* view=revision1416::find(panel,"spectrumView");auto* uiEditor=static_cast<SpectrumTagAudioProcessorEditor*>(revision1416::find(panel,"editor"));
+    need(image&&fill&&view&&uiEditor,"blank canvas controls exist");wait([&]{return fill->isEnabled();});
+    auto clickSpectrum=[&]{const auto now=juce::Time::getCurrentTime();const juce::Point<float> point{100.f,100.f};juce::MouseEvent click(juce::Desktop::getInstance().getMainMouseSource(),point,juce::ModifierKeys::leftButtonModifier,1,0,0,0,0,view,view,now,point,now,1,false);view->mouseDown(click);view->mouseUp(click);};
+    // 空工作区没有音频也没有图片：必须绘制图片投放引导，并说明先加载音频。
+    need(!processor.hasLoadedAudio(),"blank workspace must not count as loaded audio");
+    // The remembered image from an earlier run must not hide the guide check.
+    if(image->hasImage()){image->clearImage();wait([&]{return image->isVisible();});}
+    need(image->isVisible(),"empty workspace shows the image drop guide");
+    need(processor.recording().snapshot()->sourceId.startsWith("generated:"),"blank canvas is still the generated placeholder");
+    {auto ui=panel.createComponentSnapshot(panel.getLocalBounds());auto out=folder.getChildFile("standalone-empty.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(ui,*out),"empty workspace screenshot");}
     juce::Image picture(juce::Image::RGB,96,128,true);{juce::Graphics g(picture);g.fillAll(juce::Colours::white);g.setColour(juce::Colours::black);g.fillRect(15,16,66,24);g.fillRect(36,30,24,78);}const auto path=folder.getChildFile("letter-T.png");{auto out=path.createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(picture,*out),"UI image fixture");}
-    image->loadImageFromFile(path);fill->setValue(.65,juce::sendNotificationSync);wait([&]{return image->conversionReady();});
-    print->onClick();wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy()&&(int)view->getProperties()["rasterRevision"]==s->revision;});
-    const auto audio=processor.recording().snapshot();need(audio->sourceId.startsWith("generated:")&&audio->end()>.1,"UI Print extends source-free timeline");double energy=0;for(int64_t i=audio->first;i<audio->last;++i)energy+=std::pow(audio->sample(0,i),2);need(energy>.01,"UI Print generates real sound");
+    uiEditor->filesDropped({path.getFullPathName()},200,200);fill->setValue(.65,juce::sendNotificationSync);wait([&]{return image->conversionReady();});
+    need(image->isVisible(),"loaded image replaces the drop guide");
+    // 没有音频时点击频谱：不渲染，只高亮"先加载音频"的引导。
+    clickSpectrum();
+    wait([&]{return (bool)view->getProperties()["audioHintActive"];});
+    need(processor.recording().edits()->empty(),"click without audio must not create a Print");
+    need(processor.recording().snapshot()->last==1,"click without audio must not render");
+    // 加入一段静音音频后再点击，才真正打印。
+    const auto wav=folder.getChildFile("silent-10s.wav");
+    {auto stream=wav.createOutputStream();juce::WavAudioFormat format;std::unique_ptr<juce::AudioFormatWriter> writer(format.createWriterFor(stream.get(),48000,2,16,{},0));need(writer!=nullptr,"silent WAV fixture");stream.release();juce::AudioBuffer<float> silence(2,480000);silence.clear();writer->writeFromAudioSampleBuffer(silence,0,480000);}
+    processor.onDropAudioFile(wav);
+    wait([&]{auto s=processor.recording().snapshot();return s&&!processor.recording().isBusy()&&!s->sourceId.startsWith("generated:")&&(bool)view->getProperties()["audioLoaded"];});
+    for(int i=0;i<10;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
+    // 下方波形：按住拖动应连续定位，而不是只在按下时跳一次。
+    const float overviewY=(float)view->getHeight()-60.f;
+    const float overviewLeft=70.f,overviewRight=(float)view->getWidth();
+    auto mouse=[&](juce::Point<float> point){const auto now=juce::Time::getCurrentTime();return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(),point,juce::ModifierKeys::leftButtonModifier,1,0,0,0,0,view,view,now,point,now,1,false);};
+    view->mouseDown(mouse({overviewLeft+10.f,overviewY}));
+    view->mouseDrag(mouse({overviewLeft+(overviewRight-overviewLeft)*.6f,overviewY}));
+    view->mouseUp(mouse({overviewLeft+(overviewRight-overviewLeft)*.6f,overviewY}));
+    need(std::abs(processor.audition().position()-6.0)<.25,"overview drag scrubs continuously to the dragged time");
+    // 拖动白框右端：视窗宽度跟随指针，等同 Speed / Ctrl+滚轮。
+    view->mouseDown(mouse({overviewRight-2.f,overviewY}));
+    view->mouseDrag(mouse({overviewLeft+(overviewRight-overviewLeft)*.5f,overviewY}));
+    view->mouseUp(mouse({overviewLeft+(overviewRight-overviewLeft)*.5f,overviewY}));
+    for(int i=0;i<4;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
+    const double resizedSpan=(double)view->getProperties()["displayEnd"]-(double)view->getProperties()["displayStart"];
+    need(std::abs(resizedSpan-5.0)<.4,"overview view box resizes the visible span like Speed");
+    auto* fit=dynamic_cast<juce::Button*>(revision1416::find(panel,"fitSpectrum"));need(fit!=nullptr,"Fit icon");fit->onClick();
+    for(int i=0;i<4;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
+    clickSpectrum();
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy()&&(int)view->getProperties()["rasterRevision"]==s->revision;});
+    const auto audio=processor.recording().snapshot();need(!audio->sourceId.startsWith("generated:"),"UI Print uses loaded audio");double energy=0;for(int64_t i=audio->first;i<audio->last;++i)energy+=std::pow(audio->sample(0,i),2);need(energy>.01,"UI Print generates real sound");
     panel.keyPressed(juce::KeyPress('z',juce::ModifierKeys::ctrlModifier,0));wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.empty()&&!processor.recording().isBusy();});
     panel.keyPressed(juce::KeyPress('z',juce::ModifierKeys::ctrlModifier|juce::ModifierKeys::shiftModifier,0));wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy();});
-    need(processor.recording().snapshot()->last==audio->last,"UI redo restores generated extent");
+    need(processor.recording().snapshot()->last==audio->last,"UI redo restores the printed range");
     auto* clear=dynamic_cast<juce::Button*>(revision1416::find(panel,"clearLoad"));clear->onClick();wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.empty()&&s->last==1&&!processor.recording().isBusy()&&!processor.isClearPending();});
     panel.keyPressed(juce::KeyPress('z',juce::ModifierKeys::ctrlModifier,0));wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy();});
-    need(processor.recording().snapshot()->last==audio->last,"UI undo Clear restores generated tags");
+    need(processor.recording().snapshot()->last==audio->last,"UI undo Clear restores the loaded audio and Print");
     wait([&]{auto s=processor.recording().snapshot();if((int)view->getProperties()["rasterRevision"]!=s->revision)return false;const auto image=view->createComponentSnapshot(view->getLocalBounds());int coloured=0;for(int y=40;y<image.getHeight()-100;y+=2)for(int x=80;x<image.getWidth()-20;x+=2){auto c=image.getPixelAt(x,y);coloured+=c.getSaturation()>.25f&&c.getBrightness()>.15f;}return coloured>100;});
     auto ui=panel.createComponentSnapshot(panel.getLocalBounds());{auto out=folder.getChildFile("standalone-fileless.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(ui,*out),"UI screenshot");}
     panel.keyPressed(juce::KeyPress(juce::KeyPress::deleteKey));
@@ -175,7 +219,7 @@ int filelessUiTest(const juce::File& folder){try{
     {auto out=folder.getChildFile("deleted.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(deletedImage,*out),"deleted screenshot");}
     int residual=0;for(int y=40;y<deletedImage.getHeight()-100;y+=2)for(int x=80;x<deletedImage.getWidth()-20;x+=2){const auto c=deletedImage.getPixelAt(x,y);residual+=c.getSaturation()>.25f&&c.getBrightness()>.15f;}
     folder.getChildFile("deletion-state.txt").replaceWithText("last="+juce::String(deleted->last)+" residual="+juce::String(residual)+" preview="+view->getProperties()["previewActive"].toString());
-    need(residual==0&&!(bool)view->getProperties()["previewActive"],"Delete removes generated Print from actual visible spectrum");
+    need(residual==0&&!(bool)view->getProperties()["previewActive"],"Delete removes the Print from the actual visible spectrum");
     need(deleted->frameAt(deleted->end()+.01)==nullptr,"removed tail cannot read retained boundary FFT bins");
     for(bool zh:{true,false}){
         VideoOptions options;options.chinese=zh;VideoOptions accepted;int accepts=0;
@@ -198,7 +242,7 @@ int filelessUiTest(const juce::File& folder){try{
     auto* cancel=dynamic_cast<juce::Button*>(revision1416::find(progress,"cancelVideoExport"));need(cancel&&cancel->isEnabled(),"popup Cancel is enabled");cancel->onClick();progress.requestClose();need(cancels==1&&!cancel->isEnabled()&&closes==0,"Cancel and title-bar close issue only one cancellation");
     progress.update(SpectrumVideoExport::cancelled,.42f,"C:/Example/movie.mp4",{});cancel->onClick();need(closes==1,"cancelled dialog may close");progress.update(SpectrumVideoExport::complete,1,"C:/Example/movie.mp4",{});need(progress.getProperties()["percent"].toString()=="100%","completed popup reaches 100 percent");
     need(defaultExportFolder()==juce::File::getSpecialLocation(juce::File::userDesktopDirectory),"exports default to the actual desktop folder");
-    folder.getChildFile("ui-checks.log").replaceWithText("PASS blank startup, real UI Print, Ctrl+Z/Shift+Ctrl+Z, Clear/undo, immediate/stopped Delete pixels, FFT tail extent, Desktop exports, progress popup/percentage/cancel/close\n");return 0;
+    folder.getChildFile("ui-checks.log").replaceWithText("PASS empty-image guide, audio-required Print gating, overview scrub/resize, loaded-audio Print, Ctrl+Z/Shift+Ctrl+Z, Clear/undo, immediate/stopped Delete pixels, Desktop exports, progress popup/percentage/cancel/close\n");return 0;
 }catch(const std::exception& e){folder.getChildFile("ui-failure.txt").replaceWithText(e.what());return 1;}}
 int viewTest(const juce::File& folder){try{
     folder.createDirectory();auto report=folder.getChildFile("view-checks.log").createOutputStream();
@@ -409,9 +453,19 @@ public:
         if(args.size()>=2&&args[0]=="--missing-test"){setApplicationReturnValue(missingTest(juce::File(args[1].unquoted())));quit();return;}
         window=std::make_unique<Window>();
     }
-    void shutdown()override{window.reset();}void systemRequestedQuit()override{quit();}
+    void shutdown()override{window.reset();}
+    void systemRequestedQuit()override{
+        // 关闭时先把主窗口隐藏，避免销毁过程（含会话保存）中出现的
+        // “界面消失-重现-再彻底消失”的闪烁。所有退出路径都经过这里。
+        // 注意：基类的 systemRequestedQuit() 是纯虚函数，这里直接调用 quit()。
+        if(quitting)return;
+        quitting=true;
+        if(window)window->setVisible(false);
+        quit();
+    }
 private:
-    class Window final : public juce::DocumentWindow {public:Window():juce::DocumentWindow("SpectrumTag "+juce::String(ProjectInfo::versionString),juce::Colour(0xff1a1c1e),allButtons){setUsingNativeTitleBar(true);setContentOwned(new Player(),true);setResizable(true,false);setResizeLimits(930,552,3100,1742);if(auto* c=getConstrainer())c->setFixedAspectRatio(1240./722);centreWithSize(1240,722);setVisible(true);}void closeButtonPressed()override{juce::JUCEApplication::getInstance()->systemRequestedQuit();}};
+    bool quitting=false;
+    class Window final : public juce::DocumentWindow {public:Window():juce::DocumentWindow("SpectrumTag "+juce::String(ProjectInfo::versionString),juce::Colour(0xff1a1c1e),allButtons){setUsingNativeTitleBar(true);setContentOwned(new Player(),true);setResizable(true,false);setResizeLimits(930,510,3100,1700);if(auto* c=getConstrainer())c->setFixedAspectRatio(1240./680);centreWithSize(1240,680);setVisible(true);}void closeButtonPressed()override{juce::JUCEApplication::getInstance()->systemRequestedQuit();}};
     std::unique_ptr<Window> window;
 };
 }

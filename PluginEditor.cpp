@@ -212,7 +212,7 @@ void SpectrumTagLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Butt
     const bool ghost   = style == "ghost";
 
     auto bounds = button.getLocalBounds().toFloat().reduced (0.5f);
-    const float radius = juce::jmin (5.0f, bounds.getHeight() * 0.3f);
+    const float radius = juce::jlimit (5.0f, 14.0f, bounds.getHeight() * 0.12f);
 
     if (ghost)
     {
@@ -221,6 +221,22 @@ void SpectrumTagLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Butt
             g.setColour (juce::Colours::white.withAlpha (isDown ? 0.10f : 0.06f));
             g.fillRoundedRectangle (bounds, radius);
         }
+        return;
+    }
+
+    if (style == "round")
+    {
+        // 圆形主按钮（右下角导出），沿用原 Print 圆按钮的白底视觉。
+        const float diameter = juce::jmin (bounds.getWidth(), bounds.getHeight());
+        juce::Rectangle<float> circle (bounds.getCentreX() - diameter * 0.5f,
+                                       bounds.getCentreY() - diameter * 0.5f,
+                                       diameter, diameter);
+        juce::Colour fill = juce::Colour (0xfff5f5f5);
+        if (! button.isEnabled())   fill = fill.withMultipliedAlpha (0.40f);
+        else if (isDown)            fill = juce::Colour (0xffd6d6d6);
+        else if (isOver)            fill = juce::Colours::white;
+        g.setColour (fill);
+        g.fillEllipse (circle);
         return;
     }
 
@@ -248,12 +264,13 @@ void SpectrumTagLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton
     const auto style   = button.getProperties()["spectrumTagStyle"].toString();
     const bool primary = style == "primary";
     const bool ghost   = style == "ghost";
+    const bool round   = style == "round";
 
     auto colour = button.findColour (button.getToggleState()
                                          ? juce::TextButton::textColourOnId
                                          : juce::TextButton::textColourOffId);
 
-    if (primary && ! button.getToggleState())
+    if ((primary || round) && ! button.getToggleState())
         colour = kPrintText;
     else if (ghost)
         colour = (isOver && button.isEnabled()) ? kTextWhite : kTextSub;
@@ -269,7 +286,9 @@ void SpectrumTagLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton
 
 juce::Font SpectrumTagLookAndFeel::getTextButtonFont (juce::TextButton& button, int buttonHeight)
 {
-    const float height = juce::jlimit (11.0f, 15.0f, (float) buttonHeight * 0.52f);
+    // 大按钮（如右下角 128px 的导出按钮）使用成比例的大字号，普通工具栏按钮保持小字。
+    const float height = buttonHeight > 60 ? juce::jlimit (20.0f, 36.0f, (float) buttonHeight * 0.28f)
+                                           : juce::jlimit (11.0f, 15.0f, (float) buttonHeight * 0.52f);
 
     if (chinese || containsWideCharacters (button.getButtonText()))
         return spectrumtag::ui::chineseFont (height);
@@ -355,13 +374,13 @@ TransportButton::TransportButton() : juce::Button ("Play / Pause")
 
 void TransportButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
 {
-    paintIconChip (g, *this, isOver, isDown);
-
+    // 独立版播放按钮不带底框边框，仅绘制图标，悬停/按下用透明度反馈。
     auto area = getLocalBounds().toFloat();
-    const float iconSize = juce::jmin (area.getHeight() * 0.46f, area.getWidth() * 0.42f);
+    const float iconSize = juce::jmin (area.getHeight() * 0.62f, area.getWidth() * 0.58f);
     auto icon = juce::Rectangle<float> (iconSize, iconSize).withCentre (area.getCentre());
 
-    g.setColour (iconColour (*this));
+    const float alpha = isEnabled() ? (isDown ? 0.75f : isOver ? 1.0f : 0.9f) : 0.35f;
+    g.setColour (juce::Colours::white.withAlpha (alpha));
 
     if (playing)
     {
@@ -597,7 +616,15 @@ void ImageBoxComponent::mouseDrag(const juce::MouseEvent& e){
     }
     normRect=clampNormRect(next);resizedFromNorm();if(onChanged)onChanged();
 }
-void ImageBoxComponent::mouseUp(const juce::MouseEvent&){dragMode=DragMode::None;if(onGestureEnd)onGestureEnd();}
+void ImageBoxComponent::mouseUp(const juce::MouseEvent& e){
+    const bool wasEmpty=!hasImage();
+    const bool moved=(e.getPosition()+getPosition()-dragStartPos).getDistanceFromOrigin()>=4.f;
+    dragMode=DragMode::None;
+    if(onGestureEnd)onGestureEnd();
+    // The empty box is the "drop a picture" guide; a plain click opens the
+    // chooser instead of doing nothing. Dragging still repositions the guide.
+    if(wasEmpty&&!moved&&e.mods.isLeftButtonDown())openFileChooser();
+}
 void ImageBoxComponent::mouseDoubleClick(const juce::MouseEvent& e){if(e.mods.isLeftButtonDown())openFileChooser();}
 
 void ImageBoxComponent::openFileChooser()
@@ -640,13 +667,48 @@ void ImageBoxComponent::paint (juce::Graphics& g)
     }
     else
     {
-        // "Choose picture" 占位
-        juce::Font f = (typeface != nullptr) ? juce::Font (typeface) : juce::Font();
-        f = f.withHeight (juce::jlimit (14.0f, 28.0f, r.getHeight() * 0.18f));
-        g.setFont (f);
+        // 空工作区：这个框就是"把图片放进来"的引导，拖入或单击/双击都可以。
+        const float titleH = juce::jlimit (13.0f, 20.0f, r.getHeight() * 0.10f);
+        const float subH   = juce::jmax (11.0f, titleH * 0.72f);
+        const bool  roomy  = r.getHeight() >= 110.0f && r.getWidth() >= 150.0f;
+        const float icon   = juce::jlimit (18.0f, 40.0f, juce::jmin (r.getWidth(), r.getHeight()) * 0.18f);
+
+        auto content = r.reduced (10.0f, 8.0f);
+        if (roomy)
+        {
+            auto iconArea = content.removeFromTop (juce::jmin (content.getHeight() * 0.42f, icon * 1.35f));
+            auto frame = juce::Rectangle<float> (icon * 1.18f, icon).withCentre (iconArea.getCentre());
+            g.setColour (kImgBoxBlack.withAlpha (0.80f));
+            g.drawRoundedRectangle (frame.reduced (1.0f), 3.0f, 1.6f);
+            g.fillEllipse (frame.getX() + frame.getWidth() * 0.18f, frame.getY() + frame.getHeight() * 0.20f,
+                           frame.getWidth() * 0.15f, frame.getWidth() * 0.15f);
+            juce::Path hill;
+            hill.startNewSubPath (frame.getX() + frame.getWidth() * 0.12f, frame.getBottom() - frame.getHeight() * 0.16f);
+            hill.lineTo (frame.getX() + frame.getWidth() * 0.38f, frame.getY() + frame.getHeight() * 0.48f);
+            hill.lineTo (frame.getX() + frame.getWidth() * 0.56f, frame.getBottom() - frame.getHeight() * 0.30f);
+            hill.lineTo (frame.getX() + frame.getWidth() * 0.72f, frame.getY() + frame.getHeight() * 0.58f);
+            hill.lineTo (frame.getRight() - frame.getWidth() * 0.10f, frame.getBottom() - frame.getHeight() * 0.16f);
+            g.strokePath (hill, juce::PathStrokeType (1.4f));
+            content.removeFromTop (2.0f);
+        }
+
+        auto text = content.withSizeKeepingCentre (content.getWidth(),
+            juce::jmin (content.getHeight(), titleH * 1.6f + (roomy ? subH * 1.7f : 0.0f)));
+        juce::Font baseFont = (typeface != nullptr) ? juce::Font (typeface) : juce::Font();
+        g.setFont (chinese ? spectrumtag::ui::chineseFont (titleH) : baseFont.withHeight (titleH));
         g.setColour (kImgBoxBlack);
-        if(chinese)g.setFont(spectrumtag::ui::chineseFont(20.0f));
-        g.drawText(chinese?juce::String::fromUTF8("双击选择图片"):juce::String("Double-click to load"),getLocalBounds(),juce::Justification::centred);
+        g.drawFittedText (chinese ? juce::String::fromUTF8 ("拖入图片") : juce::String ("Drop a picture"),
+                          text.removeFromTop (juce::jmin (text.getHeight(), titleH * 1.6f)).toNearestInt(),
+                          juce::Justification::centred, 1, 0.9f);
+        if (roomy && text.getHeight() >= subH)
+        {
+            g.setFont (chinese ? spectrumtag::ui::chineseFont (subH) : baseFont.withHeight (subH));
+            g.setColour (kImgBoxBlack.withAlpha (0.80f));
+            g.drawFittedText (chinese ? juce::String::fromUTF8 ("或单击 / 双击此处选择")
+                                      : juce::String ("or click / double-click to choose"),
+                              text.removeFromTop (subH * 1.7f).toNearestInt(),
+                              juce::Justification::centred, 1, 0.9f);
+        }
     }
 
     // 黑黄交错虚线边框
@@ -722,7 +784,10 @@ public:
         view.endTime=anchor+(1.-getImageBoxX()/juce::jmax(1,contentBounds.getWidth()))*timeSpan();
         dirty=true;repaint();
     }
-    void setImageVisible(bool visible){imageBox->setVisible(visible);}
+    void setImageVisible(bool visible){imageVisibleRequested=visible;refreshImageBoxVisibility();}
+    // Called when Print is refused because no real audio is loaded. Emphasise
+    // the on-canvas guidance instead of silently doing nothing.
+    void flashAudioHint(){audioHintFlashUntil=juce::Time::getMillisecondCounter()+2200;repaint(audioBannerBounds());}
     void refreshDeletedPrint(){
         // An in-flight raster may still refer to the deleted edit. Retire that
         // request now; paint masks the obsolete footprint until the new audio
@@ -752,7 +817,7 @@ public:
         fit=false;panActive=false;updateImageBounds();dirty=true;repaint();
     }
     std::function<void(const juce::String&)> onSelected;
-    std::function<void()> onDelete,onNavigation,onMoveBegin,onToggleImage;
+    std::function<void()> onDelete,onNavigation,onMoveBegin,onToggleImage,onAutoPrint,onRequestAudio;
     std::function<void(float)> onWheelSpeed;
     std::function<void(const spectrumtag::PrintEdit&)> onMoveEnd;
     void setChinese(bool value){chinese=value;imageBox->setChinese(value);fitButton.setTooltip(juce::String::fromUTF8(processor.isLoadMode()?(value?"全览：显示已加载音频事件的完整范围。":"Fit the complete range of loaded audio events."):(value?"全览：显示整个录音范围。未录音时返回实时视图。":"Fit the recorded range. Before recording, return to the live view.")));repaint();}
@@ -835,6 +900,12 @@ public:
         if(lastClearSerial!=processor.getSpectrumClearSerial())clearDisplay();
         processor.drainSpectrumFrames(incoming);
         bool changed=false;
+        // The empty-workspace guide follows image presence, not the eye toggle:
+        // with nothing loaded there is no source image to hide.
+        const bool hasImage=imageBox->hasImage();
+        if(hasImage!=lastHasImage){lastHasImage=hasImage;refreshImageBoxVisibility();repaint();}
+        const bool audioLoaded=processor.hasLoadedAudio();
+        if(audioLoaded!=lastAudioLoaded){lastAudioLoaded=audioLoaded;repaint();}
         if(processor.recording().isEnabled()!=recordMode){
             recordMode=processor.recording().isEnabled();rasterEpoch=renderer.invalidate();waterfall={};waterfallSource.reset();overviewImage={};resized();changed=true;
             if(!recordMode){recorded.reset();view.reset(now());fit=false;fitAfterCapture=false;}
@@ -889,7 +960,13 @@ public:
             for(const auto& e:recorded->edits)if(SPECTRUMTAG_ARA?(e.id==preview->id&&e.amount==preview->amount&&e.imageMode==preview->imageMode&&e.ratio==preview->ratio&&e.invert==preview->invert&&e.compensation==preview->compensation&&e.fillVersion==preview->fillVersion&&e.speed==preview->speed&&e.scaleMode==preview->scaleMode&&e.displayTop==preview->displayTop&&std::abs(e.start-preview->start)<1.e-6&&std::abs(e.duration-preview->duration)<1.e-6):spectrumtag::sameAudioEdit(e,*preview)){setPreview({});break;}
         if(changed){dirty=true;repaint();}
         if(dirty)render();
+        if(audioHintFlashUntil!=0){
+            if(juce::Time::getMillisecondCounter()<audioHintFlashUntil)repaint(audioBannerBounds());
+            else{audioHintFlashUntil=0;repaint(audioBannerBounds());}
+        }
         getProperties().set("recordMode",recordMode);getProperties().set("panActive",panActive);getProperties().set("panTarget",panTarget);
+        getProperties().set("audioLoaded",audioLoaded);getProperties().set("audioHintActive",audioHintFlashUntil>juce::Time::getMillisecondCounter());
+        getProperties().set("imageVisible",imageBox->isVisible());
         getProperties().set("displayStart",view.endTime-timeSpan());getProperties().set("displayEnd",view.endTime);getProperties().set("displayTop",top);getProperties().set("overviewStart",timelineStart());getProperties().set("overviewEnd",recorded?recorded->end():0.);
     }
     juce::var diagnosticState(bool probePixels=false) const {
@@ -952,20 +1029,37 @@ public:
     }
     void mouseMove(const juce::MouseEvent& event) override {
         const auto point=event.getEventRelativeTo(this).position;
+        if(audioBannerBounds().toFloat().contains(point)){setMouseCursor(juce::MouseCursor::PointingHandCursor);return;}
+        if(overviewBounds.toFloat().contains(point)){
+            const auto handle=overviewHitTest(point);
+            setMouseCursor(handle==OverviewHandle::ResizeLeft||handle==OverviewHandle::ResizeRight
+                ?juce::MouseCursor::LeftRightResizeCursor:juce::MouseCursor::PointingHandCursor);
+            return;
+        }
         auto edit=selectedPrint();
         setMouseCursor(edit&&resizeHandle(editBounds(*edit)).contains(point)
             ?juce::MouseCursor::BottomRightCornerResizeCursor:juce::MouseCursor::NormalCursor);
     }
     void mouseDown(const juce::MouseEvent& event) override {
-        panActive=false;dragEdit.reset();movingPrint=false;resizingPrint=false;
-        if(event.mods.isRightButtonDown()){if(contentBounds.contains(event.getEventRelativeTo(this).position.toInt())&&onToggleImage)onToggleImage();return;}
+        panActive=false;dragEdit.reset();movingPrint=false;resizingPrint=false;overviewHandle=OverviewHandle::None;
+        const auto point=event.getEventRelativeTo(this).position;
+        if(event.mods.isRightButtonDown()){if(contentBounds.contains(point.toInt())&&onToggleImage)onToggleImage();return;}
+        // 未加载音频时的引导条：点击等同"加载音频"按钮。
+        if(event.mods.isLeftButtonDown()&&audioBannerBounds().toFloat().contains(point)){if(onRequestAudio)onRequestAudio();return;}
+        // 图片放置模式：图片可见且未选中任何打印时，点击频谱任意处直接打印。
+        if(event.mods.isLeftButtonDown()&&event.eventComponent!=imageBox.get()&&imageBox->isVisible()&&imageBox->hasImage()&&selected.isEmpty()&&contentBounds.toFloat().contains(point)&&onAutoPrint){onAutoPrint();return;}
         if(!recorded||recorded->empty())return;
         if(isShowing())grabKeyboardFocus();
-        const auto point=event.getEventRelativeTo(this).position;
         if(overviewBounds.toFloat().contains(point)){
-            const double t=timelineStart()+juce::jlimit(0.0f,1.0f,(point.x-overviewBounds.getX())/overviewBounds.getWidth())*(recorded->end()-timelineStart());
-            if(onNavigation)onNavigation();processor.auditionAt(t);view.follow=false;fit=false;view.endTime=t+baseSpan()/view.zoomX*.5;
-            updateImageBounds();dirty=true;repaint();return;
+            if(onNavigation)onNavigation();
+            overviewHandle=overviewHitTest(point);
+            if(overviewHandle==OverviewHandle::ResizeLeft||overviewHandle==OverviewHandle::ResizeRight){
+                view.follow=false;fit=false;panActive=false;repaint();
+            }else{
+                overviewHandle=OverviewHandle::Scrub;
+                overviewScrubTo(point.x);
+            }
+            return;
         }
         if(event.eventComponent==imageBox.get())return;
         if(!contentBounds.toFloat().contains(point))return;
@@ -984,6 +1078,12 @@ public:
         repaint();
     }
     void mouseDrag(const juce::MouseEvent& event) override {
+        if(overviewHandle!=OverviewHandle::None&&event.mods.isLeftButtonDown()){
+            const auto x=event.getEventRelativeTo(this).position.x;
+            if(overviewHandle==OverviewHandle::Scrub)overviewScrubTo(x);
+            else overviewResizeTo(x);
+            return;
+        }
         if(!dragEdit||!event.mods.isLeftButtonDown()||!recorded)return;
         const auto delta=event.getEventRelativeTo(this).position-dragPoint;
         if(!movingPrint&&delta.getDistanceFromOrigin()<3.f)return;
@@ -1021,6 +1121,7 @@ public:
             if(resizingPrint)e.cols=juce::jlimit(4,4096,juce::roundToInt(editBounds(e).getWidth()));
             onMoveEnd(e);
         }
+        overviewHandle=OverviewHandle::None;
         dragEdit.reset();movingPrint=false;resizingPrint=false;
     }
     void paint(juce::Graphics& g) override {
@@ -1119,11 +1220,112 @@ public:
             g.setColour(juce::Colour(0xee151a1d));g.fillRect(contentBounds.withHeight(45));g.setColour(juce::Colours::lightgrey);g.setFont(chinese?spectrumtag::ui::chineseFont(12.0f):juce::Font(12.0f));g.drawFittedText(status,contentBounds.withHeight(45).reduced(12,4),juce::Justification::centredLeft,2);
         }
 #endif
+        // Draw the audio guidance above any ARA status banner: the guide is the
+        // actionable next step when nothing is loaded.
+        paintAudioBanner(g);
         const int error=juce::jlimit(0,5,processor.recording().errorCode());
         const char* errorsZh[]={"","录音已停止：采集队列已满","录音已停止：达到 15 分钟 / 6400 万采样限制","录音已停止：采样率或声道布局改变","无法保存或读取录音缓存","无法导入音频"};
         g.drawText(error?juce::String::fromUTF8(chinese?errorsZh[error]:errors[error]):label,statusBounds.reduced(4,0),juce::Justification::centredLeft);
     }
 private:
+    enum class OverviewHandle { None, Scrub, ResizeLeft, ResizeRight };
+    void refreshImageBoxVisibility(){imageBox->setVisible(imageVisibleRequested||!imageBox->hasImage());}
+    juce::Rectangle<int> audioBannerBounds() const {
+        if(!processor.isLoadMode()||processor.hasLoadedAudio()||contentBounds.isEmpty())return {};
+        const int w=juce::jlimit(1,juce::jmax(1,contentBounds.getWidth()-40),560);
+        const int h=juce::jmin(52,juce::jmax(34,contentBounds.getHeight()/7));
+        return {contentBounds.getCentreX()-w/2,contentBounds.getY()+14,w,h};
+    }
+    void paintAudioBanner(juce::Graphics& g){
+        const auto area=audioBannerBounds();
+        if(area.isEmpty())return;
+        const auto nowMs=juce::Time::getMillisecondCounter();
+        const bool flash=audioHintFlashUntil>nowMs;
+        auto r=area.toFloat();
+        g.setColour(juce::Colour(0xe61b2023));g.fillRoundedRectangle(r,8.f);
+        g.setColour(flash?kImgBoxYellow.withAlpha(.55f+.35f*std::sin((float)nowMs*.02f))
+                         :juce::Colours::white.withAlpha(.45f));
+        g.drawRoundedRectangle(r.reduced(1.f),8.f,flash?2.f:1.f);
+
+        juce::Font baseFont=(typeface!=nullptr)?juce::Font(typeface):juce::Font();
+        const auto title=chinese?juce::String::fromUTF8("尚未加载音频"):juce::String("No audio loaded");
+        const auto detail=chinese?(processor.filePlayerMode?juce::String::fromUTF8("拖入音频文件，或点击此处加载")
+                                                                   :juce::String::fromUTF8("点击此处加载音频"))
+                                 :(processor.filePlayerMode?juce::String("Drop an audio file, or click here to load")
+                                                          :juce::String("Click here to load audio"));
+        g.setColour(kTextWhite);
+        g.setFont(chinese?spectrumtag::ui::chineseFont(15.f):baseFont.withHeight(15.f));
+        if(area.getHeight()>=44){
+            g.drawFittedText(title,area.withTrimmedBottom(area.getHeight()/2).reduced(10,0),juce::Justification::centred,1,.9f);
+            g.setColour(kTextSub);
+            g.setFont(chinese?spectrumtag::ui::chineseFont(12.5f):baseFont.withHeight(12.5f));
+            g.drawFittedText(detail,area.withTrimmedTop(area.getHeight()/2).reduced(10,0),juce::Justification::centred,1,.9f);
+        }else{
+            g.drawFittedText(title+"  ·  "+detail,area.reduced(10,0),juce::Justification::centred,1,.85f);
+        }
+    }
+    juce::Rectangle<float> overviewViewRect() const {
+        if(!recorded||overviewBounds.isEmpty())return {};
+        const double start=timelineStart(),end=recorded->end();
+        if(end<=start)return {};
+        const float x0=(float)overviewBounds.getX()+(float)((view.endTime-timeSpan()-start)/(end-start))*overviewBounds.getWidth();
+        const float x1=(float)overviewBounds.getX()+(float)((view.endTime-start)/(end-start))*overviewBounds.getWidth();
+        const float left=juce::jmin(x0,x1),right=juce::jmax(x0,x1);
+        const float clampedLeft=juce::jmax((float)overviewBounds.getX(),left);
+        const float clampedRight=juce::jmin((float)overviewBounds.getRight(),right);
+        if(clampedRight-clampedLeft<1.f)return {};
+        return {clampedLeft,(float)overviewBounds.getY(),clampedRight-clampedLeft,(float)overviewBounds.getHeight()};
+    }
+    OverviewHandle overviewHitTest(juce::Point<float> point) const {
+        if(!recorded||recorded->empty()||!overviewBounds.toFloat().contains(point))return OverviewHandle::None;
+        const auto rect=overviewViewRect();
+        if(!rect.isEmpty()){
+            // A fixed edge zone lets the view window be stretched with the same
+            // effect as Ctrl-wheel (visible span == Speed / view zoom).
+            const float edge=juce::jlimit(5.f,9.f,rect.getWidth()*.12f);
+            if(std::abs(point.x-rect.getX())<=edge)return OverviewHandle::ResizeLeft;
+            if(std::abs(point.x-rect.getRight())<=edge)return OverviewHandle::ResizeRight;
+        }
+        return OverviewHandle::Scrub;
+    }
+    double overviewTimeAt(float x) const {
+        const double start=timelineStart(),end=recorded?recorded->end():start;
+        if(end<=start)return start;
+        return start+juce::jlimit(0.f,1.f,(x-(float)overviewBounds.getX())/juce::jmax(1,overviewBounds.getWidth()))*(end-start);
+    }
+    void overviewScrubTo(float x){
+        if(!recorded)return;
+        const double t=overviewTimeAt(x);
+        processor.auditionAt(t);view.follow=false;fit=false;
+        view.endTime=t+baseSpan()/view.zoomX*.5;
+        updateImageBounds();dirty=true;repaint();
+    }
+    void overviewResizeTo(float x){
+        if(!recorded||overviewBounds.isEmpty())return;
+        const double totalStart=timelineStart(),totalEnd=recorded->end();
+        const double totalSpan=juce::jmax(.05,totalEnd-totalStart);
+        const double pointerTime=overviewTimeAt(x);
+        const double viewSpan=timeSpan(),viewStart=view.endTime-viewSpan;
+        // The box represents the loaded range: keep the fixed edge inside it so
+        // the dragged width maps to the real visible span.
+        const double fixed=overviewHandle==OverviewHandle::ResizeLeft?juce::jmin(view.endTime,totalEnd)
+                                                                   :juce::jmax(viewStart,totalStart);
+        double span=overviewHandle==OverviewHandle::ResizeLeft?fixed-pointerTime:pointerTime-fixed;
+        const double plotWidth=juce::jmax(1,contentBounds.getWidth());
+        const double zoom=selectedPrint()?view.zoomX:1.0;
+        // Match the Speed range used by the Ctrl-wheel path: 0.1x–4x.
+        const double minSpan=plotWidth/(spectrumtag::timing::pixelsPerSecond*4.0*zoom);
+        const double maxSpan=juce::jmax(minSpan,juce::jmin(totalSpan,
+            plotWidth/(spectrumtag::timing::pixelsPerSecond*0.1*zoom)));
+        span=juce::jlimit(minSpan,maxSpan,span);
+        const float speed=(float)juce::jlimit(0.1,4.0,plotWidth/(spectrumtag::timing::pixelsPerSecond*span*zoom));
+        if(onWheelSpeed)onWheelSpeed(speed);
+        view.zoomX=zoom;lastSpeed=speed;fit=false;view.follow=false;panActive=false;
+        const double newSpan=timeSpan();
+        view.endTime=overviewHandle==OverviewHandle::ResizeLeft?fixed:fixed+newSpan;
+        view.endTime=juce::jlimit(totalStart+newSpan,totalEnd,view.endTime);
+        updateImageBounds();dirty=true;repaint();
+    }
     void ensurePreviewImage(){
         if(previewImage.isValid()||!preview||!recorded)return;
         previewImage=spectrumtag::printPreview(*recorded,*preview,palette);
@@ -1174,9 +1376,19 @@ private:
         }
         overviewSource=recorded;overviewPalette=palette;}
         g.drawImageAt(overviewImage,overviewBounds.getX(),overviewBounds.getY());
-        const float left=x(view.endTime-baseSpan()/view.zoomX),right=x(view.endTime);
-        g.setColour(juce::Colours::white.withAlpha(.09f));g.fillRect(juce::Rectangle<float>(left,(float)overviewBounds.getY(),right-left,(float)overviewBounds.getHeight()));
-        g.setColour(juce::Colours::white.withAlpha(.7f));g.drawRect(juce::Rectangle<float>(left,(float)overviewBounds.getY()+1,right-left,(float)overviewBounds.getHeight()-2),1);
+        const auto viewRect=overviewViewRect();
+        if(!viewRect.isEmpty()){
+            g.setColour(juce::Colours::white.withAlpha(.09f));g.fillRect(viewRect);
+            g.setColour(juce::Colours::white.withAlpha(.72f));g.drawRect(viewRect.reduced(0.f,1.f),1.f);
+            if(viewRect.getWidth()>=18.f){
+                // Edge grips: drag them to resize the visible span (Speed).
+                const float gripW=2.5f,gripTop=viewRect.getY()+5.f,gripH=juce::jmax(6.f,viewRect.getHeight()-10.f);
+                g.setColour(juce::Colours::white.withAlpha(overviewHandle==OverviewHandle::ResizeLeft?.95f:.55f));
+                g.fillRect(viewRect.getX()+1.f,gripTop,gripW,gripH);
+                g.setColour(juce::Colours::white.withAlpha(overviewHandle==OverviewHandle::ResizeRight?.95f:.55f));
+                g.fillRect(viewRect.getRight()-1.f-gripW,gripTop,gripW,gripH);
+            }
+        }
         for(const auto& edit:recorded->edits){g.setColour(edit.id==selected?juce::Colours::white:juce::Colours::white.withAlpha(.4f));g.fillRect(x(edit.start),(float)overviewBounds.getBottom()-5,juce::jmax(1.0f,x(edit.start+edit.duration)-x(edit.start)),3.0f);}
         paintCursor(g,overviewBounds,x(processor.audition().position()),true);}
     }
@@ -1214,6 +1426,9 @@ private:
     std::optional<spectrumtag::PrintEdit> preview,dragEdit;bool previewReleased=false,movingPrint=false,resizingPrint=false;
     juce::Image previewImage;juce::Point<float> dragPoint;juce::Rectangle<float> dragBounds;
     bool recordMode=false,chinese=true,fit=false,restored=false,wasPlaying=false,wasArmed=false,fitAfterCapture=false;
+    bool imageVisibleRequested=true,lastHasImage=false,lastAudioLoaded=false;
+    juce::uint32 audioHintFlashUntil=0;
+    OverviewHandle overviewHandle=OverviewHandle::None;
     float lastTop=0;
     spectrumtag::ViewRenderer renderer;
     uint64_t requestedRaster=0,appliedRaster=0,rasterEpoch=0,lastClearSerial=0;
@@ -1259,6 +1474,7 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
         BinaryData::BasementGrotesqueBlack_v1_202_otfSize);
 
     setLookAndFeel (&lookAndFeel);
+    setComponentID("editor");
     tooltipLookAndFeel.setDefaultSansSerifTypefaceName(spectrumtag::ui::chineseFontName());
     tooltipWindow.setLookAndFeel(&tooltipLookAndFeel);
     // 右上角工具入口沿用自绘扁平样式，只有悬停提示使用独立字体。
@@ -1291,11 +1507,42 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     addAndMakeVisible (*spectrumView);
 
     // 图片框回调：选图/拖动后写回 Processor
-    spectrumView->getImageBox().onChanged = [this] {if(!suppressChanges){if(gestureActive){spectrumView->selectEdit({});placementId={};}changed(!gestureActive);}persistEditorStateToProcessor();};
-    spectrumView->getImageBox().onGestureStart=[this]{beginChange();gestureActive=true;};
-    spectrumView->getImageBox().onGestureEnd=[this]{gestureActive=false;finishChange(true);};
+    spectrumView->getImageBox().onChanged = [this] {
+        if(!suppressChanges){
+            if(gestureActive){
+                // 图片模式下拖动图片框 = 移动已选打印（同一对象）；放置模式下拖动 = 调整新图位置。
+                if(boxDragPrintId.isNotEmpty())spectrumView->selectEdit(boxDragPrintId);
+                else{spectrumView->selectEdit({});placementId={};}
+            }
+            changed(!gestureActive);
+        }
+        persistEditorStateToProcessor();
+    };
+    spectrumView->getImageBox().onGestureStart=[this]{
+        beginChange();gestureActive=true;
+        // Empty guide drags reposition the future placement only; they must
+        // not move an unrelated selected Print.
+        boxDragPrintId=spectrumView->getImageBox().hasImage()?spectrumView->selectedEdit():juce::String();
+    };
+    spectrumView->getImageBox().onGestureEnd=[this]{
+        gestureActive=false;
+        // 图片模式下拖动结束：就地更新所选打印（还原旧位置并重新打印一次），不创建新对象。
+        if(boxDragPrintId.isNotEmpty()&&spectrumView->selectedEdit()==boxDragPrintId&&spectrumView->selectedPrint()){
+            auto e=makeEdit();e.id=boxDragPrintId;spectrumView->onMoveEnd(e);
+        }
+        boxDragPrintId={};finishChange(true);
+    };
     spectrumView->getImageBox().onFileLoadStart=[this]{beginChange();};
     spectrumView->onSelected=[this](const juce::String& id){selectPrinted(id);};
+    // 未加载音频时，点击画布上的引导条等同按"加载音频 / Load audio"。
+    spectrumView->onRequestAudio=[this]{if(!processor.isClearPending())recordButton.onClick();};
+    spectrumView->onAutoPrint=[this]{
+#if SPECTRUMTAG_ARA
+        // 与旧打印按钮的可用条件一致：ARA 需已绑定并加载音频后才允许打印。
+        if(!processor.araBound()||!processor.recording().snapshot())return;
+#endif
+        onPrintClicked();
+    };
     spectrumView->onDelete=[this]{removeSelected();};
     spectrumView->onNavigation=[this]{finishChange(true);changed();};
     spectrumView->onWheelSpeed=[this](float value){
@@ -1316,7 +1563,11 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     }
     imageVisibilityButton.setComponentID("imageVisibility");
     imageVisibilityButton.setTooltip("Show or hide the image without changing Print. A newly loaded image is shown automatically.");
-    imageVisibilityButton.onClick=[this]{beginChange();imageVisible=!imageVisible;spectrumView->setImageVisible(imageVisible);imageVisibilityButton.setToggleState(imageVisible,juce::dontSendNotification);changed();finishChange(true);};
+    imageVisibilityButton.onClick=[this]{
+        // Nothing loaded: the empty box is the drop guide and cannot be hidden.
+        if(!spectrumView->getImageBox().hasImage())return;
+        beginChange();imageVisible=!imageVisible;spectrumView->setImageVisible(imageVisible);imageVisibilityButton.setToggleState(imageVisible,juce::dontSendNotification);changed();finishChange(true);
+    };
     addAndMakeVisible(imageVisibilityButton);
     spectrumView->onToggleImage=[this]{imageVisibilityButton.onClick();};
 
@@ -1393,6 +1644,7 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     addAndMakeVisible(frequencyRangeCombo);addAndMakeVisible(frequencyRangeLabel);
     printButton.onClick = [this] { onPrintClicked(); };
     addAndMakeVisible (printButton);
+    printButton.setVisible(false); // 打印按钮不再显示：图片放置模式下点击频谱自动打印。
 
     styleControlLabel(imageModeLabel); styleControlLabel(imageAmountLabel);
     addAndMakeVisible(imageModeLabel); addAndMakeVisible(imageAmountLabel);
@@ -1430,11 +1682,12 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
             if(slider==&speedSlider&&wheelChange){changed();return;}
             if(slider==&speedSlider)spectrumView->useAbsoluteSpeed((float)speedSlider.getValue());
             if(slider==&speedSlider&&spectrumView->selectedPrint())pendingDuration=true;
+            if(slider==&imageAmountSlider&&spectrumView->selectedPrint())enterImageMode();
             syncImagePreview();changed(true);
         };
     }
-    invertToggle.onClick=[this]{syncImagePreview();changed(true);};
-    imageModeCombo.onChange=[this]{syncImagePreview();changed(true);};
+    invertToggle.onClick=[this]{syncImagePreview();if(spectrumView->selectedPrint())enterImageMode();changed(true);};
+    imageModeCombo.onChange=[this]{syncImagePreview();if(spectrumView->selectedPrint())enterImageMode();changed(true);};
     fftScaleCombo.onChange=[this]{
         const double imageAnchor=spectrumView->imageStart();
         const int mode=(fftScaleCombo.getSelectedId()-1);changingScaleControl=true;
@@ -1613,7 +1866,8 @@ void SpectrumTagAudioProcessorEditor::resized()
 
     // ===== 顶部 =====
     tooltipLanguageButton.setBounds(canvasWidth-px(100),px(14),px(80),px(26));
-    diagnosticsButton.setBounds(canvasWidth-px(232),px(14),px(124),px(26));
+    // 独立版需要在语言与诊断按钮之间放音频设备按钮，诊断按钮左移腾位。
+    diagnosticsButton.setBounds(canvasWidth-px(processor.isLoadMode()?348:232),px(14),px(124),px(26));
     uiScaleCombo.setBounds(20,52,90,28);
     const int headerH = px (90);
     auto header = r.removeFromTop (headerH).reduced (px (20), px (8)).withHeight(px(38));
@@ -1708,13 +1962,34 @@ void SpectrumTagAudioProcessorEditor::resized()
 
     rightPanel.removeFromTop(px(4));noiseFillLabel.setBounds(rightPanel.removeFromTop(labelH));
     noiseFillSlider.setBounds(rightPanel.removeFromTop(px(24)));
-    // Print 圆按钮：右下角
-    const int printD = px (128);
-    auto printArea = juce::Rectangle<int> (
-        canvasWidth - px (20) - printD,
-        canvasHeight - px (20) - printD,
-        printD, printD);
-    printButton.setBounds (printArea);
+}
+
+// ----------------------------------------------------------------------------
+//  独立版覆盖控件的落点（编辑器本地坐标）。与 resized() 使用同一套画布换算，
+//  由独立版把播放/导出/音频设备/状态标签叠放到编辑器上方。
+// ----------------------------------------------------------------------------
+SpectrumTagAudioProcessorEditor::StandaloneSlots SpectrumTagAudioProcessorEditor::standaloneSlots() const
+{
+    StandaloneSlots slots;
+    const bool followsOuterFrame=processor.isLoadMode();
+    const float s=followsOuterFrame?juce::jlimit(.1f,2.5f,juce::jmin((float)getWidth()/kDefaultWidth,(float)getHeight()/kDefaultHeight))
+                                   :juce::jlimit(.75f,2.5f,(float)getHeight()/kDefaultHeight);
+    const int canvasWidth=followsOuterFrame?juce::roundToInt(getWidth()/s):kDefaultWidth;
+    const int canvasHeight=followsOuterFrame?juce::roundToInt(getHeight()/s):kDefaultHeight;
+    const auto map=[&](juce::Rectangle<int> canvasRect){
+        return juce::Rectangle<int>(juce::roundToInt(canvasRect.getX()*s),juce::roundToInt(canvasRect.getY()*s),
+                                    juce::roundToInt(canvasRect.getWidth()*s),juce::roundToInt(canvasRect.getHeight()*s));
+    };
+    // 播放：频谱下方波形预览左侧的频率刻度列，与预览条垂直居中。
+    // 频谱视图位于画布 (20, 90, W-40, H-110)，波形预览条画布纵向为 [H-122, H-40]。
+    slots.play=map({29,canvasHeight-107,52,52});
+    // 导出：占据原 Print 按钮的右下角位置（Print 已改为点击频谱自动触发）。
+    slots.exportButton=map({canvasWidth-148,canvasHeight-148,128,128});
+    // 音频设备：切换语言与导出诊断按钮之间（诊断按钮在加载模式左移至 348）。
+    slots.device=map({canvasWidth-216,14,108,26});
+    // 文件名 / 导出进度：标题行网站链接右侧。
+    slots.fileName=map({574,8,juce::jmax(80,canvasWidth-938),38});
+    return slots;
 }
 
 // ----------------------------------------------------------------------------
@@ -1822,6 +2097,7 @@ void SpectrumTagAudioProcessorEditor::timerCallback()
     recordButton.setButtonText(juce::String::fromUTF8(processor.isLoadMode()?(chineseTips?"加载音频":"Load audio"):processor.recording().isArmed()?(chineseTips?"停止录音":"Stop Rec"):(chineseTips?"录音":"Record")));
     recordButton.setColour(juce::TextButton::buttonColourId,processor.recording().isArmed()?juce::Colour(0xff983e56):kButtonBg);
     removePrintButton.setEnabled(spectrumView->selectedPrint().has_value());clearRecordButton.setEnabled(processor.recording().isEnabled()&&!processor.isClearPending());recordButton.setEnabled(!processor.isClearPending());
+    imageVisibilityButton.setEnabled(spectrumView->getImageBox().hasImage());
     previousPrintButton.setEnabled(!processor.isClearPending()&&adjacentPrint(false).isNotEmpty());nextPrintButton.setEnabled(!processor.isClearPending()&&adjacentPrint(true).isNotEmpty());
 #if SPECTRUMTAG_ARA
     recordButton.setEnabled(processor.araBound());clearRecordButton.setEnabled(processor.araBound()&&processor.getEditorView<spectrumtag::ara::View>()->loaded);
@@ -1980,8 +2256,28 @@ void SpectrumTagAudioProcessorEditor::updateSelectedPrint(){
     if(!spectrumView->selectedPrint())return;auto e=editedSelection(true);
     processor.recording().add(e,e.id);spectrumView->setPreview(e,true,pendingDuration||pendingPresetTiming);
 }
+void SpectrumTagAudioProcessorEditor::enterImageMode(){
+    // 选中打印后调整黑白转换参数时显示“图片模式”：原图对齐到打印范围实时预览。
+    if(auto edit=spectrumView->selectedPrint()){
+        auto& box=spectrumView->getImageBox();
+        if(!box.hasImage()&&!edit->imagePath.isEmpty()&&juce::File(edit->imagePath).existsAsFile())box.loadImageFromFile(juce::File(edit->imagePath));
+        spectrumView->alignImageToPrint(*edit);
+        imageVisible=true;spectrumView->setImageVisible(true);imageVisibilityButton.setToggleState(true,juce::dontSendNotification);
+    }
+}
 void SpectrumTagAudioProcessorEditor::onPrintClicked(){
     processor.pollTransportTimeout();
+    // Loading modes must begin with real audio. The standalone keeps a silent
+    // "generated" canvas for the empty workspace; printing into it is refused
+    // and the on-canvas guide asks the user to load audio first.
+    if(processor.isLoadMode()&&!processor.hasLoadedAudio()){
+        finishChange(true);
+        processor.cancelPrint();
+        if(auto* trigger=processor.getPrintTriggerParam())if(trigger->get())trigger->setValueNotifyingHost(0);
+        lastSeenTrigger=false;
+        spectrumView->flashAudioHint();
+        return;
+    }
     if(!processor.recording().isEnabled()&&!processor.isTransportAdvancing()){
         processor.cancelPrint();
         if(auto* trigger=processor.getPrintTriggerParam())if(trigger->get())trigger->setValueNotifyingHost(0);
@@ -2082,8 +2378,8 @@ void SpectrumTagAudioProcessorEditor::updateTooltips(){
 #if SPECTRUMTAG_ARA
     navigation=tr("滚轮左右浏览；Shift 或 Ctrl+滚轮缩放时间视图。点击频谱或全览会请求 DAW 移动播放指针。右上角图标全览已加载范围，右键显示 / 隐藏原图。单击打印只选择并恢复原比例，不移动指针；点击非打印区域才定位。拖动后松手渲染；Speed 拉杆修改打印时长。", "Wheel pans; Shift or Ctrl-wheel zooms time. Click the spectrum or overview to request a DAW playhead move. The top-right icon fits loaded events; right-click shows / hides the source image. Click a Print to select and restore its aspect without moving the playhead; only empty spectrum seeks. Drag and release to render; the Speed slider changes Print duration.");
 #endif
-    navigation+=tr(" 选中打印后拖动右下角可等比例缩放；拖动时模拟预览，松手后渲染，Ctrl+Z 撤销。", " Drag the selected Print's lower-right handle to resize proportionally. Preview while dragging, render on release; Ctrl+Z undoes.");
-    spectrumView->setTooltip(navigation);spectrumView->getImageBox().setTooltip(tr("拖动移动，右下角等比缩放，双击换图。","Drag to move; lower-right corner resizes proportionally. Double-click to load an image.")+"\n"+navigation);
+    navigation+=tr(" 选中打印后拖动右下角可等比例缩放；拖动时模拟预览，松手后渲染，Ctrl+Z 撤销。下方波形可按住拖动连续定位；拖动白框左右两端可缩放时间视图（等同 Speed / Ctrl+滚轮）。", " Drag the selected Print's lower-right handle to resize proportionally. Preview while dragging, render on release; Ctrl+Z undoes. Drag the overview waveform to scrub; drag either edge of its white view box to zoom the time view (same as Speed / Ctrl-wheel).");
+    spectrumView->setTooltip(navigation);spectrumView->getImageBox().setTooltip(tr("拖动移动，右下角等比缩放，单击或双击换图。","Drag to move; lower-right corner resizes proportionally. Click or double-click to load an image.")+"\n"+navigation);
     if(processor.filePlayerMode){
         recordButton.setTooltip(tr("选择本地音频或视频音轨；也可直接拖入文件。", "Choose local audio or a video soundtrack, or drag a file into the window."));
         clearRecordButton.setTooltip(tr("清空加载的音频及打印；Ctrl+Z 可撤销。", "Clear loaded audio and Prints; Ctrl+Z restores them."));

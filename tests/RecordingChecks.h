@@ -85,7 +85,10 @@ static void recordingChecks(const juce::File& dir) {
     std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());tickUI();
     auto* view=componentWithID(*editor,"spectrumView");require(view!=nullptr,"recorded spectrum component");
     fitSpectrum(*view);tickUI();
-    auto* visibility=dynamic_cast<juce::Button*>(componentWithID(*editor,"imageVisibility"));if(imageBox(*editor)->isVisible())visibility->onClick();
+    auto* visibility=dynamic_cast<juce::Button*>(componentWithID(*editor,"imageVisibility"));
+    // Load a real image first: an empty workspace keeps its drop guide visible.
+    if(!imageBox(*editor)->hasImage()){dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();}
+    if(imageBox(*editor)->isVisible())visibility->onClick();
     const int width=view->getWidth()-70,height=view->getHeight()-102;
     const float x=70+width*(11.5f-10)/3,y=height*.70f;
     view->mouseDown(mouseAt(*view,{x,y}));tickUI();

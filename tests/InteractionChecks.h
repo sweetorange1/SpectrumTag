@@ -26,8 +26,11 @@ static void interactionChecks(const juce::File& dir) {
     amount->mouseDown(alt);amount->mouseUp(alt);
     require(std::abs(*p.getAPVTS().getRawParameterValue(ParameterIDs::imageAmount)-.5f)<1e-5,"Alt-left click resets amount and parameter");
     auto* visibility=dynamic_cast<juce::Button*>(componentWithID(*editor,"imageVisibility"));
-    require(visibility!=nullptr,"visibility control");visibility->onClick();
-    require(!imageBox(*editor)->isVisible(),"hide image");
+    require(visibility!=nullptr,"visibility control");
+    const bool hadImage=imageBox(*editor)->hasImage();
+    visibility->onClick();
+    if(hadImage)require(!imageBox(*editor)->isVisible(),"hide image");
+    else require(imageBox(*editor)->isVisible(),"empty workspace keeps the image drop guide visible");
     editor->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);
     require(imageBox(*editor)->isVisible()&&p.getEditorState().imageVisible,"new image restores visibility");
     const auto loadedPath=imageBox(*editor)->getImagePath();

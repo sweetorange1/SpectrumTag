@@ -246,6 +246,15 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    // 独立版覆盖控件（播放/导出/音频设备/已加载文件名）在编辑器本地坐标中的落点。
+    struct StandaloneSlots
+    {
+        juce::Rectangle<int> play;         // 频谱下方波形预览左侧
+        juce::Rectangle<int> exportButton; // Print 圆按钮左侧
+        juce::Rectangle<int> device;       // 切换语言与导出诊断按钮之间
+        juce::Rectangle<int> fileName;     // 标题行网站链接右侧
+    };
+    StandaloneSlots standaloneSlots() const;
     bool keyPressed(const juce::KeyPress&) override;
     juce::var diagnosticReport();
 #if SPECTRUMTAG_ARA
@@ -343,6 +352,7 @@ private:
     SpectrumTagAudioProcessor::UserState stableState,changeBefore;
     std::optional<SpectrumTagAudioProcessor::UserState> recordBefore;
     juce::String placementId;
+    juce::String boxDragPrintId; // 图片模式下拖动图片框时所移动的打印对象
     void beginChange();
     void changed(bool selectedParameters=false);
     void finishChange(bool force=false);
@@ -352,6 +362,7 @@ private:
     void navigatePrint(bool next);
     spectrumtag::PrintEdit editedSelection(bool rebuildMask);
     void updateSelectedPrint();
+    void enterImageMode();
     spectrumtag::PrintEdit makeEdit();
     void undo(bool redo);
     void refreshLanguage();
@@ -393,6 +404,8 @@ private:
     spectrumtag::FineSlider   speedSlider;
     spectrumtag::FineSlider   amplitudeSlider;
     juce::ToggleButton invertToggle;
+    // 打印已改为“图片放置模式下点击频谱自动触发”。按钮保持隐藏，
+    // 仅作为内部触发入口（自动化、诊断与回归测试仍经由此路径）。
     RoundPrintButton   printButton { "Print" };
 
     using ComboAttachment  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;

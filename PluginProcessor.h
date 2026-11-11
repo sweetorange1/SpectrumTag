@@ -128,6 +128,14 @@ public:
     std::function<void(const juce::File&)> onDropAudioFile;
     std::function<void(double)> onFileSeek;
     bool isLoadMode()const{return SPECTRUMTAG_ARA||filePlayerMode;}
+    // True when a real source is available for Print. The standalone keeps a
+    // one-sample "generated" canvas so the empty workspace can still be drawn;
+    // that placeholder is not loaded audio and must not be printed into.
+    bool hasLoadedAudio()const{
+        const auto source=recording().snapshot();
+        if(!source||source->empty())return false;
+        return !(filePlayerMode&&source->sourceId.startsWith("generated:"));
+    }
     void publishFileTransport(bool playing,double seconds){transportAdvancing=playing;auditionTransport.publishExternalPosition(seconds);}
     void resetFileView(){undoChanges.clear();redoChanges.clear();auto s=getEditorState();s.selectedPrint={};s.placementId={};s.viewValid=false;s.viewFit=false;s.viewFollow=false;s.viewZoom=1;s.viewEnd=0;setEditorState(s);stateRevision.fetch_add(1);}
     spectrumtag::AuditionTransport& audition() {return auditionTransport;}

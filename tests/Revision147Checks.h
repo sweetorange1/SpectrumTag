@@ -90,6 +90,9 @@ static void revision147Checks(const juce::File& dir){
     require((double)lateView->getProperties()["overviewStart"]==60&&(double)lateView->getProperties()["overviewEnd"]==90,"overview uses the same captured range");
     require(late.recording().snapshot()->start()==60&&late.recording().snapshot()->end()==90&&!late.recording().snapshot()->contains(10*48000),"fit neither pads audio nor shifts captured positions");
     for(int i=0;i<3;++i)tickUI();png(dir.getChildFile("147-late-recording-overview.png"),lateEditor->createComponentSnapshot(lateEditor->getLocalBounds()));
+    // Placement mode prints when a visible image exists; hide it to test spectrum seeking.
+    auto* lateEye=dynamic_cast<juce::Button*>(componentWithID(*lateEditor,"imageVisibility"));
+    if(imageBox(*lateEditor)->isVisible())lateEye->onClick();tickUI();
     lateView->mouseDown(mouseAt(*lateView,{70+(lateView->getWidth()-70)*.75f,(float)lateView->getHeight()-50}));lateHost.playing=true;juce::MidiBuffer lateMidi;juce::AudioBuffer<float> lateBlock(2,256);lateBlock.clear();late.processBlock(lateBlock,lateMidi);
     require(std::abs(late.audition().position())<.001&&!late.audition().isLocal(),"stopped overview gap click follows project cursor on next Play");
     auto clickSpectrum=[&](double seconds){fitSpectrum(*lateView);tickUI();const auto point=juce::Point<float>(70+(lateView->getWidth()-70)*(float)((seconds-60)/30),100);lateView->mouseDown(mouseAt(*lateView,point));lateView->mouseUp(mouseAt(*lateView,point));};
