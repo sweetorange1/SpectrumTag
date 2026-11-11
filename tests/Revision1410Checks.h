@@ -65,6 +65,8 @@ static void revision1410Checks(const juce::File& dir) {
     }
     // A stopped live click must complete immediately even when the host is not
     // calling processBlock. It must not arm a future Print on the next Play.
+    // 图片对象不再由偏好预置：先拖入一张，实时打印才有可用的源图。
+    dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();
     auto* print=dynamic_cast<juce::Button*>(componentWithID(*editor,"printButton"));const auto visible=box->isVisible();
     for(int i=0;i<3;++i){print->onClick();require(!p.isPrintRunning()&&!p.getPrintTriggerParam()->get()&&print->isEnabled()&&box->isVisible()==visible,"1410 stopped live click is immediate no-op");}
     set(p,ParameterIDs::printTrigger,1);tickUI();require(!p.isPrintRunning()&&!p.getPrintTriggerParam()->get()&&!p.consumeAutomationPrintRequest(),"1410 stopped trigger resets without audio callbacks");

@@ -25,16 +25,15 @@ static void interactionChecks(const juce::File& dir) {
         juce::ModifierKeys(juce::ModifierKeys::altModifier|juce::ModifierKeys::leftButtonModifier),1,0,0,0,0,amount,amount,time,point,time,1,false);
     amount->mouseDown(alt);amount->mouseUp(alt);
     require(std::abs(*p.getAPVTS().getRawParameterValue(ParameterIDs::imageAmount)-.5f)<1e-5,"Alt-left click resets amount and parameter");
-    auto* visibility=dynamic_cast<juce::Button*>(componentWithID(*editor,"imageVisibility"));
-    require(visibility!=nullptr,"visibility control");
-    const bool hadImage=imageBox(*editor)->hasImage();
-    visibility->onClick();
-    if(hadImage)require(!imageBox(*editor)->isVisible(),"hide image");
-    else require(imageBox(*editor)->isVisible(),"empty workspace keeps the image drop guide visible");
+    // 图片可见性由三态决定：没有眼睛按钮，也没有空框可隐藏。
+    require(componentWithID(*editor,"imageVisibility")==nullptr,"visibility toggle removed from the new interaction");
+    juce::Timer::callPendingTimersSynchronously();
+    // 录音/ARA 模式的音频来自宿主：没有图片对象时显示投放引导。
+    require(imageBox(*editor)->isVisible()&&!imageBox(*editor)->hasImage(),"a record-mode editor shows the drop guide before an image");
     editor->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);
-    require(imageBox(*editor)->isVisible()&&p.getEditorState().imageVisible,"new image restores visibility");
+    require(imageBox(*editor)->isVisible()&&imageBox(*editor)->hasImage(),"a dropped image becomes an unprinted object");
     const auto loadedPath=imageBox(*editor)->getImagePath();
-    require(spectrumtag::Preferences::read().imagePath==loadedPath,"image preference saved");
+    require(loadedPath.isNotEmpty()&&juce::File(loadedPath).existsAsFile(),"the object keeps its own cached copy");
     auto maskBefore=imageBox(*editor)->generateMask(129,64);
     auto* ratio=dynamic_cast<juce::Slider*>(componentWithID(*editor,"amplitudeRatio"));require(ratio!=nullptr,"ratio control");
     ratio->setValue(.25,juce::sendNotificationSync);
@@ -45,12 +44,13 @@ static void interactionChecks(const juce::File& dir) {
     require(p.getEditorState().palette==1&&spectrumtag::Preferences::read().palette==1,"palette remembered");
     auto* language=dynamic_cast<juce::Button*>(componentWithID(*editor,"tooltipLanguage"));require(language!=nullptr,"language button");
     const auto firstTip=ratio->getTooltip();language->onClick();require(firstTip!=ratio->getTooltip(),"tooltip language changes");language->onClick();
-    SpectrumTagAudioProcessor fresh;require(fresh.getEditorState().imagePath==loadedPath&&fresh.getEditorState().palette==1,"new instance restores last image and colour");
+    // 图片对象不再跨实例复活：新实例只继承偏好（调色板/语言/缩放）。
+    SpectrumTagAudioProcessor fresh;require(fresh.getEditorState().imagePath.isEmpty()&&fresh.getEditorState().palette==1,"new instance keeps preferences but no image object");
     std::unique_ptr<juce::AudioProcessorEditor> freshEditor(fresh.createEditor());
-    require(imageBox(*freshEditor)->hasImage(),"new editor loads remembered image");
-    visibility->onClick();juce::MemoryBlock state;p.getStateInformation(state);
+    require(!imageBox(*freshEditor)->hasImage(),"a new instance never resurrects a deleted image");
+    juce::MemoryBlock state;p.getStateInformation(state);
     SpectrumTagAudioProcessor recalled;recalled.setStateInformation(state.getData(),(int)state.getSize());
-    require(recalled.getEditorState().palette==1&&!recalled.getEditorState().imageVisible,"project recalls colour and hidden image");
+    require(recalled.getEditorState().palette==1&&recalled.getEditorState().imagePath==loadedPath,"project recalls colour and its unprinted object");
     // No UI polling during this burst: every generated FFT frame must reach the queue.
     juce::MidiBuffer midi;
     for(int block=0;block<80;++block){juce::AudioBuffer<float> audio(2,256);
@@ -70,7 +70,6 @@ static void interactionChecks(const juce::File& dir) {
     transport.playing=false;p.processBlock(audio,midi);require(!p.isPrintRunning(),"second stop cancels active Print");
     juce::Thread::sleep(45);juce::Timer::callPendingTimersSynchronously();
     for(auto* child:editor->getChildren())if(auto* button=dynamic_cast<RoundPrintButton*>(child))require(button->isEnabled(),"Print button reenabled after stop");
-    visibility->onClick();
     png(dir.getChildFile("editor-1.4.6.png"),editor->createComponentSnapshot(editor->getLocalBounds()));
     for(int i=0;i<8;++i){auto* button=dynamic_cast<juce::Button*>(componentWithID(*editor,"palette"+juce::String(i)));button->onClick();
         png(dir.getChildFile("palette-"+juce::String(i)+".png"),editor->createComponentSnapshot(editor->getLocalBounds()));}

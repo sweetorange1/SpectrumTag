@@ -30,31 +30,28 @@ static void revision1412Checks(const juce::File& dir) {
     // A later overlapping black edit still suppresses the proposed fill.
     auto overlap=*rendered;auto later=e;later.id=juce::Uuid().toString();later.mask=std::make_shared<const std::vector<float>>(513*160,1.f);overlap.edits.push_back(later);e.compensation=.8f;
     auto covered=printPreview(overlap,e,7).rescaled(160,65);require(covered.getPixelAt(30,12)==spectrumColour(7,0),"1412 overlapping Prints are composed in order");
-    // Drive the actual selected-Print slider and inspect the UI pixels.
-    auto state=p.getEditorState();state.palette=7;state.chinese=false;state.imagePath=e.imagePath;state.imageVisible=false;p.setEditorState(state);
-    std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());tickUI();auto* view=componentWithID(*editor,"spectrumView");fitSpectrum(*view);tickUI();
-    const float width=(float)view->getWidth()-70,height=(float)view->getHeight()-102;
-    view->mouseDown(mouseAt(*view,{70+width*.25f,height*.4f}));tickUI();
+    // 新模型：聚焦后修改 Noise Fill 会撤掉这次打印、退回未打印态；重新打印
+    // 才把新的补偿值渲染进音频。旧版“选中打印的实时预览”随三态改造移除。
+    auto state=p.getEditorState();state.palette=7;state.chinese=false;state.imagePath=e.imagePath;state.imageVisible=true;
+    // 以“已打印并聚焦”的状态打开编辑器：等价于用户点中了这个打印。
+    state.selectedPrint=e.id;state.placementId=e.id;state.viewValid=true;state.viewFit=false;state.viewFollow=false;state.viewZoom=1;state.viewEnd=e.start+.2;
+    p.setEditorState(state);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());tickUI();
+    auto* view=componentWithID(*editor,"spectrumView");fitSpectrum(*view);tickUI();
     auto* fill=dynamic_cast<juce::Slider*>(componentWithID(*editor,"noiseFill"));require(fill&&fill->isEnabled(),"1412 selected Fill control");
-    // Selection recalls the Print's display FFT asynchronously. Finish that
-    // work before measuring whether a subsequent gesture renders any audio.
-    fill->onDragStart();require(p.recording().flush(),"1412 selection settled before Fill drag");
-    // Selecting a Print shows the editable source image over it; hide that
-    // overlay so the simulated Print preview itself can be measured.
-    auto* eye=dynamic_cast<juce::Button*>(componentWithID(*editor,"imageVisibility"));
-    if(imageBox(*editor)->isVisible()&&eye)eye->onClick();tickUI();
+    // 状态3 只画范围和 Delete 提示，不显示源图。
+    require(!imageBox(*editor)->isVisible(),"1412 a focused Print shows only its frame");
     const auto revision=p.recording().snapshot()->revision;
-    fill->setValue(.1,juce::sendNotificationSync);tickUI();auto lowUI=view->createComponentSnapshot(view->getLocalBounds());
-    const int x=juce::roundToInt((float)view->getProperties()["selectedX"]+(float)view->getProperties()["selectedW"]*30.5f/160);
-    const int y=juce::roundToInt((float)view->getProperties()["selectedY"]+(float)view->getProperties()["selectedH"]*12.5f/65);
-    fill->setValue(.8,juce::sendNotificationSync);tickUI();auto highUI=view->createComponentSnapshot(view->getLocalBounds());
-    require(brightness(highUI,x,y)>brightness(lowUI,x,y)+.15f,"1412 visible selected Print preview changes with Noise Fill");
-    require(p.recording().snapshot()->revision==revision,"1412 Fill drag never renders audio");
-    png(dir.getChildFile("1412-fill-low.png"),lowUI);png(dir.getChildFile("1412-fill-high.png"),highUI);
-    fill->setValue(.4,juce::sendNotificationSync);fill->onDragEnd();juce::Thread::sleep(210);tickUI();require(p.recording().flush(),"1412 release renders final Fill");tickUI();
-    require(p.recording().edits()->size()==1&&std::abs(p.recording().edits()->front().compensation-.4f)<1e-6,"1412 final Fill replaces selected Print");
-    editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys(juce::ModifierKeys::ctrlModifier),0));require(p.recording().flush(),"1412 undo Fill");tickUI();require(std::abs(p.recording().edits()->front().compensation-.8f)<1e-6,"1412 Fill gesture is one undo");
-    editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys(juce::ModifierKeys::ctrlModifier|juce::ModifierKeys::shiftModifier),0));require(p.recording().flush(),"1412 redo Fill");tickUI();require(std::abs(p.recording().edits()->front().compensation-.4f)<1e-6,"1412 redo restores final Fill");
+    fill->onDragStart();fill->setValue(.1,juce::sendNotificationSync);juce::Thread::sleep(210);tickUI();
+    require(p.recording().snapshot()->revision==revision,"1412 Fill gesture never renders audio while dragging");
+    fill->onDragEnd();
+    for(int i=0;i<300&&!p.recording().edits()->empty();++i){juce::Thread::sleep(10);tickUI();}
+    require(p.recording().edits()->empty(),"1412 releasing a Fill gesture reverts the focused Print to unprinted");
+    auto* print=dynamic_cast<juce::Button*>(componentWithID(*editor,"printButton"));require(print!=nullptr,"1412 Print entry");
+    print->onClick();require(p.recording().flush(),"1412 reprint after Fill change");tickUI();
+    require(p.recording().edits()->size()==1&&std::abs(p.recording().edits()->front().compensation-.1f)<1e-6,"1412 reprint uses the new Fill value");
+    editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys::ctrlModifier,0));require(p.recording().flush(),"1412 undo reprint");tickUI();
+    require(p.recording().edits()->empty(),"1412 undo reprint removes the Print again");
     // Largest preview size, reporting actual cost instead of a flaky timing gate.
     auto large=e;large.rows=513;large.cols=512;large.mask=std::make_shared<const std::vector<float>>(513*512,0.f);
     double total=0;for(int i=0;i<12;++i){large.compensation=.2f+i*.05f;const auto start=juce::Time::getMillisecondCounterHiRes();auto image=printPreview(*rendered,large,7);total+=juce::Time::getMillisecondCounterHiRes()-start;require(image.isValid(),"1412 full-sized preview");}

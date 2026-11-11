@@ -153,10 +153,6 @@ public:
     // 设置当前图片（从文件加载并预处理）
     bool loadImageFromFile (const juce::File& file);
     bool hasImage() const { return sourceImage.isValid(); }
-    // 已记住的图片被隐藏、时间线上又没有任何打印时，画布上什么都没有：
-    // 此时该框改画“拖入图片”引导，而不是保持隐藏。
-    void setGuideMode (bool guide) { if (guideMode == guide) return; guideMode = guide; repaint(); }
-    bool isGuideMode() const { return guideMode; }
     void clearImage(){sourceImage={};binaryMask={};binaryPreview={};imagePath={};requestedConversion=converter.request({},conversionMode,conversionAmount);appliedConversion=0;repaint();}
     juce::String getImagePath() const { return imagePath; }
     void setImagePathForRecall(const juce::String& path){imagePath=path;}
@@ -186,7 +182,8 @@ public:
 
     // 选中/释放回调（让父组件保存到 Processor 状态）
     std::function<void()> onChanged,onGestureStart,onGestureEnd,onFileLoadStart;
-    std::function<void(const juce::File&)> onImagePicked;
+    // 用户选好/拖入图片后先问编辑器：是否允许导入、是否需要先打印上一张。
+    std::function<void(const juce::File&)> onImageRequested;
 
     void paint (juce::Graphics&) override;
     void mouseDown  (const juce::MouseEvent&) override;
@@ -216,7 +213,6 @@ private:
     bool chinese=false;
     juce::Image  sourceImage;           // 原图（彩色）
     juce::Image binaryMask;
-    bool guideMode=false;               // 有图但被隐藏且无打印内容：改画投放引导
     int conversionMode=0;
     float conversionAmount=0.5f;
     bool previewInverted=false;
@@ -352,12 +348,15 @@ private:
     juce::ComboBox frequencyRangeCombo;
     juce::Label frequencyRangeLabel {{},"Range:"};
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> frequencyRangeAttachment;
-    bool suppressChanges=true,gestureActive=false,pendingChange=false,pendingSelected=false,pendingDuration=false,pendingFrequency=false,pendingPresetTiming=false,wheelChange=false;
+    // 三态图片对象：未打印（可编辑）/ 已打印未聚焦 / 已打印聚焦。
+    bool suppressChanges=true,gestureActive=false,pendingChange=false,pendingRevert=false,wheelChange=false;
     juce::uint32 changedAt=0;
     SpectrumTagAudioProcessor::UserState stableState,changeBefore;
     std::optional<SpectrumTagAudioProcessor::UserState> recordBefore;
-    juce::String placementId;
-    juce::String boxDragPrintId; // 图片模式下拖动图片框时所移动的打印对象
+    juce::String placementId;      // 当前聚焦对象对应的打印 id（仅在聚焦时有意义）
+    bool audioReady() const;
+    bool printPlacingObject();     // 把“未打印”对象渲染进频谱，成功后对象进入已打印态
+    void unprintFocused();         // 已打印聚焦态被修改：撤掉打印，退回未打印态
     void beginChange();
     void changed(bool selectedParameters=false);
     void finishChange(bool force=false);
@@ -365,9 +364,6 @@ private:
     void selectPrinted(const juce::String&);
     juce::String adjacentPrint(bool next)const;
     void navigatePrint(bool next);
-    spectrumtag::PrintEdit editedSelection(bool rebuildMask);
-    void updateSelectedPrint();
-    void enterImageMode();
     spectrumtag::PrintEdit makeEdit();
     void undo(bool redo);
     void refreshLanguage();
@@ -387,21 +383,7 @@ private:
     bool chineseTips=true;
     void selectPalette(int index, bool remember);
     std::array<std::unique_ptr<juce::Button>,8> paletteButtons;
-    class EyeButton : public juce::Button {
-    public:
-        EyeButton():juce::Button("Image"){}
-        void paintButton(juce::Graphics& g,bool over,bool) override {
-            auto r=getLocalBounds().toFloat().reduced(7,8);juce::Path eye;
-            eye.startNewSubPath(r.getX(),r.getCentreY());
-            eye.quadraticTo(r.getCentreX(),r.getY()-5,r.getRight(),r.getCentreY());
-            eye.quadraticTo(r.getCentreX(),r.getBottom()+5,r.getX(),r.getCentreY());
-            g.setColour(over?juce::Colours::white:juce::Colours::lightgrey);g.strokePath(eye,juce::PathStrokeType(1.7f));
-            g.fillEllipse(r.getCentreX()-3,r.getCentreY()-3,6,6);
-            if(!getToggleState())g.drawLine(r.getX(),r.getBottom()+3,r.getRight(),r.getY()-3,2);
-        }
-    } imageVisibilityButton;
     int selectedPalette=0,lastStateRevision=0;
-    bool imageVisible=true;
     uint64_t lastVisualisedSamples=0;
     double scrollPixelRemainder=0;
     juce::ComboBox fftSizeCombo;

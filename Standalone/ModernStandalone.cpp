@@ -160,16 +160,16 @@ int filelessUiTest(const juce::File& folder){try{
     auto* image=revision1416::box(panel);auto* fill=dynamic_cast<juce::Slider*>(revision1416::find(panel,"noiseFill"));auto* view=revision1416::find(panel,"spectrumView");auto* uiEditor=static_cast<SpectrumTagAudioProcessorEditor*>(revision1416::find(panel,"editor"));
     need(image&&fill&&view&&uiEditor,"blank canvas controls exist");wait([&]{return fill->isEnabled();});
     auto clickSpectrum=[&]{const auto now=juce::Time::getCurrentTime();const juce::Point<float> point{100.f,100.f};juce::MouseEvent click(juce::Desktop::getInstance().getMainMouseSource(),point,juce::ModifierKeys::leftButtonModifier,1,0,0,0,0,view,view,now,point,now,1,false);view->mouseDown(click);view->mouseUp(click);};
-    // 空工作区没有音频也没有图片：必须绘制图片投放引导，并说明先加载音频。
+    // 未加载音频：既没有原图也没有投放引导，此时拖入图片必须被拒绝。
     need(!processor.hasLoadedAudio(),"blank workspace must not count as loaded audio");
-    // The remembered image from an earlier run must not hide the guide check.
-    if(image->hasImage()){image->clearImage();wait([&]{return image->isVisible();});}
-    need(image->isVisible(),"empty workspace shows the image drop guide");
+    for(int i=0;i<8;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
+    need(!image->isVisible(),"no-audio workspace shows neither image nor drop guide");
     need(processor.recording().snapshot()->sourceId.startsWith("generated:"),"blank canvas is still the generated placeholder");
     {auto ui=panel.createComponentSnapshot(panel.getLocalBounds());auto out=folder.getChildFile("standalone-empty.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(ui,*out),"empty workspace screenshot");}
     juce::Image picture(juce::Image::RGB,96,128,true);{juce::Graphics g(picture);g.fillAll(juce::Colours::white);g.setColour(juce::Colours::black);g.fillRect(15,16,66,24);g.fillRect(36,30,24,78);}const auto path=folder.getChildFile("letter-T.png");{auto out=path.createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(picture,*out),"UI image fixture");}
-    uiEditor->filesDropped({path.getFullPathName()},200,200);fill->setValue(.65,juce::sendNotificationSync);wait([&]{return image->conversionReady();});
-    need(image->isVisible(),"loaded image replaces the drop guide");
+    uiEditor->filesDropped({path.getFullPathName()},200,200);
+    for(int i=0;i<4;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
+    need(!image->hasImage()&&!image->isVisible(),"image drop before loading audio is refused");
     // 没有音频时点击频谱：不渲染，只高亮"先加载音频"的引导。
     clickSpectrum();
     wait([&]{return (bool)view->getProperties()["audioHintActive"];});
@@ -181,6 +181,17 @@ int filelessUiTest(const juce::File& folder){try{
     processor.onDropAudioFile(wav);
     wait([&]{auto s=processor.recording().snapshot();return s&&!processor.recording().isBusy()&&!s->sourceId.startsWith("generated:")&&(bool)view->getProperties()["audioLoaded"];});
     for(int i=0;i<10;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
+    // 加载音频后拖入图片：出现“未打印”对象（图片可见）和图片下方的打印按钮。
+    uiEditor->filesDropped({path.getFullPathName()},200,200);
+    fill->setValue(.65,juce::sendNotificationSync);
+    wait([&]{return image->hasImage()&&image->conversionReady();});
+    auto* imagePrint=dynamic_cast<juce::Button*>(revision1416::find(panel,"imagePrint"));
+    need(imagePrint!=nullptr,"unprinted image has a print button");
+    wait([&]{return imagePrint->isVisible()&&image->isVisible();});
+    // 点击频谱不再自动打印，只有图片下方的按钮才会渲染。
+    clickSpectrum();
+    for(int i=0;i<6;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
+    need(processor.recording().edits()->empty(),"clicking the spectrum no longer prints");
     // 下方波形：按住拖动应连续定位，而不是只在按下时跳一次。
     const float overviewY=(float)view->getHeight()-60.f;
     const float overviewLeft=70.f,overviewRight=(float)view->getWidth();
@@ -198,28 +209,59 @@ int filelessUiTest(const juce::File& folder){try{
     need(std::abs(resizedSpan-5.0)<.4,"overview view box resizes the visible span like Speed");
     auto* fit=dynamic_cast<juce::Button*>(revision1416::find(panel,"fitSpectrum"));need(fit!=nullptr,"Fit icon");fit->onClick();
     for(int i=0;i<4;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
-    clickSpectrum();
+    // 点图片下方的打印按钮 → 状态2：图片与打印按钮消失，只剩频谱里的挖空。
+    imagePrint->onClick();
     wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy()&&(int)view->getProperties()["rasterRevision"]==s->revision;});
+    need(!image->isVisible()&&!imagePrint->isVisible(),"printed object hides its image and print button (state 2)");
     const auto audio=processor.recording().snapshot();need(!audio->sourceId.startsWith("generated:"),"UI Print uses loaded audio");double energy=0;for(int64_t i=audio->first;i<audio->last;++i)energy+=std::pow(audio->sample(0,i),2);need(energy>.01,"UI Print generates real sound");
+    // 点击打印位置 → 状态3：只画范围和 Delete 提示，不显示源图。
+    auto printCentre=view->getLocalPoint(image,image->getLocalBounds().getCentre()).toFloat();
+    view->mouseDown(mouse(printCentre));view->mouseUp(mouse(printCentre));
+    for(int i=0;i<4;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
+    need(!image->isVisible()&&!imagePrint->isVisible(),"focusing a printed position shows only its frame (state 3)");
+    view->createComponentSnapshot(view->getLocalBounds());
+    need((float)view->getProperties()["selectedW"]>0.f,"focused frame exposes its bounds");
+    // 状态3下改参数：撤掉这次打印、退回状态1，必须重新打印（值需与聚焦时不同）。
+    fill->setValue(.55f,juce::sendNotificationSync);
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.empty()&&!processor.recording().isBusy();});
+    need(image->isVisible()&&imagePrint->isVisible(),"editing a focused object reverts it to the unprinted state");
+    // 再打印一次，供后面的撤销/清空/删除检查使用。
+    imagePrint->onClick();
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy()&&(int)view->getProperties()["rasterRevision"]==s->revision;});
     panel.keyPressed(juce::KeyPress('z',juce::ModifierKeys::ctrlModifier,0));wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.empty()&&!processor.recording().isBusy();});
     panel.keyPressed(juce::KeyPress('z',juce::ModifierKeys::ctrlModifier|juce::ModifierKeys::shiftModifier,0));wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy();});
     need(processor.recording().snapshot()->last==audio->last,"UI redo restores the printed range");
     auto* clear=dynamic_cast<juce::Button*>(revision1416::find(panel,"clearLoad"));clear->onClick();wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.empty()&&s->last==1&&!processor.recording().isBusy()&&!processor.isClearPending();});
+    for(int i=0;i<4;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
+    need(!image->hasImage()&&!image->isVisible(),"Clear destroys every image object and hides the guide");
     panel.keyPressed(juce::KeyPress('z',juce::ModifierKeys::ctrlModifier,0));wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy();});
     need(processor.recording().snapshot()->last==audio->last,"UI undo Clear restores the loaded audio and Print");
+    // 撤销后对象是“已打印未聚焦”：先点它聚焦（状态3），Delete 才会删除对象。
+    auto focusPoint=view->getLocalPoint(image,image->getLocalBounds().getCentre()).toFloat();
+    view->mouseDown(mouse(focusPoint));view->mouseUp(mouse(focusPoint));
+    for(int i=0;i<4;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
+    need(!image->isVisible(),"focused object shows only its frame, not the picture");
     wait([&]{auto s=processor.recording().snapshot();if((int)view->getProperties()["rasterRevision"]!=s->revision)return false;const auto image=view->createComponentSnapshot(view->getLocalBounds());int coloured=0;for(int y=40;y<image.getHeight()-100;y+=2)for(int x=80;x<image.getWidth()-20;x+=2){auto c=image.getPixelAt(x,y);coloured+=c.getSaturation()>.25f&&c.getBrightness()>.15f;}return coloured>100;});
     auto ui=panel.createComponentSnapshot(panel.getLocalBounds());{auto out=folder.getChildFile("standalone-fileless.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(ui,*out),"UI screenshot");}
+    // 删除图片对象：原图与它的打印一起销毁；没有对象后画布回到投放引导，
+    // 因此残留像素检查要跳过引导框本身的位置。
+    const auto guideRect=view->getLocalArea(image,image->getLocalBounds()).expanded(8);
+    auto residualOutsideGuide=[&](const juce::Image& image){int count=0;
+        for(int y=40;y<image.getHeight()-100;y+=2)for(int x=80;x<image.getWidth()-20;x+=2)
+            if(!guideRect.contains(x,y)){const auto c=image.getPixelAt(x,y);count+=c.getSaturation()>.25f&&c.getBrightness()>.15f;}
+        return count;};
     panel.keyPressed(juce::KeyPress(juce::KeyPress::deleteKey));
-    const auto immediate=view->createComponentSnapshot(view->getLocalBounds());int immediateResidual=0;
+    const auto immediate=view->createComponentSnapshot(view->getLocalBounds());
     {auto out=folder.getChildFile("deleted-immediately.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(immediate,*out),"immediate deletion screenshot");}
-    for(int y=40;y<immediate.getHeight()-100;y+=2)for(int x=80;x<immediate.getWidth()-20;x+=2){const auto c=immediate.getPixelAt(x,y);immediateResidual+=c.getSaturation()>.25f&&c.getBrightness()>.15f;}
-    need(immediateResidual==0,"Delete immediately clears cached pixels before playback or another timer tick");
+    need(residualOutsideGuide(immediate)==0,"Delete immediately clears cached pixels before playback or another timer tick");
+    need(!image->hasImage(),"deleted object does not keep its source image");
     wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.empty()&&!processor.recording().isBusy()&&(int)view->getProperties()["rasterRevision"]==s->revision;});
     const auto deleted=processor.recording().snapshot();const auto deletedImage=view->createComponentSnapshot(view->getLocalBounds());
     {auto out=folder.getChildFile("deleted.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(deletedImage,*out),"deleted screenshot");}
-    int residual=0;for(int y=40;y<deletedImage.getHeight()-100;y+=2)for(int x=80;x<deletedImage.getWidth()-20;x+=2){const auto c=deletedImage.getPixelAt(x,y);residual+=c.getSaturation()>.25f&&c.getBrightness()>.15f;}
+    const int residual=residualOutsideGuide(deletedImage);
     folder.getChildFile("deletion-state.txt").replaceWithText("last="+juce::String(deleted->last)+" residual="+juce::String(residual)+" preview="+view->getProperties()["previewActive"].toString());
     need(residual==0&&!(bool)view->getProperties()["previewActive"],"Delete removes the Print from the actual visible spectrum");
+    need(image->isVisible(),"deleting every object brings the drop guide back");
     need(deleted->frameAt(deleted->end()+.01)==nullptr,"removed tail cannot read retained boundary FFT bins");
     for(bool zh:{true,false}){
         VideoOptions options;options.chinese=zh;VideoOptions accepted;int accepts=0;

@@ -85,48 +85,58 @@ static void recordingChecks(const juce::File& dir) {
     std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());tickUI();
     auto* view=componentWithID(*editor,"spectrumView");require(view!=nullptr,"recorded spectrum component");
     fitSpectrum(*view);tickUI();
-    auto* visibility=dynamic_cast<juce::Button*>(componentWithID(*editor,"imageVisibility"));
-    // Load a real image first: an empty workspace keeps its drop guide visible.
-    if(!imageBox(*editor)->hasImage()){dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();}
-    if(imageBox(*editor)->isVisible())visibility->onClick();
+    // 点击已打印对象前不能有“未打印对象”：否则聚焦会先把它自动打印进频谱。
+    imageBox(*editor)->clearImage();
+    imageBox(*editor)->setNormalisedBounds({.84f,.06f,.10f,.10f});tickUI();
     const int width=view->getWidth()-70,height=view->getHeight()-102;
     const float x=70+width*(11.5f-10)/3,y=height*.70f;
     view->mouseDown(mouseAt(*view,{x,y}));tickUI();
     auto* remove=dynamic_cast<juce::Button*>(componentWithID(*editor,"removePrint"));require(remove&&remove->isEnabled(),"click selects printed region");
+    require(p.getEditorState().placementId==p.recording().edits()->front().id,"click focuses the printed region");
     require(view->keyPressed(juce::KeyPress(juce::KeyPress::deleteKey)),"Delete key handled by spectrum");require(p.recording().flush(),"Delete key render");tickUI();
     require(p.recording().snapshot()->edits.empty(),"Delete key removed selected Print");
-    // Exercise actual UI Print, coalesced editing and undo.
-    if(!imageBox(*editor)->isVisible())visibility->onClick();
+    // Exercise actual UI Print. Deleting the object destroyed its source image,
+    // so drop a fresh one; the (hidden) Print entry still drives the same path.
+    dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();
     fitSpectrum(*view);tickUI();
     imageBox(*editor)->setNormalisedBounds({.80f,.38f,.08f,.15f});
-    auto* print=dynamic_cast<juce::Button*>(componentWithID(*editor,"printButton"));require(print!=nullptr,"Print button");print->onClick();
+    auto* print=dynamic_cast<juce::Button*>(componentWithID(*editor,"printButton"));require(print!=nullptr,"Print button");
+    // 打印会销毁源图，因此尺寸/比例必须在打印前记录。
+    const float previewWidth=(float)imageBox(*editor)->getWidth();
+    const auto imageAspect=imageBox(*editor)->aspect();
+    print->onClick();
     require(p.recording().flush(),"UI Print render");tickUI();auto uiPrint=p.recording().snapshot();
     require(uiPrint->edits.size()==1&&!imageBox(*editor)->isVisible(),"recorded Print hides source image and shows stamped result at its location");
     const auto placed=uiPrint->edits.front();
     const double previewStart=10+(double)imageBox(*editor)->getX()/width*3;
     require(std::abs(previewStart-placed.start)<1e-5,"Print starts exactly under preview time coordinate");
     require(std::abs(placed.duration-(double)imageBox(*editor)->getWidth()/width*3)<1e-6,"Print duration matches displayed image and viewport");
-    const float previewWidth=(float)imageBox(*editor)->getWidth();
-    const auto imageAspect=imageBox(*editor)->aspect();
     auto* speedSlider=dynamic_cast<juce::Slider*>(componentWithID(*editor,"speed"));require(speedSlider!=nullptr,"Speed control");
+    // 聚焦刚打印的对象：状态3（图片与边框重新出现）。
+    const auto printCentre=view->getLocalPoint(imageBox(*editor),imageBox(*editor)->getLocalBounds().getCentre()).toFloat();
+    view->mouseDown(mouseAt(*view,printCentre));view->mouseUp(mouseAt(*view,printCentre));tickUI();
+    // 状态3 只画范围和 Delete 提示，不显示源图。
+    require(!imageBox(*editor)->isVisible(),"focusing a Print shows only its frame");
     const auto priorRevision=p.recording().snapshot()->revision;
     speedSlider->onDragStart();
     for(int i=0;i<20;++i){speedSlider->setValue(1+(i+1)/20.f,juce::sendNotificationSync);tickUI();}
-    require((bool)view->getProperties()["previewActive"],"Speed drag shows simulated visual preview");
     require(p.recording().snapshot()->revision==priorRevision,"Speed drag never renders audio before release");
     require(std::abs(imageBox(*editor)->getWidth()-previewWidth)<2&&std::abs((double)imageBox(*editor)->getWidth()/imageBox(*editor)->getHeight()-imageAspect)<.01,"Speed preserves image dimensions and aspect");
-    speedSlider->onDragEnd();juce::Thread::sleep(210);tickUI();require(p.recording().flush(),"release renders final Speed");tickUI();
-    auto faster=p.recording().snapshot();require(faster->edits.size()==1&&std::abs(faster->edits[0].duration-placed.duration*.5)<.001,"Speed release updates selected duration once");
-    require(editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys(juce::ModifierKeys::ctrlModifier),0)),"Ctrl Z handled");require(p.recording().flush(),"undo speed render");tickUI();
-    require(std::abs(p.recording().snapshot()->edits[0].duration-placed.duration)<1e-6,"entire Speed drag is one undo");
-    require(editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys(juce::ModifierKeys::ctrlModifier|juce::ModifierKeys::shiftModifier),0)),"Ctrl Shift Z handled");require(p.recording().flush(),"redo speed render");tickUI();
-    require(std::abs(p.recording().snapshot()->edits[0].duration-placed.duration*.5)<.001,"redo restores final Speed");
-    require(!componentWithID(*editor,"reprint")&&!componentWithID(*editor,"loadAudio"),"obsolete Reprint and VST Load Audio removed");
-    auto* ratio=dynamic_cast<juce::Slider*>(componentWithID(*editor,"amplitudeRatio"));ratio->setValue(.1f,juce::sendNotificationSync);juce::Thread::sleep(210);tickUI();require(p.recording().flush(),"selected ratio render");tickUI();
-    const auto replacement=p.recording().snapshot();require(replacement->edits.size()==1&&replacement->edits[0].id==placed.id,"selected edit preserves identity and does not stack");
-    print->onClick();require(p.recording().flush(),"repeat Print");tickUI();auto repeated=p.recording().snapshot();
-    require(repeated->edits.size()==1&&repeated->edits[0].id==placed.id,"same-position repeat replaces using stable noise seed");
-    for(int64_t i=repeated->first;i<repeated->last;++i)require(repeated->sample(0,i)==replacement->sample(0,i),"repeat Print is sample-identical");
+    speedSlider->onDragEnd();
+    for(int i=0;i<300&&!p.recording().edits()->empty();++i){juce::Thread::sleep(10);tickUI();}
+    require(p.recording().edits()->empty(),"Speed release reverts the focused Print to unprinted");
+    require(imageBox(*editor)->isVisible()&&imageBox(*editor)->hasImage(),"object returns to the unprinted state");
+    require(editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys::ctrlModifier,0)),"Ctrl Z handled");require(p.recording().flush(),"undo speed revert");tickUI();
+    require(p.recording().snapshot()->edits.size()==1,"one undo restores the Print and its Speed");
+    // 删除聚焦对象后重新开始，验证“只允许一个未打印对象”的拖入规则。
+    require(editor->keyPressed(juce::KeyPress(juce::KeyPress::deleteKey)),"Delete key removes the focused object");
+    require(p.recording().flush(),"delete focused object");tickUI();
+    require(p.recording().edits()->empty()&&!imageBox(*editor)->hasImage(),"Delete destroys both the Print and its source image");
+    dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();
+    require(imageBox(*editor)->hasImage()&&p.recording().edits()->empty(),"a fresh drop becomes the single unprinted object");
+    // 只允许一个未打印对象：再拖入一张会先把当前未打印图片打印进频谱。
+    dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();
+    require(p.recording().edits()->size()==1&&imageBox(*editor)->hasImage()&&imageBox(*editor)->isVisible(),"dropping a second image prints the previous unprinted one");
     png(dir.getChildFile("recorded-print-selected.png"),editor->createComponentSnapshot(editor->getLocalBounds()));
     view->mouseDown(mouseAt(*view,{70+width*.25f,(float)view->getHeight()-50}));
     transport.playing=true;transport.sample=240000;block.clear();p.processBlock(block,midi);
@@ -146,12 +156,18 @@ static void recordingChecks(const juce::File& dir) {
     scale->setSelectedId(250,juce::sendNotificationSync);png(dir.getChildFile("recorded-ui-250-percent.png"),editor->createComponentSnapshot(editor->getLocalBounds()));
     scale->setSelectedId(100,juce::sendNotificationSync);
     auto* fill=dynamic_cast<juce::Slider*>(componentWithID(*editor,"noiseFill"));require(fill&&fill->isEnabled(),"recorded audio enables Noise Fill control");
-    // Select the rendered edit again after an overview click, then change its fill.
+    // 聚焦已渲染对象后修改 Noise Fill：新模型会撤掉这次打印、退回未打印态；
+    // 重新打印后才把新值写进 Print。
     fitSpectrum(*view);tickUI();
+    imageBox(*editor)->clearImage();tickUI();
     const auto selectedEdit=p.recording().snapshot()->edits.front();
     const float centreX=70+(float)((selectedEdit.start+selectedEdit.duration*.5-10)/3)*width;
     view->mouseDown(mouseAt(*view,{centreX,height*.45f}));tickUI();
-    fill->setValue(.4,juce::sendNotificationSync);juce::Thread::sleep(210);tickUI();require(p.recording().flush(),"selected Noise Fill control rerenders");
+    fill->onDragStart();fill->setValue(.4,juce::sendNotificationSync);juce::Thread::sleep(200);fill->onDragEnd();
+    for(int i=0;i<300&&!p.recording().edits()->empty();++i){juce::Thread::sleep(10);tickUI();}
+    require(p.recording().edits()->empty(),"focused Noise Fill edit reverts the Print to unprinted");
+    auto* printEntry=dynamic_cast<juce::Button*>(componentWithID(*editor,"printButton"));require(printEntry!=nullptr,"print entry");
+    printEntry->onClick();require(p.recording().flush(),"reprint with adjusted Noise Fill");tickUI();
     require(std::abs(p.recording().snapshot()->edits.front().compensation-.4f)<1e-6,"selected Print stores adjusted compensation");
     auto savedDocument=p.recording().snapshot();
     auto* clear=dynamic_cast<juce::Button*>(componentWithID(*editor,"clearRecord"));require(clear!=nullptr,"Clear Record control");clear->onClick();tickUI();require(p.recording().flush(),"clear record flush");tickUI();

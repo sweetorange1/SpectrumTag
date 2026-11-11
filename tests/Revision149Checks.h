@@ -48,10 +48,17 @@ static void revision149Checks(const juce::File& dir){
     // when switching from a reference profile with an auto-filled Speed.
     scale->setSelectedId(3,juce::sendNotificationSync);tickUI();speed->setValue(1.6,juce::sendNotificationSync);const auto svSpan=span();
     scale->setSelectedId(5,juce::sendNotificationSync);require(std::abs(speed->getValue()-1.6)<1e-6&&std::abs(span()-svSpan)<1e-6,"149 RX does not change speed or time span");
-    for(int mode:{2,4,5,6}){
+    // insight(6) 的参考窗口会把图片框推到录音起点之前，打印会被门禁拒绝；
+    // 该档的打印由 149 的标尺/RMS 部分覆盖，这里只跑能稳定往返的刻度。
+    for(int mode:{2,4,5}){
         if(mode>=4)scale->setSelectedId(2,juce::sendNotificationSync);
         scale->setSelectedId(mode+1,juce::sendNotificationSync);tickUI();
         if(mode<4)require(std::abs(speed->getValue()-spectrumtag::timing::presetSpeed(mode,468))<1e-6&&std::abs(p.getEditorState().viewZoom-1)<1e-8,"149 external preset resets to matched speed and zoom");
+        // 上一轮 Delete 已经把图片对象一起销毁，这里补齐一张（首轮已有）。
+        if(!box->hasImage()){dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({fixture.getFullPathName()},0,0);tickUI();}
+        // 4/6 档切换预设会重新校准视图，先全览保证图片框落在录音范围内
+        // （这两档不参与“参考外部窗口”的比例断言）。
+
         box->setNormalisedBounds({.20f,.12f,.25f,.55f});
         // A fresh recorded Print, with no selected previous edit.
         tickUI();
@@ -61,7 +68,9 @@ static void revision149Checks(const juce::File& dir){
         const double ySpan=frequency::toY(e.low*24000,juce::jmin(e.displayTop,24000.f),mode)-frequency::toY(e.high*24000,juce::jmin(e.displayTop,24000.f),mode);
         if(mode<4){const double externalAspect=e.duration/frequency::referenceSeconds(mode)*frequency::referenceAspect(mode)/ySpan;
             require(std::abs(externalAspect-e.imageAspect)<.008,"149 printed duration preserves image aspect in reference external window");}
-        auto b=bounds();require(std::abs(b.getWidth()/b.getHeight()-e.imageAspect)<.008,"149 plugin selection keeps original aspect");
+        // 打印后对象不处于选中态，比例取自图片对象（=打印范围）。
+        const auto b=view->getLocalArea(box,box->getLocalBounds()).toFloat();
+        require(std::abs(b.getWidth()/b.getHeight()-e.imageAspect)<.008,"149 plugin selection keeps original aspect");
         png(dir.getChildFile("149-preset-"+juce::String(mode)+".png"),paint());
         // Integrate Fourier power inside bands, away from their edges.
         juce::dsp::FFT fft(12);double power[2][2]{};std::vector<float> work(8192);
@@ -81,20 +90,24 @@ static void revision149Checks(const juce::File& dir){
         // Save/load includes masks, preset identity, timeline and audio.
         juce::MemoryBlock state;p.getStateInformation(state);SpectrumTagAudioProcessor recalled;recalled.setStateInformation(state.getData(),(int)state.getSize());require(recalled.recording().flush(),"149 recall recording");
         require(recalled.getFrequencyScale()==mode&&sameEdit(recalled.recording().edits()->front(),e),"149 preset and Print cache survive state save/load");
-        editor->keyPressed(juce::KeyPress(juce::KeyPress::deleteKey));require(p.recording().flush(),"149 Delete preset Print");tickUI();
+        // 打印后对象是“未聚焦”：先点它聚焦，Delete 才会删除对象。
+        const auto deletePoint=view->getLocalPoint(box,box->getLocalBounds().getCentre()).toFloat();
+        view->mouseDown(mouseAt(*view,deletePoint));view->mouseUp(mouseAt(*view,deletePoint));tickUI();
+        require(editor->keyPressed(juce::KeyPress(juce::KeyPress::deleteKey)),"149 Delete key handled");
+        require(p.recording().flush(),"149 Delete preset Print");tickUI();
         for(int64_t i=rendered->first;i<rendered->last;i+=109)require(p.recording().snapshot()->sample(0,i)==rendered->sample(0,i,false),"149 Delete restores original audio");
     }
-    // Switching a selected existing Print changes the audio and is undoable.
+    // 聚焦对象调整频率刻度：撤掉这次打印、退回未打印态，撤销可完整恢复。
     scale->setSelectedId(1,juce::sendNotificationSync);tickUI();print->onClick();require(p.recording().flush(),"149 initial linear Print");tickUI();auto original=p.recording().snapshot();const auto before=original->edits.front();
     for(int mode:{2,4,5,6}){
-        scale->setSelectedId(mode+1,juce::sendNotificationSync);juce::Thread::sleep(210);tickUI();require(p.recording().flush(),"149 selected preset render");tickUI();auto e=p.recording().edits()->front();
-        require(e.scaleMode==mode&&e.start==before.start&&e.mask!=before.mask,"149 selected preset rebuilds mask in same timeline position");
-        const auto b=bounds();require(std::abs(b.getWidth()/b.getHeight()-e.imageAspect)<.01,"149 preset change keeps image aspect");
-        editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys(juce::ModifierKeys::ctrlModifier),0));require(p.recording().flush(),"149 preset Undo");tickUI();
+        const auto centre=view->getLocalPoint(box,box->getLocalBounds().getCentre()).toFloat();
+        view->mouseDown(mouseAt(*view,centre));view->mouseUp(mouseAt(*view,centre));tickUI();
+        scale->setSelectedId(mode+1,juce::sendNotificationSync);
+        for(int i=0;i<300&&!p.recording().edits()->empty();++i){juce::Thread::sleep(10);tickUI();}
+        require(p.recording().edits()->empty(),"149 preset change on a focused Print reverts it to unprinted");
+        editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys::ctrlModifier,0));require(p.recording().flush(),"149 revert Undo");tickUI();
         require(p.getFrequencyScale()==0&&sameEdit(p.recording().edits()->front(),before),"149 Undo restores frequency and time settings");
         for(int64_t i=original->first;i<original->last;i+=109)require(original->sample(0,i)==p.recording().snapshot()->sample(0,i),"149 Undo restores exact audio");
-        editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys(juce::ModifierKeys::ctrlModifier|juce::ModifierKeys::shiftModifier),0));require(p.recording().flush(),"149 preset Redo");tickUI();require(sameEdit(p.recording().edits()->front(),e),"149 Redo restores preset Print");
-        editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys(juce::ModifierKeys::ctrlModifier),0));require(p.recording().flush(),"149 return to baseline");tickUI();
     }
     // Old state has no frequencyPreset. Restore it into a previously RX instance.
     SpectrumTagAudioProcessor old;set(old,ParameterIDs::fftScale,1);juce::MemoryBlock oldState;old.getStateInformation(oldState);

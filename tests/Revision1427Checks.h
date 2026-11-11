@@ -21,11 +21,12 @@ static void revision1427Checks(const juce::File& dir){
         auto ready=[&]{auto s=p.recording().snapshot();return s&&!p.recording().isBusy()&&(int)view->getProperties()["rasterRevision"]==s->revision&&!(bool)view->getProperties()["previewActive"];};
         wait(ready,"1427 source raster");fitSpectrum(*view);wait(ready,"1427 Fit raster");
         box->setNormalisedBounds({.2f,.17f,.2f,.55f});
+        // 打印后对象进入“已打印未聚焦”，没有选中框，因此先记下图片范围。
+        const auto bounds=view->getLocalArea(box,box->getLocalBounds()).toFloat();
         auto* print=dynamic_cast<juce::Button*>(componentWithID(*editor,"printButton"));print->onClick();
         wait([&]{return p.recording().edits()->size()==1&&ready();},"1427 completed Print raster must arrive without playback or reopening");
         require(!box->isVisible(),"1427 source hidden after Print");
         auto shot=view->createComponentSnapshot(view->getLocalBounds());
-        const auto bounds=juce::Rectangle<float>((float)view->getProperties()["selectedX"],(float)view->getProperties()["selectedY"],(float)view->getProperties()["selectedW"],(float)view->getProperties()["selectedH"]);
         double bright=0,dark=0;int count=0;
         for(int y=35;y<65;++y)for(int x=10;x<18;++x){const int py=juce::roundToInt(bounds.getY()+bounds.getHeight()*y/100);bright+=shot.getPixelAt(juce::roundToInt(bounds.getX()+bounds.getWidth()*x/100),py).getBrightness();dark+=shot.getPixelAt(juce::roundToInt(bounds.getX()+bounds.getWidth()*.5f),py).getBrightness();++count;}
         const auto label=inputCase==0?"silence":inputCase==1?"normal-stereo":"opposite-phase";png(dir.getChildFile(juce::String(label)+"-printed.png"),shot);

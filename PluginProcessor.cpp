@@ -432,8 +432,9 @@ SpectrumTagAudioProcessor::SpectrumTagAudioProcessor()
     ),
       apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
 {
+    // 图片对象只存在于当前会话/工程状态里。以前这里会用偏好里“上次的图片”
+    // 给每个新实例预置一张图，导致删掉的图片在新窗口里又出现，现已移除。
     const auto preferences=spectrumtag::Preferences::read();
-    editorState.imagePath=preferences.imagePath;
     editorState.palette=preferences.palette;editorState.chinese=preferences.chineseTips;editorState.uiScale=preferences.uiScale;
     // 缓存 printTrigger 参数指针，后续复位/读值都走它。
     printTriggerParam = dynamic_cast<juce::AudioParameterBool*> (apvts.getParameter (ParameterIDs::printTrigger));

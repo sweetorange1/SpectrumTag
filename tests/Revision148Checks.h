@@ -5,16 +5,12 @@ static void revision148Checks(const juce::File& dir){
     require(*p.getAPVTS().getRawParameterValue(ParameterIDs::frequencyRange)==0,"148 fresh instance defaults to 20 kHz");
     std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());tickUI();
     auto* view=componentWithID(*editor,"spectrumView");auto* box=imageBox(*editor);
-    auto* eye=dynamic_cast<juce::Button*>(componentWithID(*editor,"imageVisibility"));
     auto* clear=dynamic_cast<juce::Button*>(componentWithID(*editor,"clearRecord"));
-    // The empty drop guide is intentionally not hideable; load a real image so
-    // this check still covers the eye toggle.
+    // 图片可见性由三态决定：右键不再能显示/隐藏原图。
     if(!box->hasImage()){dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();}
     const bool shown=box->isVisible();const double beforeRight=(double)view->getProperties()["displayEnd"];
-    view->mouseDown(mouseAt(*view,{400,200},true));require(box->isVisible()!=shown,"148 right-click toggles source image");
+    view->mouseDown(mouseAt(*view,{400,200},true));require(box->isVisible()==shown,"148 right-click no longer toggles the source image");
     require((double)view->getProperties()["displayEnd"]==beforeRight,"148 right-click does not fit or move the timeline");
-    view->mouseDown(mouseAt(*view,{400,200},true));require(box->isVisible()==shown,"148 right-click toggles back");
-    if(box->isVisible())eye->onClick();
     auto* fit=componentWithID(*view,"fitSpectrum");require(fit&&fit->getRight()>view->getWidth()-12&&fit->getY()<12,"148 Fit icon sits in spectrum top right");
     juce::MidiBuffer midi;juce::AudioBuffer<float> block(2,256);std::mt19937 rng(148);std::uniform_real_distribution<float> noise(-.15f,.15f);
     auto play=[&]{for(int c=0;c<2;++c)for(int i=0;i<256;++i)block.setSample(c,i,noise(rng));p.processBlock(block,midi);host.sample+=256;};

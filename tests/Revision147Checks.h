@@ -8,8 +8,7 @@ static void revision147Checks(const juce::File& dir){
     p.recording().setArmed(true);p.recording().capture(source,0,48000,true);p.recording().setArmed(false);require(p.recording().flush(),"147 source capture");
     set(p,ParameterIDs::speed,1);set(p,ParameterIDs::noiseFill,.65f);set(p,ParameterIDs::frequencyRange,1);set(p,ParameterIDs::fftScale,0);set(p,ParameterIDs::frequencyPreset,0);
     std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());tickUI();
-    auto* view=componentWithID(*editor,"spectrumView");auto* box=imageBox(*editor);
-    auto* visibility=dynamic_cast<juce::Button*>(componentWithID(*editor,"imageVisibility"));
+    auto* view=componentWithID(*editor,"spectrumView");    auto* box=imageBox(*editor);
     auto* print=dynamic_cast<juce::Button*>(componentWithID(*editor,"printButton"));
     auto* speed=dynamic_cast<juce::Slider*>(componentWithID(*editor,"speed"));
     auto* ratio=dynamic_cast<juce::Slider*>(componentWithID(*editor,"amplitudeRatio"));
@@ -19,7 +18,9 @@ static void revision147Checks(const juce::File& dir){
     require(componentWithID(*editor,"frequencyRangeLabel")->getX()==componentWithID(*editor,"fftSizeLabel")->getX(),"Range label aligns with FFT label");
     require(range->getX()==fft->getX()&&range->getWidth()==fft->getWidth()&&range->getHeight()==fft->getHeight(),"Range dropdown aligns with FFT dropdown");
     fitSpectrum(*view);tickUI();
-    box->setNormalisedBounds({.32f,.22f,.23f,.44f});if(!box->isVisible())visibility->onClick();
+    // 图片对象只来自用户拖入：先放一张，再把它摆到测试用的位置。
+    dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();
+    box->setNormalisedBounds({.32f,.22f,.23f,.44f});tickUI();
     auto paint=[&]{return editor->createComponentSnapshot(editor->getLocalBounds());};
     auto bounds=[&]{paint();auto& v=view->getProperties();return juce::Rectangle<float>((float)v["selectedX"],(float)v["selectedY"],(float)v["selectedW"],(float)v["selectedH"]);};
     const auto started=juce::Time::getMillisecondCounterHiRes();print->onClick();const double feedbackMs=juce::Time::getMillisecondCounterHiRes()-started;
@@ -30,58 +31,30 @@ static void revision147Checks(const juce::File& dir){
     for(int i=0;i<5&&(bool)view->getProperties()["previewActive"];++i)tickUI();
     require(!(bool)view->getProperties()["previewActive"],"matching final raster replaces simulation");
     auto original=p.recording().snapshot();require(original->edits.size()==1,"one stamped image");const auto edit=original->edits[0];
-    const auto baseBounds=bounds();const auto sourceBounds=box->getBounds();
-    // Range and scale are destructive edit controls only while a Print is selected.
+    // 打印后没有选中框，点击位置取自图片对象（=打印范围）。
+    auto click=[&]{auto point=view->getLocalPoint(box,box->getLocalBounds().getCentre()).toFloat();view->mouseDown(mouseAt(*view,point));view->mouseUp(mouseAt(*view,point));tickUI();};
+    // 新模型：点击已打印对象只聚焦（状态3）；修改任何渲染参数都会撤掉这次
+    // 打印并退回未打印态（状态1），必须重新打印。
+    click();
+    require(!box->isVisible(),"focusing a Print shows only its frame");
     auto* rangeControl=dynamic_cast<juce::ComboBox*>(componentWithID(*editor,"frequencyRange"));
-    auto* scaleControl=dynamic_cast<juce::ComboBox*>(componentWithID(*editor,"fftScale"));
-    for(auto* control:{rangeControl,scaleControl}){
-        const int beforeChoice=control->getSelectedId();control->setSelectedId(control==rangeControl?1:2,juce::sendNotificationSync);
-        juce::Thread::sleep(210);tickUI();require(p.recording().flush(),"148 selected mapping render");tickUI();
-        const auto mapped=p.recording().snapshot();const auto& next=mapped->edits.front();
-        require(mapped->revision>original->revision&&(next.low!=edit.low||next.high!=edit.high),"148 selected display mapping changes audio frequency bounds");
-        require(next.start==edit.start&&next.duration==edit.duration,"148 mapping preserves Print time placement");
-        const auto mappedBounds=bounds();require(std::abs(mappedBounds.getHeight()-baseBounds.getHeight())<.1f&&std::abs(mappedBounds.getWidth()-baseBounds.getWidth())<.1f,"148 remapping keeps visual Print aspect");
-        editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys(juce::ModifierKeys::ctrlModifier),0));require(p.recording().flush(),"148 mapping undo");tickUI();
-        require(control->getSelectedId()==beforeChoice&&sameAudioEdit(p.recording().edits()->front(),edit),"148 mapping undo restores control and edit");
-        for(int64_t i=original->first;i<original->last;i+=29)require(p.recording().snapshot()->sample(0,i)==original->sample(0,i),"148 mapping undo restores audio exactly");
-        original=p.recording().snapshot();
-    }
-
-    auto wheel=[&](int modifiers,float delta){auto point=bounds().getCentre();const auto now=juce::Time::getCurrentTime();juce::MouseEvent e(juce::Desktop::getInstance().getMainMouseSource(),point,juce::ModifierKeys(modifiers),1,0,0,0,0,view,view,now,point,now,0,false);juce::MouseWheelDetails w;w.deltaY=delta;view->mouseWheelMove(e,w);tickUI();};
-    auto click=[&]{auto point=bounds().getCentre();view->mouseDown(mouseAt(*view,point));view->mouseUp(mouseAt(*view,point));tickUI();};
-    for(int modifier:{juce::ModifierKeys::ctrlModifier,juce::ModifierKeys::shiftModifier}){
-        wheel(modifier,.2f);juce::Thread::sleep(210);tickUI();
-        require(p.recording().snapshot()->revision==original->revision&&sameAudioEdit(p.recording().edits()->front(),edit),"selected modifier wheel never changes audio or duration");
-        const auto stretched=bounds();require(stretched.getWidth()>baseBounds.getWidth()*1.1f&&stretched.getWidth()<baseBounds.getWidth()*1.3f&&std::abs(stretched.getHeight()-baseBounds.getHeight())<.01f,"modifier wheel gently stretches display horizontally");
-        require(std::abs(box->getWidth()-sourceBounds.getWidth())<=1&&std::abs(box->getHeight()-sourceBounds.getHeight())<=1,"wheel keeps source image dimensions unchanged");
-        click();const auto restored=bounds();require(std::abs(restored.getWidth()-baseBounds.getWidth())<.1f&&std::abs(restored.getHeight()-baseBounds.getHeight())<.1f,"single click on already selected Print restores original aspect and size");
-        require(p.recording().snapshot()->revision==original->revision,"restoring aspect is display only");
-    }
-    // Unrelated parameter edits after a wheel stretch must not commit that stretch.
-    wheel(juce::ModifierKeys::ctrlModifier,.2f);ratio->setValue(.12,juce::sendNotificationSync);juce::Thread::sleep(210);tickUI();require(p.recording().flush(),"ratio after wheel");tickUI();
-    require(p.recording().edits()->front().duration==edit.duration&&p.recording().edits()->front().speed==edit.speed,"ratio edit preserves actual duration after display stretch");
-    click();auto beforeSpeed=p.recording().snapshot();speed->onDragStart();speed->setValue(1.6,juce::sendNotificationSync);tickUI();
-    auto simulated=bounds();require(p.recording().snapshot()->revision==beforeSpeed->revision,"slider simulation does not render before release");
-    require(std::abs(simulated.getWidth()-box->getWidth())<2&&std::abs(simulated.getHeight()-box->getHeight())<2,"Speed simulation and selected border share image geometry");
-    png(dir.getChildFile("147-speed-preview.png"),paint());speed->onDragEnd();juce::Thread::sleep(210);tickUI();require(p.recording().flush(),"Speed release");tickUI();tickUI();
-    const auto beforeMove=p.recording().snapshot();auto moving=beforeMove->edits.front();require(std::abs(moving.duration-edit.duration/1.6)<.001,"slider changes true Print duration");
-    // Move the actual selected region: no engine mutation until the release.
-    const auto down=bounds().getCentre();view->mouseDown(mouseAt(*view,down));auto b=bounds();
-    auto drag=mouseAt(*view,down.translated(95,35));view->mouseDrag(drag);tickUI();auto ghost=bounds();
-    require(p.recording().snapshot()->revision==beforeMove->revision&&sameAudioEdit(p.recording().edits()->front(),moving),"Print drag leaves audio untouched before release");
-    require(std::abs(ghost.getX()-b.getX()-95)<1&&std::abs(ghost.getY()-b.getY()-35)<1,"drag ghost and border follow pointer");
-    png(dir.getChildFile("147-move-preview.png"),paint());view->mouseUp(drag);require(p.recording().flush(),"move commits");tickUI();tickUI();
-    const auto moved=p.recording().snapshot();auto placedBounds=bounds();require(std::abs(placedBounds.getX()-ghost.getX())<1&&std::abs(placedBounds.getY()-ghost.getY())<1,"move release does not jump the viewport");require(moved->edits.size()==1&&moved->edits[0].id==moving.id&&moved->edits[0].start>moving.start&&moved->edits[0].high<moving.high,"move replaces same Print at new time and frequency");
-    require(editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys(juce::ModifierKeys::ctrlModifier),0)),"move undo");require(p.recording().flush(),"move undo render");tickUI();
-    require(sameAudioEdit(p.recording().edits()->front(),moving),"one undo restores entire move including noise seed");
-    for(int64_t i=beforeMove->first;i<beforeMove->last;i+=17)require(beforeMove->sample(0,i)==p.recording().snapshot()->sample(0,i),"move undo restores exact prior audio and noise");
-    editor->keyPressed(juce::KeyPress('Z',juce::ModifierKeys(juce::ModifierKeys::ctrlModifier|juce::ModifierKeys::shiftModifier),0));require(p.recording().flush(),"move redo render");tickUI();
-    const auto revision=p.recording().snapshot()->revision;const auto repeatStart=juce::Time::getMillisecondCounterHiRes();print->onClick();require(p.recording().flush(),"same Print no-op");
-    require(p.recording().snapshot()->revision==revision,"identical Print skips DSP and snapshot rebuild");
-    std::cout<<"147_TIMING immediate_feedback_ms="<<feedbackMs<<" render_and_snapshot_ms="<<renderMs<<" repeat_print_ms="<<juce::Time::getMillisecondCounterHiRes()-repeatStart<<"\n";
-    editor->keyPressed(juce::KeyPress(juce::KeyPress::deleteKey));require(p.recording().flush(),"delete moved noise");tickUI();
-    auto cleared=p.recording().snapshot();require(!cleared->originalSpectrum.empty(),"148 original spectrum is retained alongside original audio");
-    for(size_t t=0;t<cleared->spectrum.size();++t)require(cleared->spectrum[t]==cleared->originalSpectrum[t],"148 independent Delete directly restores cached original spectrum tiles");for(int64_t i=cleared->first;i<cleared->last;++i)require(cleared->sample(0,i)==cleared->sample(0,i,false),"delete moved Print removes all noise and restores original samples");
+    const int beforeChoice=rangeControl->getSelectedId();
+    rangeControl->setSelectedId(beforeChoice==1?2:1,juce::sendNotificationSync);
+    juce::Thread::sleep(220);tickUI();
+    require(p.recording().edits()->empty(),"editing a focused object removes its Print");
+    require(box->isVisible()&&box->hasImage(),"object returns to the unprinted state");
+    rangeControl->setSelectedId(beforeChoice,juce::sendNotificationSync);juce::Thread::sleep(220);tickUI();
+    print->onClick();require(p.recording().flush(),"reprint after revert");tickUI();
+    require(p.recording().snapshot()->edits.size()==1,"reprint creates a fresh Print");
+    png(dir.getChildFile("147-reprinted.png"),paint());
+    // 删除聚焦对象：原图与打印一起消失，并恢复缓存的原始频谱。
+    click();
+    editor->keyPressed(juce::KeyPress(juce::KeyPress::deleteKey));require(p.recording().flush(),"delete focused object");tickUI();
+    auto cleared=p.recording().snapshot();
+    require(cleared->edits.empty()&&!box->hasImage(),"Delete destroys the object and its Print");
+    for(size_t t=0;t<cleared->spectrum.size();++t)require(cleared->spectrum[t]==cleared->originalSpectrum[t],"148 independent Delete directly restores cached original spectrum tiles");
+    for(int64_t i=cleared->first;i<cleared->last;++i)require(cleared->sample(0,i)==cleared->sample(0,i,false),"Delete moved Print removes all noise and restores original samples");
+    std::cout<<"147_TIMING immediate_feedback_ms="<<feedbackMs<<" render_ms="<<renderMs<<"\n";
     // Latest UX: full view spans only the recording, retaining internal gaps.
     SpectrumTagAudioProcessor late;Transport lateHost;lateHost.playing=false;late.setPlayHead(&lateHost);late.setRateAndBufferSizeDetails(48000,256);late.prepareToPlay(48000,256);
     juce::AudioBuffer<float> lateAudio(2,48000);lateAudio.clear();late.recording().setArmed(true);late.recording().capture(lateAudio,60,48000,true);late.recording().capture(lateAudio,89,48000,true);late.recording().setArmed(false);require(late.recording().flush(),"late-only capture");
@@ -90,9 +63,8 @@ static void revision147Checks(const juce::File& dir){
     require((double)lateView->getProperties()["overviewStart"]==60&&(double)lateView->getProperties()["overviewEnd"]==90,"overview uses the same captured range");
     require(late.recording().snapshot()->start()==60&&late.recording().snapshot()->end()==90&&!late.recording().snapshot()->contains(10*48000),"fit neither pads audio nor shifts captured positions");
     for(int i=0;i<3;++i)tickUI();png(dir.getChildFile("147-late-recording-overview.png"),lateEditor->createComponentSnapshot(lateEditor->getLocalBounds()));
-    // Placement mode prints when a visible image exists; hide it to test spectrum seeking.
-    auto* lateEye=dynamic_cast<juce::Button*>(componentWithID(*lateEditor,"imageVisibility"));
-    if(imageBox(*lateEditor)->isVisible())lateEye->onClick();tickUI();
+    // 没有图片对象时画布显示投放引导；把它缩到左上角，免得挡住下面要点击的频谱位置。
+    imageBox(*lateEditor)->setNormalisedBounds({.02f,.02f,.10f,.10f});tickUI();
     lateView->mouseDown(mouseAt(*lateView,{70+(lateView->getWidth()-70)*.75f,(float)lateView->getHeight()-50}));lateHost.playing=true;juce::MidiBuffer lateMidi;juce::AudioBuffer<float> lateBlock(2,256);lateBlock.clear();late.processBlock(lateBlock,lateMidi);
     require(std::abs(late.audition().position())<.001&&!late.audition().isLocal(),"stopped overview gap click follows project cursor on next Play");
     auto clickSpectrum=[&](double seconds){fitSpectrum(*lateView);tickUI();const auto point=juce::Point<float>(70+(lateView->getWidth()-70)*(float)((seconds-60)/30),100);lateView->mouseDown(mouseAt(*lateView,point));lateView->mouseUp(mouseAt(*lateView,point));};
