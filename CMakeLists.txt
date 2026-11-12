@@ -125,26 +125,45 @@ juce_add_gui_app(
 juce_generate_juce_header(SpectrumTagStandalone)
 
 # Windows portable EXE: compressed codec and notices are PE resources, not a
-# companion folder. Set this path when building the standalone target.
+# companion folder. Leave the cache entry empty to use the in-tree directory
+# that packaging/windows/fetch-codec.ps1 populates.
 set(SPECTRUMTAG_STANDALONE_RUNTIME_DIR "" CACHE PATH "Directory with ffmpeg.exe, COPYING.GPLv3 and FFmpeg-NOTICE.txt for the portable EXE")
-if(WIN32 AND SPECTRUMTAG_STANDALONE_RUNTIME_DIR)
+set(spectrumtag_runtime_dir "${SPECTRUMTAG_STANDALONE_RUNTIME_DIR}")
+if(WIN32 AND NOT spectrumtag_runtime_dir)
+    # An empty path must not silently produce an EXE without a codec, so fall
+    # back to the repository directory when it already holds a complete set.
+    set(spectrumtag_in_tree_runtime "${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows/runtime")
+    set(spectrumtag_in_tree_complete TRUE)
+    foreach(probe_file IN ITEMS ffmpeg.exe COPYING.GPLv3 FFmpeg-NOTICE.txt)
+        if(NOT EXISTS "${spectrumtag_in_tree_runtime}/${probe_file}")
+            set(spectrumtag_in_tree_complete FALSE)
+        endif()
+    endforeach()
+    if(spectrumtag_in_tree_complete)
+        set(spectrumtag_runtime_dir "${spectrumtag_in_tree_runtime}")
+    else()
+        message(STATUS "[SpectrumTag] Standalone codec not embedded: run packaging/windows/fetch-codec.ps1 or set SPECTRUMTAG_STANDALONE_RUNTIME_DIR.")
+    endif()
+endif()
+if(WIN32 AND spectrumtag_runtime_dir)
+    message(STATUS "[SpectrumTag] Standalone codec directory: ${spectrumtag_runtime_dir}")
     set(codec_generated "${CMAKE_CURRENT_BINARY_DIR}/embedded-codec")
     file(MAKE_DIRECTORY "${codec_generated}")
     set(codec_files ffmpeg.exe COPYING.GPLv3 FFmpeg-NOTICE.txt)
     set(codec_dependencies)
     foreach(codec_file IN LISTS codec_files)
-        if(NOT EXISTS "${SPECTRUMTAG_STANDALONE_RUNTIME_DIR}/${codec_file}")
-            message(FATAL_ERROR "Portable standalone codec file missing: ${codec_file}")
+        if(NOT EXISTS "${spectrumtag_runtime_dir}/${codec_file}")
+            message(FATAL_ERROR "Portable standalone codec file missing: ${spectrumtag_runtime_dir}/${codec_file}")
         endif()
-        list(APPEND codec_dependencies "${SPECTRUMTAG_STANDALONE_RUNTIME_DIR}/${codec_file}")
+        list(APPEND codec_dependencies "${spectrumtag_runtime_dir}/${codec_file}")
     endforeach()
-    file(SHA256 "${SPECTRUMTAG_STANDALONE_RUNTIME_DIR}/ffmpeg.exe" CODEC_EXE_HASH)
-    file(SHA256 "${SPECTRUMTAG_STANDALONE_RUNTIME_DIR}/COPYING.GPLv3" CODEC_LICENSE_HASH)
-    file(SHA256 "${SPECTRUMTAG_STANDALONE_RUNTIME_DIR}/FFmpeg-NOTICE.txt" CODEC_NOTICE_HASH)
+    file(SHA256 "${spectrumtag_runtime_dir}/ffmpeg.exe" CODEC_EXE_HASH)
+    file(SHA256 "${spectrumtag_runtime_dir}/COPYING.GPLv3" CODEC_LICENSE_HASH)
+    file(SHA256 "${spectrumtag_runtime_dir}/FFmpeg-NOTICE.txt" CODEC_NOTICE_HASH)
     set(CODEC_ARCHIVE "${codec_generated}/runtime.zip")
     add_custom_command(OUTPUT "${CODEC_ARCHIVE}"
         COMMAND "${CMAKE_COMMAND}" -E tar cf "${CODEC_ARCHIVE}" --format=zip -- ${codec_files}
-        WORKING_DIRECTORY "${SPECTRUMTAG_STANDALONE_RUNTIME_DIR}"
+        WORKING_DIRECTORY "${spectrumtag_runtime_dir}"
         DEPENDS ${codec_dependencies} VERBATIM)
     add_custom_target(SpectrumTagEmbeddedCodec DEPENDS "${CODEC_ARCHIVE}")
     add_dependencies(SpectrumTagStandalone SpectrumTagEmbeddedCodec)
