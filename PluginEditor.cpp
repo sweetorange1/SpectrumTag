@@ -201,7 +201,8 @@ void SpectrumTagLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleBu
 
 // ----------------------------------------------------------------------------
 //  TextButton：与工具栏圆角色块一致，默认不再使用 JUCE 的渐变/描边外观。
-//  "spectrumTagStyle"：primary（白底黑字，主操作）/ ghost（无底色，工具入口）
+//  "spectrumTagStyle"：primary（白底黑字，主操作）/ ghost（无底色无描边，纯文字入口）
+//  / outline（只有描边、不填充，填充色即父组件底色，工具按钮用）
 // ----------------------------------------------------------------------------
 void SpectrumTagLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
                                                    const juce::Colour& backgroundColour,
@@ -221,6 +222,21 @@ void SpectrumTagLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Butt
             g.setColour (juce::Colours::white.withAlpha (isDown ? 0.10f : 0.06f));
             g.fillRoundedRectangle (bounds, radius);
         }
+        return;
+    }
+
+    //   "outline"：只有描边、不填充，底色透出父组件背景。
+    //   语言切换 / 导出诊断 / 音频设备三个工具按钮统一用它。
+    if (style == "outline")
+    {
+        if (isOver || isDown)
+        {
+            g.setColour (juce::Colours::white.withAlpha (isDown ? 0.10f : 0.06f));
+            g.fillRoundedRectangle (bounds, radius);
+        }
+        const float alpha = !button.isEnabled() ? 0.12f : ((isOver || isDown) ? 0.42f : 0.26f);
+        g.setColour (juce::Colours::white.withAlpha (alpha));
+        g.drawRoundedRectangle (bounds, radius, 1.0f);
         return;
     }
 
@@ -265,6 +281,7 @@ void SpectrumTagLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton
     const bool primary = style == "primary";
     const bool ghost   = style == "ghost";
     const bool round   = style == "round";
+    const bool outline = style == "outline";
 
     auto colour = button.findColour (button.getToggleState()
                                          ? juce::TextButton::textColourOnId
@@ -272,7 +289,7 @@ void SpectrumTagLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton
 
     if ((primary || round) && ! button.getToggleState())
         colour = kPrintText;
-    else if (ghost)
+    else if (ghost || outline)
         colour = (isOver && button.isEnabled()) ? kTextWhite : kTextSub;
 
     if (! button.isEnabled())
@@ -604,6 +621,8 @@ void ImageBoxComponent::mouseMove (const juce::MouseEvent& e)
 void ImageBoxComponent::mouseDown(const juce::MouseEvent& e){
     if(!e.mods.isLeftButtonDown())return;
     if(onGestureStart)onGestureStart();dragMode=hitTest(e.getPosition());dragStartPos=e.getPosition()+getPosition();dragStartNormRect=normRect;
+    // Ctrl+拖动：原对象留在原位变成 Print，拖走的是它的副本。
+    duplicatePending=e.mods.isCtrlDown()&&hasImage();
 }
 void ImageBoxComponent::mouseDrag(const juce::MouseEvent& e){
     if(externalDrag)return;  // 这一手势已由频谱视图转发，避免同一次拖动被应用两次
@@ -611,6 +630,18 @@ void ImageBoxComponent::mouseDrag(const juce::MouseEvent& e){
 }
 void ImageBoxComponent::dragToParentPoint(juce::Point<int> parentPoint){
     if(dragMode==DragMode::None||contentBounds.isEmpty())return;
+    if(duplicatePending){
+        // 越过阈值才复制，避免 Ctrl+单击的抖动多出一个对象。
+        if((parentPoint-dragStartPos).getDistanceFromOrigin()<3.f)return;
+        duplicatePending=false;
+        const auto rect=dragStartNormRect;
+        const bool resize=dragMode==DragMode::ResizeBR;
+        if(onDuplicateDrag){
+            onDuplicateDrag();
+            // 副本摆回手势开始时的矩形，再按同一累计位移继续拖动。
+            if(hasImage()){setPrintBounds(rect);dragStartNormRect=rect;dragMode=resize?DragMode::ResizeBR:DragMode::Move;}
+        }
+    }
     const auto delta=parentPoint-dragStartPos;
     auto next=dragStartNormRect;
     if(dragMode==DragMode::Move)next.setPosition(next.getX()+(float)delta.x/contentBounds.getWidth(),next.getY()+(float)delta.y/contentBounds.getHeight());
@@ -913,6 +944,19 @@ public:
     double imageStart() const {
         return view.endTime-baseSpan()/view.zoomX+getImageBoxX()/juce::jmax(1,contentBounds.getWidth())*baseSpan()/view.zoomX;
     }
+    // 让图片对象的左边缘正好落在时间 t 上（Ctrl+V 在播放位置新建对象时用）。
+    void placeImageStartAt(double t){
+        if(contentBounds.getWidth()<1)return;
+        const double span=timeSpan();
+        if(span<=0)return;
+        // 播放位置不在当前视窗内时先跟过去，保证新对象可见。
+        if(t<view.endTime-span||t>view.endTime){view.follow=false;fit=false;view.endTime=t+span*.85;}
+        auto n=imageBox->getNormalisedBounds();
+        const double viewStart=view.endTime-span;
+        n.setX((float)juce::jlimit((double)-n.getWidth()+.02,0.98,(t-viewStart)/span));
+        imageBox->setPrintBounds(n);
+        dirty=true;repaint();
+    }
     juce::String selectedEdit() const {return selected;}
     std::optional<spectrumtag::PrintEdit> selectedPrint() const {
         auto edits=processor.recording().edits();if(edits)for(const auto& e:*edits)if(e.id==selected)return e;return {};
@@ -1001,6 +1045,7 @@ public:
         getProperties().set("recordMode",recordMode);getProperties().set("panActive",panActive);getProperties().set("panTarget",panTarget);
         getProperties().set("audioLoaded",audioLoaded);getProperties().set("audioHintActive",audioHintFlashUntil>juce::Time::getMillisecondCounter());
         getProperties().set("imageVisible",imageBox->isVisible());
+        getProperties().set("imageStart",imageStart());getProperties().set("audioBannerY",audioBannerBounds().getY());
         getProperties().set("displayStart",view.endTime-timeSpan());getProperties().set("displayEnd",view.endTime);getProperties().set("displayTop",top);getProperties().set("overviewStart",timelineStart());getProperties().set("overviewEnd",recorded?recorded->end():0.);
     }
     juce::var diagnosticState(bool probePixels=false) const {
@@ -1334,7 +1379,8 @@ private:
         if(!processor.isLoadMode()||processor.hasLoadedAudio()||contentBounds.isEmpty())return {};
         const int w=juce::jlimit(1,juce::jmax(1,contentBounds.getWidth()-40),560);
         const int h=juce::jmin(52,juce::jmax(34,contentBounds.getHeight()/7));
-        return {contentBounds.getCentreX()-w/2,contentBounds.getY()+14,w,h};
+        // 提示条放在频谱显示区正中间，而不是贴着顶部。
+        return {contentBounds.getCentreX()-w/2,contentBounds.getCentreY()-h/2,w,h};
     }
     void paintAudioBanner(juce::Graphics& g){
         const auto area=audioBannerBounds();
@@ -1581,13 +1627,13 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     setComponentID("editor");
     tooltipLookAndFeel.setDefaultSansSerifTypefaceName(spectrumtag::ui::chineseFontName());
     tooltipWindow.setLookAndFeel(&tooltipLookAndFeel);
-    // 右上角工具入口沿用自绘扁平样式，只有悬停提示使用独立字体。
-    tooltipLanguageButton.getProperties().set("spectrumTagStyle","ghost");
+    // 右上角三个工具入口（诊断 / 音频设备 / 语言）统一为只有描边的按钮。
+    tooltipLanguageButton.getProperties().set("spectrumTagStyle","outline");
     chineseTips=processor.getEditorState().chinese;
     tooltipLanguageButton.setComponentID("tooltipLanguage");
     tooltipLanguageButton.onClick=[this]{beginChange();chineseTips=!chineseTips;spectrumtag::Preferences::remember(nullptr,nullptr,&chineseTips);refreshLanguage();changed();finishChange(true);};
     addAndMakeVisible(tooltipLanguageButton);
-    diagnosticsButton.getProperties().set("spectrumTagStyle","ghost");
+    diagnosticsButton.getProperties().set("spectrumTagStyle","outline");
     diagnosticsButton.setComponentID("exportDiagnostics");
     diagnosticsButton.onClick=[this]{exportDiagnostics();};addAndMakeVisible(diagnosticsButton);
 
@@ -1619,6 +1665,8 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     spectrumView->getImageBox().onGestureStart=[this]{
         beginChange();gestureActive=true;
     };
+    // Ctrl+拖动：原对象留在原位打印，副本继续被这次拖动带走。
+    spectrumView->getImageBox().onDuplicateDrag=[this]{duplicateImageObject();};
     spectrumView->getImageBox().onGestureEnd=[this]{
         gestureActive=false;
         // 聚焦态下拖动/缩放图片属于“需要重新渲染”的修改：撤掉已打印的图案，
@@ -1812,6 +1860,9 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     std::vector<juce::Component*> controls;for(auto* child:getChildren())controls.push_back(child);
     for(auto* child:controls)scaledContent.addAndMakeVisible(child);
     addAndMakeVisible(scaledContent);scaleReady=true;
+    // 「显示上限」暂时屏蔽显示（addAndMakeVisible 会重新显示子组件，必须放在重挂之后）：
+    // 参数、附件与重渲染逻辑全部保留，默认 22.05 kHz。
+    frequencyRangeCombo.setVisible(false);frequencyRangeLabel.setVisible(false);
 #if SPECTRUMTAG_ARA
     clearRecordButton.setVisible(true);
 #endif
@@ -2249,7 +2300,10 @@ void SpectrumTagAudioProcessorEditor::undo(bool redo){
     if(processor.undoUserChange(redo)){restoreEditorStateFromProcessor();stableState=processor.captureUserState();}
 }
 bool SpectrumTagAudioProcessorEditor::keyPressed(const juce::KeyPress& key){
-    if(key.getModifiers().isCtrlDown()&&(key.getKeyCode()=='z'||key.getKeyCode()=='Z')){undo(key.getModifiers().isShiftDown());return true;}
+    const auto mods=key.getModifiers();
+    if(mods.isCtrlDown()&&(key.getKeyCode()=='z'||key.getKeyCode()=='Z')){undo(mods.isShiftDown());return true;}
+    if(mods.isCtrlDown()&&(key.getKeyCode()=='c'||key.getKeyCode()=='C')){copyImageObject();return true;}
+    if(mods.isCtrlDown()&&(key.getKeyCode()=='v'||key.getKeyCode()=='V')){pasteImageObject();return true;}
     if(key.getKeyCode()==juce::KeyPress::deleteKey&&(spectrumView->selectedPrint()||spectrumView->getImageBox().hasImage())){removeSelected();return true;}return false;
 }
 bool SpectrumTagAudioProcessorEditor::audioReady() const {
@@ -2429,19 +2483,57 @@ void SpectrumTagAudioProcessorEditor::selectPalette(int index,bool remember){
     for(int i=0;i<8;++i)if(paletteButtons[i])paletteButtons[i]->setToggleState(i==selectedPalette,juce::dontSendNotification);
     if(remember)spectrumtag::Preferences::remember(nullptr,&selectedPalette);persistEditorStateToProcessor();
 }
-void SpectrumTagAudioProcessorEditor::imagePicked(const juce::File& file){
+bool SpectrumTagAudioProcessorEditor::loadImageObject(const juce::File& file){
     // 没有音频就没有可打印的画布：拒绝导入，只提示先加载音频。
-    if(!audioReady()){finishChange(true);spectrumView->flashAudioHint();return;}
-    finishChange(true);beginChange();
+    if(!audioReady()){spectrumView->flashAudioHint();return false;}
     // 同一时间只允许一个未打印对象：已有未打印图片时，先把上一张打印进频谱。
     if(spectrumView->imageStage()==SpectrumView::ImageStage::Placing)printPlacingObject();
     auto& box=spectrumView->getImageBox();
-    if(!box.loadImageFromFile(file)){finishChange(true);return;}
+    if(!box.loadImageFromFile(file))return false;
+    // 缓存一份副本，删除原文件后对象仍能回填。
     const auto folder=spectrumtag::Preferences::file().getParentDirectory().getChildFile("Images");
     const auto cached=folder.getChildFile(juce::Uuid().toString()+file.getFileExtension());
     if(folder.createDirectory().wasOk()&&file.copyFileTo(cached))box.setImagePathForRecall(cached.getFullPathName());
     spectrumView->selectEdit({});placementId={};
-    syncImagePreview();spectrumView->refreshCanvas();changed();finishChange(true);
+    syncImagePreview();spectrumView->refreshCanvas();
+    return true;
+}
+void SpectrumTagAudioProcessorEditor::imagePicked(const juce::File& file){
+    finishChange(true);beginChange();
+    if(!loadImageObject(file)){finishChange(true);return;}
+    changed();finishChange(true);
+}
+// Ctrl+拖动图片：原对象留在原位变成 Print，拖走的是同样的副本。
+// 撤销步由这次手势松手时的 onGestureEnd 一起提交。
+void SpectrumTagAudioProcessorEditor::duplicateImageObject(){
+    auto& box=spectrumView->getImageBox();
+    if(!box.hasImage()||spectrumView->imageStage()!=SpectrumView::ImageStage::Placing)return;
+    const juce::File file(box.getImagePath());
+    if(!file.existsAsFile())return;
+    // 打印不成立（没有可打印的音频）时保持原样，退化成普通拖动。
+    if(!printPlacingObject())return;
+    box.loadImageFromFile(file);
+    spectrumView->selectEdit({});placementId={};
+    syncImagePreview();spectrumView->refreshCanvas();changed();
+}
+// Ctrl+C：记录当前对象的图片。聚焦的 Print 用它记录的原图，未打印对象用图片框里的图。
+void SpectrumTagAudioProcessorEditor::copyImageObject(){
+    juce::String path;
+    if(const auto edit=spectrumView->selectedPrint())path=edit->imagePath;
+    else if(spectrumView->getImageBox().hasImage())path=spectrumView->getImageBox().getImagePath();
+    if(path.isEmpty()||!juce::File(path).existsAsFile())return;
+    clipboardImagePath=path;
+}
+// Ctrl+V：没有聚焦对象时，以当前播放位置为左边缘新建一份副本。
+void SpectrumTagAudioProcessorEditor::pasteImageObject(){
+    if(clipboardImagePath.isEmpty())return;
+    const juce::File file(clipboardImagePath);
+    if(!file.existsAsFile()||spectrumView->selectedPrint())return;
+    const double at=processor.audition().position();
+    finishChange(true);beginChange();
+    if(!loadImageObject(file)){finishChange(true);return;}
+    spectrumView->placeImageStartAt(at);
+    changed();finishChange(true);
 }
 void SpectrumTagAudioProcessorEditor::refreshLanguage(){
     auto tr=[this](const char* zh,const char* en){return juce::String::fromUTF8(chineseTips?zh:en);};lookAndFeel.setChinese(chineseTips);
@@ -2469,7 +2561,7 @@ void SpectrumTagAudioProcessorEditor::updateTooltips(){
 #else
     uiScaleCombo.setTooltip(tr("整体界面缩放 75–250%；右下角可等比例拖动。","Scale the whole UI from 75–250%; drag the lower-right corner for a custom size."));
 #endif
-    frequencyRangeCombo.setTooltip(tr("频率显示上限，默认 20 kHz。选中 Print 时重新渲染；未选中时只改变视图。最高不超过采样率的一半。","Display ceiling, default 20 kHz, capped at half the sample rate. Rerenders the selected Print; otherwise only changes the view."));
+    frequencyRangeCombo.setTooltip(tr("频率显示上限，默认 22.05 kHz。选中 Print 时重新渲染；未选中时只改变视图。最高不超过采样率的一半。","Display ceiling, default 22.05 kHz, capped at half the sample rate. Rerenders the selected Print; otherwise only changes the view."));
     recordButton.setTooltip(tr("按 DAW 时间位置录制原始音频。再次点击停止。未录到的位置播放原轨输入。","Capture original audio at DAW timeline positions. Click again to stop. Unrecorded positions play the original input."));
     clearRecordButton.setTooltip(tr("清除插件录音、打印和补偿噪声，回到未录制模式。可撤销。","Clear the plugin recording, Prints and added noise; return to live mode. Undo restores them."));
     removePrintButton.setTooltip(tr("删除选中打印及其补偿噪声，保留其他打印。快捷键 Delete。","Delete the selected Print and its noise, retaining other Prints. Shortcut: Delete."));
@@ -2485,8 +2577,8 @@ void SpectrumTagAudioProcessorEditor::updateTooltips(){
     const auto fineTip=tr(" 按住 Shift 拖动或滚轮可微调（1/10 速度）。"," Hold Shift while dragging or scrolling for fine adjustment (1/10 speed).");
     for(auto* slider:{&speedSlider,&amplitudeSlider,&imageAmountSlider,&noiseFillSlider})slider->setTooltip(slider->getTooltip()+fineTip);
     printButton.setTooltip(tr("未录音时仅在播放期间实时试听；停止时点击不执行，也不排队。录音后隐藏原图，在图片位置显示模拟图形和渲染进度，完成后显示真实频谱。同一位置重复打印不会叠加。","Before recording, Print auditions only while playing; stopped clicks do nothing and are not queued. Recorded mode hides the source image and shows a simulation with render progress at its position, then the actual spectrum. Repeating Print replaces without stacking."));
-    auto navigation=tr("滚轮左右浏览；Shift 或 Ctrl+滚轮只缩放时间视图。单击已打印的图形会聚焦它并显示原图与边框；点击非打印区域定位并取消聚焦。图片下方按钮把图片打印进频谱；聚焦后任何拖动或参数修改都会撤掉这次打印、回到未打印状态，需要重新打印。Ctrl+Z 撤销。下方波形可按住拖动连续定位；拖动白框左右两端可缩放时间视图（等同 Speed / Ctrl+滚轮）。","Wheel pans time; Shift or Ctrl-wheel scales the time view only. Click a Print to focus it and reveal the source image with its frame; clicking elsewhere seeks and unfocuses. The button under the image prints it into the spectrum; once focused, any drag or parameter change removes that Print and returns to the unprinted state, so print again afterwards. Ctrl+Z undoes. Drag the overview waveform to scrub; drag either edge of its white view box to zoom the time view (same as Speed / Ctrl-wheel).");
-    spectrumView->setTooltip(navigation);spectrumView->getImageBox().setTooltip(tr("拖动移动，右下角等比缩放，单击或双击换图。","Drag to move; lower-right corner resizes proportionally. Click or double-click to load an image.")+"\n"+navigation);
+    auto navigation=tr("滚轮左右浏览；Shift 或 Ctrl+滚轮只缩放时间视图。单击已打印的图形会聚焦它并显示原图与边框；点击非打印区域定位并取消聚焦。图片下方按钮把图片打印进频谱；聚焦后任何拖动或参数修改都会撤掉这次打印、回到未打印状态，需要重新打印。Ctrl+拖动图片＝原位留一份打印、拖走同样的副本；Ctrl+C 记录当前对象，Ctrl+V 在没有聚焦对象时于播放位置新建副本。Ctrl+Z 撤销。下方波形可按住拖动连续定位；拖动白框左右两端可缩放时间视图（等同 Speed / Ctrl+滚轮）。","Wheel pans time; Shift or Ctrl-wheel scales the time view only. Click a Print to focus it and reveal the source image with its frame; clicking elsewhere seeks and unfocuses. The button under the image prints it into the spectrum; once focused, any drag or parameter change removes that Print and returns to the unprinted state, so print again afterwards. Ctrl-drag the image leaves a Print in place and drags a copy; Ctrl+C copies the current object, Ctrl+V creates a copy starting at the playhead when nothing is focused. Ctrl+Z undoes. Drag the overview waveform to scrub; drag either edge of its white view box to zoom the time view (same as Speed / Ctrl-wheel).");
+    spectrumView->setTooltip(navigation);spectrumView->getImageBox().setTooltip(tr("拖动移动，右下角等比缩放，Ctrl+拖动留下一份副本，单击或双击换图。","Drag to move; lower-right corner resizes proportionally; Ctrl-drag leaves a copy behind; click or double-click to load an image.")+"\n"+navigation);
     spectrumView->setPrintButtonTooltip(tr("把这张图片打印进频谱。打印后图片隐藏，点击频谱里的位置可以重新聚焦并查看边框。","Print this picture into the spectrum. The image is hidden afterwards; click its position in the spectrum to focus it again."));
     if(processor.filePlayerMode){
         recordButton.setTooltip(tr("选择本地音频或视频音轨；也可直接拖入文件。", "Choose local audio or a video soundtrack, or drag a file into the window."));

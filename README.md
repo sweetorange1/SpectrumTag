@@ -47,7 +47,7 @@ SpectrumTag 将图片转换成黑白掩模，并通过处理音频的频率成�
 - **图像转换**：自动阈值 Otsu、局部自适应、手动阈值和透明度剪影；支持黑白强度、反转及效果预览。
 - **可编辑 Print**：移动、右下角等比例缩放、修改参数、删除、撤销与重做。拖动时先显示预览，再后台计算；同位置重新 Print 不叠加加深，删除同时移除对应补偿噪声。
 - **噪声补偿**：为静音或能量不足的频段合成目标频谱，补偿量可调，仅作用于 Print 范围。独立版空白打印需要提高 Noise Fill 才会生成声音。
-- **频谱视图**：默认 Mel (RX)、20 kHz；提供 Linear、Bark、Log、Extended Log 和 insight。共用时间尺度，insight 不改变显示上限；实际频率受采样率限制。
+- **频谱视图**：默认 Mel (RX)、22.05 kHz（显示上限下拉框暂时隐藏，参数仍按 22.05 kHz 生效）；提供 Linear、Bark、Log、Extended Log 和 insight。共用时间尺度，insight 不改变显示上限；实际频率受采样率限制。
 - **操作与外观**：8 种记忆配色、中英文界面和悬停说明、原图显示/隐藏、录音/加载范围全览。原图始终保持正确长宽比。
 - **恢复与缓存**：保存 Print 编辑及处理缓存；独立版可恢复上次会话。可用缓存能够避免重复渲染，缓存缺失或内容变化时会重新分析；无法恢复的媒体静默留空。
 
@@ -72,6 +72,8 @@ Print 可以超出原始文件的开始或结尾，导出时长会相应延长�
 | 频谱右键 / 眼睛图标 | 显示或隐藏原图 |
 | 频谱右上角全览图标 | 适应已录制/加载的范围 |
 | Delete | 删除选中的 Print |
+| Ctrl + 拖动图片 | 原对象留在原位打印，拖走同样的副本 |
+| Ctrl+C / Ctrl+V | 记录当前对象 / 在播放位置新建副本（未聚焦任何对象时） |
 | Ctrl+Z / Ctrl+Shift+Z | 撤销 / 重做 |
 | Shift 拖动参数 / Alt+左键 | 微调 / 恢复默认值 |
 
@@ -136,7 +138,7 @@ Realtime internal audition does not move the DAW cursor. When following the host
 - **Image conversion:** Otsu, adaptive, manual threshold and alpha silhouette, with amount, invert and processing previews.
 - **Editable Prints:** move, resize proportionally from the corner, change parameters, delete, undo and redo. Edits show a preview before background rendering; printing again at the same position replaces the prior operation, and deletion removes its Noise Fill too.
 - **Noise Fill:** adjustable target-spectrum synthesis for silent or weak frequency content, confined to the Print area. Source-free standalone Prints need nonzero Noise Fill to produce sound.
-- **Spectrum display:** Mel (RX) and 20 kHz by default; Linear, Bark, Log, Extended Log and insight are available. All share a time scale; insight leaves Range unchanged, and the source sample rate limits usable frequencies.
+- **Spectrum display:** Mel (RX) and 22.05 kHz by default (the Range dropdown is temporarily hidden; the parameter still applies); Linear, Bark, Log, Extended Log and insight are available. All share a time scale; insight leaves Range unchanged, and the source sample rate limits usable frequencies.
 - **Interface:** eight remembered palettes, Chinese/English controls and tooltips, source-image visibility and recorded/loaded-range overview. The original image retains its aspect ratio.
 - **Persistence:** saved edits and content-checked render caches, plus standalone session restoration. Missing or changed caches require analysis; unavailable media restores to a blank workspace without a missing-file prompt.
 
@@ -161,6 +163,8 @@ Prints may extend before or after the source. Export duration expands accordingl
 | Right-click the spectrum / eye icon | Toggle the original image |
 | Top-right overview icon | Fit the recorded/loaded range |
 | Delete | Remove the selected Print |
+| Ctrl-drag the image | Leave a Print in place and drag a copy |
+| Ctrl+C / Ctrl+V | Copy the current object / create a copy at the playhead when nothing is focused |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
 | Shift-drag a parameter / Alt-click | Fine adjustment / reset to default |
 

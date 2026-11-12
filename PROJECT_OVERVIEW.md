@@ -2,6 +2,32 @@
 
 维护日期：2026-11-12。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
 
+## 2.0.0 交互微调：居中提示、统一描边按钮、Ctrl 拖动复制、Ctrl+C/V、隐藏显示上限（2026-11-12）
+
+用户提出五项细节调整，版本仍为 **2.0.0**，未重新打包。
+
+| 需求 | 处理 |
+|---|---|
+| 未加载音频提示框贴在频谱上方 | 改为频谱显示区垂直居中 |
+| 音频设备按钮与左（导出诊断）右（语言）的样式不一致 | 新增 `outline` 按钮样式：只有描边、不填充（露出父组件底色），三个按钮统一 |
+| Ctrl+拖动图片会多出一个对象 | Ctrl+拖动＝原位留一份 Print、拖走同样的副本 |
+| 需要 Ctrl+C / Ctrl+V 复制图片对象 | Ctrl+C 记录当前对象；没有聚焦对象时 Ctrl+V 在播放位置新建副本 |
+| 显示上限下拉框 | 隐藏显示（参数、附件与重渲染逻辑保留），默认 22.05 kHz |
+
+### 实现要点
+
+- `SpectrumTagLookAndFeel::drawButtonBackground` 新增 `outline` 分支：常态只有 1 px 白色 26% 描边、不填充，hover/press 加淡白填充并提亮描边，文字沿用 ghost 的灰/白配色。语言、导出诊断、音频设备三个按钮都设为 `outline`（音频设备按钮由独立版创建）。
+- `ImageBoxComponent` 新增 `onDuplicateDrag`：mouseDown 时按住 Ctrl 且有图就置 `duplicatePending`，拖动超过 3 px 才触发复制（避免 Ctrl+单击的抖动）。`dragToParentPoint` 里先让编辑器 `duplicateImageObject()` 把原对象 `printPlacingObject()` 打进频谱、再重新载入同一张图作为副本，然后把副本摆回手势起点按同一位移继续拖动。撤销步由 `onGestureStart/onGestureEnd` 合并成一个；打印不成立（没有可打印音频）时退化成普通拖动。
+- `imagePicked()` 拆出 `loadImageObject()`（只负责载入、缓存副本、落位，撤销步由调用者提交），导入与粘贴共用。Ctrl+C 走 `copyImageObject()`：优先取聚焦 Print 的 `imagePath`，否则取未打印对象图片框的路径。Ctrl+V 走 `pasteImageObject()`：仅在无聚焦对象时生效，`loadImageObject()` 之后用 `SpectrumView::placeImageStartAt()` 把左边缘对齐 `processor.audition().position()`，播放位置不在视窗内时先把视窗跟过去。
+- 显示上限：`frequencyRangeCombo` / `frequencyRangeLabel` 在子组件被重挂到 `scaledContent` **之后**才隐藏——`addAndMakeVisible` 会重新显示子组件，写在前面无效（排错时踩过）。参数默认值 0（20 kHz）改为 2（22.05 kHz），tooltip 同步。
+- 回归探针：`SpectrumView` 新增诊断属性 `imageStart`、`audioBannerY`；独立版音频设备按钮补 `componentID("audioDevice")` 便于查找。
+
+### 验证
+
+- `SpectrumTagStandalone`、`SpectrumTagVerify`、`SpectrumTag_VST3` 编译通过；未编译 ARA（改动在共享编辑器代码内）。
+- `--fileless-ui-test` 通过，新增断言：无音频提示框位于频谱区中部（`audioBannerY > 高度/3`）、三个工具按钮 `spectrumTagStyle=outline`、`frequencyRange` 下拉不可见且默认值为 22.05 kHz、Ctrl+拖动后 `edits=1` 且副本跟随指针、Ctrl+C 后 Ctrl+V 使对象数 +1 且 `imageStart≈2.0 s`。截图确认三按钮一致、提示条居中、显示上限下拉框消失。
+- `--checks1410/1412/1421/1427` 通过；`--checks` 跑到 1.4.9 之后仍在既有位置崩溃（1.4.8 里“新实例默认 20 kHz”的断言已按新默认改为 22.05 kHz）。旧会话会按保存的参数恢复原档位，只有新实例才落在 22.05 kHz。
+
 ## 2.0.0 交互定稿：打印按钮圆角矩形、已打印对象一次拖动退回图片态（2026-11-12）
 
 用户验收通过后要求固定本轮结果。版本仍为 **2.0.0** 源码基线，未生成安装包。本轮只解决两个交互问题：

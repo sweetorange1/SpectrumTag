@@ -2,7 +2,8 @@
 static void revision148Checks(const juce::File& dir){
     using namespace spectrumtag;
     SpectrumTagAudioProcessor p;Transport host;p.setPlayHead(&host);p.setRateAndBufferSizeDetails(48000,256);p.prepareToPlay(48000,256);
-    require(*p.getAPVTS().getRawParameterValue(ParameterIDs::frequencyRange)==0,"148 fresh instance defaults to 20 kHz");
+    // 2026-11-12：显示上限下拉框隐藏，新实例默认 22.05 kHz。
+    require(*p.getAPVTS().getRawParameterValue(ParameterIDs::frequencyRange)==2,"148 fresh instance defaults to 22.05 kHz");
     std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());tickUI();
     auto* view=componentWithID(*editor,"spectrumView");auto* box=imageBox(*editor);
     auto* clear=dynamic_cast<juce::Button*>(componentWithID(*editor,"clearRecord"));

@@ -182,6 +182,8 @@ public:
 
     // 选中/释放回调（让父组件保存到 Processor 状态）
     std::function<void()> onChanged,onGestureStart,onGestureEnd,onFileLoadStart;
+    // Ctrl+拖动：把原对象留在原位打印，编辑器载入一份同样的副本继续被拖动。
+    std::function<void()> onDuplicateDrag;
     // 用户选好/拖入图片后先问编辑器：是否允许导入、是否需要先打印上一张。
     std::function<void(const juce::File&)> onImageRequested;
 
@@ -233,6 +235,7 @@ private:
     juce::Point<int>       dragStartPos;
     juce::Rectangle<float> dragStartNormRect;
     bool                   externalDrag = false;  // 手势由 SpectrumView 接手
+    bool                   duplicatePending = false;  // Ctrl 按下：开始拖动时先复制一份
 
     juce::Typeface::Ptr typeface;
     std::unique_ptr<juce::FileChooser> fileChooser;
@@ -378,6 +381,12 @@ private:
     void refreshLanguage();
     void syncImagePreview();
     void imagePicked(const juce::File&);
+    // 图片对象的新建/复制：loadImageObject 只负责载入并落位，撤销步由调用者提交。
+    bool loadImageObject(const juce::File& file);
+    void duplicateImageObject();   // Ctrl+拖动：原位留一份 Print，拖走副本
+    void copyImageObject();        // Ctrl+C：记录当前对象的图片
+    void pasteImageObject();       // Ctrl+V：在播放位置新建一份副本
+    juce::String clipboardImagePath;
     void updateTooltips();
     juce::LookAndFeel_V4 tooltipLookAndFeel;
     juce::TooltipWindow tooltipWindow {this,600};

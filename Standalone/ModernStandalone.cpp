@@ -62,7 +62,7 @@ public:
         processor.onFileSeek=[this](double seconds){const auto s=processor.recording().snapshot();if(s){const double t=juce::jlimit(s->start(),s->end(),seconds);seek=t;processor.publishFileTransport(playing,t);}};
         session=std::make_unique<Session>(processor,enableAudio);editor.reset(processor.createEditor());addAndMakeVisible(*editor);
         addAndMakeVisible(play);addAndMakeVisible(exportButton);addAndMakeVisible(device);addAndMakeVisible(status);
-        device.getProperties().set("spectrumTagStyle","secondary");
+        device.getProperties().set("spectrumTagStyle","outline");device.setComponentID("audioDevice");
         exportButton.getProperties().set("spectrumTagStyle","round");
         status.setColour(juce::Label::textColourId,juce::Colour(0xffbfbfbf));
         status.setFont(lookAndFeel.getUiFont(14.f));
@@ -166,6 +166,7 @@ int filelessUiTest(const juce::File& folder){try{
     need(!image->isVisible(),"no-audio workspace shows neither image nor drop guide");
     need(processor.recording().snapshot()->sourceId.startsWith("generated:"),"blank canvas is still the generated placeholder");
     {auto ui=panel.createComponentSnapshot(panel.getLocalBounds());auto out=folder.getChildFile("standalone-empty.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(ui,*out),"empty workspace screenshot");}
+    need((int)view->getProperties()["audioBannerY"]>view->getHeight()/3,"the no-audio banner sits in the middle of the spectrum area");
     juce::Image picture(juce::Image::RGB,96,128,true);{juce::Graphics g(picture);g.fillAll(juce::Colours::white);g.setColour(juce::Colours::black);g.fillRect(15,16,66,24);g.fillRect(36,30,24,78);}const auto path=folder.getChildFile("letter-T.png");{auto out=path.createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(picture,*out),"UI image fixture");}
     uiEditor->filesDropped({path.getFullPathName()},200,200);
     for(int i=0;i<4;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
@@ -324,7 +325,36 @@ int filelessUiTest(const juce::File& folder){try{
     const int afterRevert=columnPixels(view->createComponentSnapshot(view->getLocalBounds()));
     need(beforeRevert>20,"noise spectrum fills the column above the print");
     need(afterRevert*2>=beforeRevert,"reverting a Print must not blank the whole column above the image");
-    folder.getChildFile("ui-checks.log").replaceWithText("PASS empty-image guide, audio-required Print gating, overview scrub/resize, loaded-audio Print, rounded print button, drag-printed-to-image, no-black-column when reverting, Ctrl+Z/Shift+Ctrl+Z, Clear/undo, immediate/stopped Delete pixels, Desktop exports, progress popup/percentage/cancel/close\n");return 0;
+    // 右上角三个工具按钮（诊断 / 音频设备 / 语言）统一为描边样式；
+    // 显示上限下拉框已隐藏，但参数仍在，默认 22.05 kHz。
+    for(const char* id:{"exportDiagnostics","audioDevice","tooltipLanguage"}){
+        auto* button=revision1416::find(panel,id);
+        need(button!=nullptr&&button->getProperties()["spectrumTagStyle"].toString()=="outline","tool buttons share one outline style");
+    }
+    auto* rangeCombo=revision1416::find(panel,"frequencyRange");
+    need(rangeCombo!=nullptr,"the Range combo still exists in the tree");
+    need(!rangeCombo->isVisible(),"the Range combo is hidden");
+    need((int)processor.getAPVTS().getRawParameterValue(ParameterIDs::frequencyRange)->load()==2,"Range defaults to 22.05 kHz");
+    // Ctrl+拖动图片：原对象原位变成 Print，拖走的是同样的副本。
+    const auto beforeCopy=image->getNormalisedBounds().getX();
+    auto boxMouse=[&](juce::Point<float> point){const auto now=juce::Time::getCurrentTime();
+        const auto mods=juce::ModifierKeys::leftButtonModifier|juce::ModifierKeys::ctrlModifier;
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(),point,mods,1,0,0,0,0,image,image,now,point,now,1,false);};
+    const auto boxCentre=image->getLocalBounds().getCentre().toFloat();
+    image->mouseDown(boxMouse(boxCentre));
+    image->mouseDrag(boxMouse(boxCentre.translated(24.f,0.f)));
+    image->mouseUp(boxMouse(boxCentre.translated(24.f,0.f)));
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy();});
+    need(image->isVisible()&&image->hasImage(),"Ctrl-drag leaves a copy as the new image object");
+    need(image->getNormalisedBounds().getX()>beforeCopy+.01f,"the Ctrl-drag copy follows the pointer");
+    // Ctrl+C 记录当前对象，Ctrl+V 在没有聚焦对象时于播放位置新建副本。
+    processor.auditionAt(2.0);
+    panel.keyPressed(juce::KeyPress('c',juce::ModifierKeys::ctrlModifier,0));
+    panel.keyPressed(juce::KeyPress('v',juce::ModifierKeys::ctrlModifier,0));
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==2&&!processor.recording().isBusy();});
+    need(image->isVisible()&&image->hasImage(),"Ctrl+V creates a new image object");
+    need(std::abs((double)view->getProperties()["imageStart"]-2.0)<.08,"Ctrl+V starts the new object at the playhead");
+    folder.getChildFile("ui-checks.log").replaceWithText("PASS empty-image guide with centred banner, audio-required Print gating, overview scrub/resize, loaded-audio Print, rounded print button, drag-printed-to-image, no-black-column when reverting, outline tool buttons, hidden Range with 22.05 kHz default, Ctrl-drag copy, Ctrl+C/Ctrl+V, Ctrl+Z/Shift+Ctrl+Z, Clear/undo, immediate/stopped Delete pixels, Desktop exports, progress popup/percentage/cancel/close\n");return 0;
 }catch(const std::exception& e){folder.getChildFile("ui-failure.txt").replaceWithText(e.what());return 1;}}
 int viewTest(const juce::File& folder){try{
     folder.createDirectory();auto report=folder.getChildFile("view-checks.log").createOutputStream();

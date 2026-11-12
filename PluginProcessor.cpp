@@ -1772,8 +1772,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumTagAudioProcessor::c
         juce::NormalisableRange<float>(0.0f,1.0f,0.001f),0.5f));
     layout.add(std::make_unique<juce::AudioParameterFloat>(ParameterIDs::noiseFill,"Noise Fill",juce::NormalisableRange<float>(0.0f,1.0f,.001f),0.0f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction([](float value,int){return juce::String(juce::roundToInt(value*100))+"%";}).withValueFromStringFunction([](const juce::String& text){return juce::jlimit(0.0f,1.0f,text.getFloatValue()/100); })));
+    // 默认 22.05 kHz：显示上限下拉框暂时隐藏，新实例直接落在这个档位。
     layout.add(std::make_unique<juce::AudioParameterChoice>(ParameterIDs::frequencyRange,"Frequency range",
-        juce::StringArray{"20 kHz","24 kHz","22.05 kHz","48 kHz"},0));
+        juce::StringArray{"20 kHz","24 kHz","22.05 kHz","48 kHz"},2));
     // Appended parameter preserves every existing parameter index and the old
     // fftScale 0/1 host automation. Retired slot 2 resolves to Log; the editor shows six modes.
     layout.add(std::make_unique<juce::AudioParameterChoice>(ParameterIDs::frequencyPreset,"Frequency scale preset",juce::StringArray{"Linear / Log","insight","Log","Mel (RX)","Bark","Extended Log"},3));
