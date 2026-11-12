@@ -338,17 +338,15 @@ private:
     public:
         explicit PrintNavigationButton(bool next):juce::Button(next?"Next Print":"Previous Print"),pointsRight(next){}
         void paintButton(juce::Graphics& g,bool over,bool down) override {
-            auto background=juce::Colour(0xff273136);
-            if(isEnabled()&&over)background=background.brighter(down?.08f:.18f);
-            g.setColour(background.withAlpha(isEnabled()?1.f:.55f));
-            g.fillRoundedRectangle(getLocalBounds().toFloat(),4.f);
+            // 只有箭头，没有底板；悬停提亮、按下变暗、不可用变淡。
             auto bounds=getLocalBounds().toFloat().withSizeKeepingCentre(22.f,22.f);
             juce::Path arrow;
             arrow.startNewSubPath(6.f,5.f);arrow.lineTo(6.f,19.f);
             arrow.startNewSubPath(18.f,5.f);arrow.lineTo(9.f,12.f);arrow.lineTo(18.f,19.f);
             if(pointsRight)arrow.applyTransform(juce::AffineTransform::scale(-1.f,1.f).translated(24.f,0.f));
             arrow.applyTransform(juce::AffineTransform::scale(bounds.getWidth()/24.f).translated(bounds.getX(),bounds.getY()));
-            g.setColour(juce::Colours::white.withAlpha(isEnabled()? (down?.8f: .95f):.25f));
+            const float alpha=!isEnabled()?.22f:(down?.72f:(over?1.f:.88f));
+            g.setColour(juce::Colours::white.withAlpha(alpha));
             g.strokePath(arrow,juce::PathStrokeType(1.8f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
         }
     private:

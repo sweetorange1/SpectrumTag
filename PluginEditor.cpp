@@ -2009,8 +2009,9 @@ void SpectrumTagAudioProcessorEditor::resized()
     removePrintButton.setBounds(recordX+recordW+8,52,75,28);
     // 复制/粘贴按钮紧贴删除按钮右侧，导航箭头顺势右移。
     copyImageButton.setBounds(recordX+recordW+91,52,68,28);
-    previousPrintButton.setBounds(recordX+recordW+167,52,70,28);
-    nextPrintButton.setBounds(recordX+recordW+243,52,70,28);
+    // 导航箭头只有图标、没有底板，按钮本身收窄到图标宽度附近。
+    previousPrintButton.setBounds(recordX+recordW+167,52,36,28);
+    nextPrintButton.setBounds(recordX+recordW+207,52,36,28);
     clearRecordButton.setBounds(canvasWidth-300-46,52,34,28);
     frequencyRangeLabel.setBounds(canvasWidth-300,52,142,28);frequencyRangeCombo.setBounds(canvasWidth-158,52,138,28);
 
@@ -2231,6 +2232,10 @@ void SpectrumTagAudioProcessorEditor::timerCallback()
     // 否则复制后一旦取消聚焦就按不到粘贴。
     copyImageButton.setEnabled(objectSelected||(copyButtonPaste&&clipboardImagePath.isNotEmpty()));
     clearRecordButton.setEnabled(processor.recording().isEnabled()&&!processor.isClearPending());recordButton.setEnabled(!processor.isClearPending());
+    // 只有频谱里存在多个打印时才需要导航，单个对象时把两个箭头藏起来。
+    const auto printCount=processor.recording().edits()?processor.recording().edits()->size():0;
+    const bool multiplePrints=printCount>1;
+    previousPrintButton.setVisible(multiplePrints);nextPrintButton.setVisible(multiplePrints);
     previousPrintButton.setEnabled(!processor.isClearPending()&&adjacentPrint(false).isNotEmpty());nextPrintButton.setEnabled(!processor.isClearPending()&&adjacentPrint(true).isNotEmpty());
 #if SPECTRUMTAG_ARA
     recordButton.setEnabled(processor.araBound());clearRecordButton.setEnabled(processor.araBound()&&processor.getEditorView<spectrumtag::ara::View>()->loaded);

@@ -169,6 +169,9 @@ int filelessUiTest(const juce::File& folder){try{
     need((int)view->getProperties()["audioBannerY"]>view->getHeight()/3,"the no-audio banner sits in the middle of the spectrum area");
     auto* copyButton=dynamic_cast<juce::Button*>(revision1416::find(panel,"copyImage"));
     need(copyButton!=nullptr&&!copyButton->isEnabled(),"the copy button exists next to Delete and stays dark without an object");
+    auto* prevPrint=dynamic_cast<juce::Button*>(revision1416::find(panel,"previousPrint"));
+    auto* nextPrint=dynamic_cast<juce::Button*>(revision1416::find(panel,"nextPrint"));
+    need(prevPrint!=nullptr&&nextPrint!=nullptr&&!prevPrint->isVisible()&&!nextPrint->isVisible(),"navigation arrows stay hidden without several Prints");
     juce::Image picture(juce::Image::RGB,96,128,true);{juce::Graphics g(picture);g.fillAll(juce::Colours::white);g.setColour(juce::Colours::black);g.fillRect(15,16,66,24);g.fillRect(36,30,24,78);}const auto path=folder.getChildFile("letter-T.png");{auto out=path.createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(picture,*out),"UI image fixture");}
     uiEditor->filesDropped({path.getFullPathName()},200,200);
     for(int i=0;i<4;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
@@ -356,6 +359,10 @@ int filelessUiTest(const juce::File& folder){try{
     wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==2&&!processor.recording().isBusy();});
     need(image->isVisible()&&image->hasImage(),"Ctrl+V creates a new image object");
     need(std::abs((double)view->getProperties()["imageStart"]-2.0)<.08,"Ctrl+V starts the new object at the playhead");
+    // 频谱里出现第二个打印后，导航箭头才显示；且只有图标、没有底框。
+    wait([&]{return prevPrint->isVisible()&&nextPrint->isVisible();});
+    need(prevPrint->isVisible()&&nextPrint->isVisible(),"navigation arrows appear once several Prints exist");
+    need(prevPrint->getWidth()<=40&&nextPrint->getWidth()<=40,"navigation arrows shrink to the bare icon");
     // 聚焦态也能粘贴：选中的 Print 保持打印（自动打印），副本落在播放位置。
     imagePrint->onClick();
     wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==3&&!processor.recording().isBusy();});
