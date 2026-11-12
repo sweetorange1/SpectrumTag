@@ -24,6 +24,16 @@
 - `--checks1410/1412/1421/1427` 通过（1410 单独运行需先有 `transparent-detail.png` 夹具，缺夹具会误报）。`--checks` 仍在 1.4.9 之后崩溃，已用未修改代码复现同一位置，属既有问题，与本轮无关。
 - 未重新生成安装包；产物仍在 `SpectrumTag_artefacts`/`SpectrumTagStandalone_artefacts` 的 Release 目录。
 
+### 打包脚本版本号修复（2026-11-12）
+
+根目录 `build_installer.bat` / `SpectrumTag_installer.iss` 曾把版本写死成 `1.4.3`：源码已是 2.0.0，打出来的 Setup 仍叫 `SpectrumTag_Setup_1.4.3_x64.exe`，`AppVersion`、卸载项名称和文件版本资源也都停在 1.4.3。现在：
+
+- **版本唯一来源**是 `CMakeLists.txt` 的 `project(SpectrumTag VERSION x.y.z)`。`build_installer.bat` 用 PowerShell 正则解析后以 `/DMyAppVersion=<x.y.z>` 传给 ISCC；`.iss` 侧改为 `#ifndef MyAppVersion` 兜底（只在手动执行 ISCC 时生效），文件名 `OutputBaseFilename`、`AppVersion`、`VersionInfoVersion`、`UninstallDisplayName` 全部跟着它走。
+- **打包前校验产物的 `ProductVersion`**（Standalone 与 VST3）必须等于源码版本，不一致直接报错中止，避免旧产物被打进新包。
+- 脚本末尾的 `pause` 改为仅在交互运行时暂停，支持 `build_installer.bat /nopause` 供脚本调用。
+- 记账：`echo` 文本里出现裸的 `)` 会提前闭合外层 `if (...)` 块，`REM` 里的 `<`/`>` 会被当成重定向；两处都已改掉（排错时踩过）。
+- 验证：`dist\SpectrumTag_Setup_2.0.0_x64.exe` 生成成功，Setup 的 `FileVersion`/`ProductVersion` 均为 2.0.0；把 `CMakeLists.txt` 临时改成 2.0.1 再执行，脚本按预期报“产物版本 2.0.0 与源码版本 2.0.1 不一致”并中止，恢复后再次打包正常。
+
 ## 2.0.0 重构：图片对象的三种状态（2026-11-11）
 
 用户提出重新梳理“图片放进软件后”的整套交互，旧模型（原图/隐藏 + 点击频谱即打印 + 选中打印就地重渲染）被整体替换。

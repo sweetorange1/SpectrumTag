@@ -1,27 +1,45 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 
 REM ============================================================
 REM  SpectrumTag - Windows Release Installer Builder
-REM  Version : 1.4.3
-REM  Output  : dist\SpectrumTag_Setup_1.4.3_x64.exe
+REM  Version : 取自 CMakeLists.txt 的 project(SpectrumTag VERSION x.y.z)
+REM            （本脚本和 .iss 都不再写死版本号）
+REM  Output  : dist\SpectrumTag_Setup_x.y.z_x64.exe
 REM ============================================================
 
 set "APP_NAME=SpectrumTag"
-set "APP_VERSION=1.4.3"
 set "SCRIPT_DIR=%~dp0"
 set "ISS_FILE=%SCRIPT_DIR%SpectrumTag_installer.iss"
 set "DIST_DIR=%SCRIPT_DIR%dist"
-set "OUTPUT_EXE=%DIST_DIR%\%APP_NAME%_Setup_%APP_VERSION%_x64.exe"
-
-echo ============================================================
-echo  %APP_NAME% Installer Builder  v%APP_VERSION%  (Release)
-echo ============================================================
+set "CMAKE_FILE=%SCRIPT_DIR%CMakeLists.txt"
+set "PROBE_FILE=%TEMP%\spectrumtag-version-%RANDOM%%RANDOM%.txt"
 
 if not exist "%ISS_FILE%" (
   echo [ERROR] 未找到安装脚本: "%ISS_FILE%"
   exit /b 1
 )
+if not exist "%CMAKE_FILE%" (
+  echo [ERROR] 未找到 "%CMAKE_FILE%"，无法确定产品版本。
+  exit /b 1
+)
+
+REM ---------- 0) 从 CMakeLists.txt 读取唯一版本源 ----------
+set "APP_VERSION="
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[IO.File]::WriteAllText('%PROBE_FILE%', [regex]::Match([IO.File]::ReadAllText('%CMAKE_FILE%'), 'project\(SpectrumTag VERSION ([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value)" >nul 2>nul
+if exist "%PROBE_FILE%" set /p APP_VERSION=<"%PROBE_FILE%"
+if exist "%PROBE_FILE%" del "%PROBE_FILE%" >nul 2>nul
+
+if not defined APP_VERSION (
+  echo [ERROR] 无法从 CMakeLists.txt 解析版本号，期望形如 "project SpectrumTag VERSION x.y.z"
+  exit /b 1
+)
+
+set "OUTPUT_EXE=%DIST_DIR%\%APP_NAME%_Setup_%APP_VERSION%_x64.exe"
+
+echo ============================================================
+echo  %APP_NAME% Installer Builder  v%APP_VERSION%  (Release)
+echo ============================================================
 
 REM ---------- 1) 自动探测 VST3 顶层目录（包含 SpectrumTag.vst3 bundle 的父目录）----------
 set "VST3_DIR="
@@ -73,6 +91,40 @@ if not defined STANDALONE_EXE (
   echo [INFO] Standalone 产物: "%STANDALONE_EXE%"
 )
 
+REM ---------- 3) 校验产物版本，避免旧程序被打进新安装包 ----------
+set "VST3_BINARY=%VST3_DIR%\SpectrumTag.vst3\Contents\x86_64-win\SpectrumTag.vst3"
+set "EXE_VERSION=未知"
+set "VST3_VERSION=未知"
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[IO.File]::WriteAllText('%PROBE_FILE%', (Get-Item -LiteralPath '%STANDALONE_EXE%').VersionInfo.ProductVersion)" >nul 2>nul
+if exist "%PROBE_FILE%" set /p EXE_VERSION=<"%PROBE_FILE%"
+if exist "%PROBE_FILE%" del "%PROBE_FILE%" >nul 2>nul
+
+if exist "%VST3_BINARY%" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "[IO.File]::WriteAllText('%PROBE_FILE%', (Get-Item -LiteralPath '%VST3_BINARY%').VersionInfo.ProductVersion)" >nul 2>nul
+  if exist "%PROBE_FILE%" set /p VST3_VERSION=<"%PROBE_FILE%"
+  if exist "%PROBE_FILE%" del "%PROBE_FILE%" >nul 2>nul
+) else (
+  echo [WARN] 未找到 VST3 二进制 "%VST3_BINARY%"，跳过其版本校验。
+)
+
+echo [INFO] 源码版本: %APP_VERSION%
+echo [INFO] Standalone 产物版本: %EXE_VERSION%
+echo [INFO] VST3 产物版本: %VST3_VERSION%
+
+if not "%EXE_VERSION%"=="%APP_VERSION%" (
+  echo [ERROR] Standalone 产物版本 %EXE_VERSION% 与源码版本 %APP_VERSION% 不一致。
+  echo [HINT] 旧产物会被打进新安装包，请先重新构建 Release 产物再打包。
+  exit /b 1
+)
+if not "%VST3_VERSION%"=="%APP_VERSION%" (
+  if not "%VST3_VERSION%"=="未知" (
+    echo [ERROR] VST3 产物版本 %VST3_VERSION% 与源码版本 %APP_VERSION% 不一致。
+    echo [HINT] 请先重新构建 Release 产物再打包。
+    exit /b 1
+  )
+)
+
 if not exist "%DIST_DIR%" (
   mkdir "%DIST_DIR%"
 )
@@ -108,10 +160,11 @@ if exist "%SCRIPT_DIR%presents\*" (
   echo [WARN] presents 目录为空，将不包含预设文件
 )
 
-echo [INFO] 开始打包 ...
+echo [INFO] 开始打包 v%APP_VERSION% ...
 echo ------------------------------------------------------------
 
-"%ISCC_PATH%" /DVST3_DIR="%VST3_DIR%" /DSTANDALONE_EXE="%STANDALONE_EXE%" %PRESETS_FLAG% "%ISS_FILE%"
+REM 版本号以 /DMyAppVersion 传给 .iss，安装包文件名、卸载项名称和版本资源都用它。
+"%ISCC_PATH%" /DMyAppVersion=%APP_VERSION% /DVST3_DIR="%VST3_DIR%" /DSTANDALONE_EXE="%STANDALONE_EXE%" %PRESETS_FLAG% "%ISS_FILE%"
 
 if errorlevel 1 (
   echo ------------------------------------------------------------
@@ -129,8 +182,5 @@ if exist "%OUTPUT_EXE%" (
 )
 endlocal
 
-echo.
-echo 按任意键退出...
-pause >nul
+if /i not "%~1"=="/nopause" pause >nul
 exit /b 0
-
