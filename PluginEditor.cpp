@@ -456,11 +456,9 @@ RoundPrintButton::RoundPrintButton (const juce::String& name) : juce::Button (na
 
 void RoundPrintButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
 {
-    auto r = getLocalBounds().toFloat();
-    const float diameter = juce::jmin (r.getWidth(), r.getHeight());
-    juce::Rectangle<float> circle (r.getCentreX() - diameter * 0.5f,
-                                   r.getCentreY() - diameter * 0.5f,
-                                   diameter, diameter);
+    // 圆角矩形 + 深色描边：明确是一个可点的按钮，而不是频谱上的一个圆点。
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    const float corner = juce::jmin (r.getHeight(), r.getWidth()) * 0.30f;
 
     juce::Colour bg = kPrintBg;
     if (! isEnabled())  bg = juce::Colour (0xff7a7a7a);
@@ -468,10 +466,14 @@ void RoundPrintButton::paintButton (juce::Graphics& g, bool isOver, bool isDown)
     else if (isOver)    bg = juce::Colours::white;
 
     g.setColour (bg);
-    g.fillEllipse (circle);
+    g.fillRoundedRectangle (r, corner);
+
+    const float borderAlpha = isEnabled() ? (isOver || isDown ? 1.0f : 0.85f) : 0.45f;
+    g.setColour (kPrintText.withAlpha (borderAlpha));
+    g.drawRoundedRectangle (r.reduced (0.75f), corner, 1.6f);
 
     juce::Font f = (typeface != nullptr) ? juce::Font (typeface) : juce::Font();
-    f = f.withHeight (diameter * 0.32f * typeScale);
+    f = f.withHeight (r.getHeight() * 0.46f * typeScale);
     g.setFont (f);
     g.setColour (kPrintText);
     g.drawText (getButtonText(), getLocalBounds(), juce::Justification::centred, false);
@@ -604,8 +606,12 @@ void ImageBoxComponent::mouseDown(const juce::MouseEvent& e){
     if(onGestureStart)onGestureStart();dragMode=hitTest(e.getPosition());dragStartPos=e.getPosition()+getPosition();dragStartNormRect=normRect;
 }
 void ImageBoxComponent::mouseDrag(const juce::MouseEvent& e){
+    if(externalDrag)return;  // 这一手势已由频谱视图转发，避免同一次拖动被应用两次
+    dragToParentPoint(e.getPosition()+getPosition());
+}
+void ImageBoxComponent::dragToParentPoint(juce::Point<int> parentPoint){
     if(dragMode==DragMode::None||contentBounds.isEmpty())return;
-    const auto delta=e.getPosition()+getPosition()-dragStartPos;
+    const auto delta=parentPoint-dragStartPos;
     auto next=dragStartNormRect;
     if(dragMode==DragMode::Move)next.setPosition(next.getX()+(float)delta.x/contentBounds.getWidth(),next.getY()+(float)delta.y/contentBounds.getHeight());
     else {
@@ -616,9 +622,22 @@ void ImageBoxComponent::mouseDrag(const juce::MouseEvent& e){
     }
     normRect=clampNormRect(next);resizedFromNorm();if(onChanged)onChanged();
 }
+// ---- 由父视图接手的手势（已打印对象被拖动后立刻退回未打印态）----
+void ImageBoxComponent::beginExternalDrag(juce::Point<int> parentPoint,bool resizeAtHandle){
+    externalDrag=true;
+    dragMode=resizeAtHandle?DragMode::ResizeBR:DragMode::Move;
+    dragStartPos=parentPoint;dragStartNormRect=normRect;
+}
+void ImageBoxComponent::continueExternalDrag(juce::Point<int> parentPoint){dragToParentPoint(parentPoint);}
+void ImageBoxComponent::endExternalDrag(){
+    if(!externalDrag)return;
+    externalDrag=false;dragMode=DragMode::None;
+    if(onGestureEnd)onGestureEnd();
+}
 void ImageBoxComponent::mouseUp(const juce::MouseEvent& e){
     const bool wasEmpty=!hasImage();
     const bool moved=(e.getPosition()+getPosition()-dragStartPos).getDistanceFromOrigin()>=4.f;
+    if(externalDrag){externalDrag=false;dragMode=DragMode::None;if(onGestureEnd)onGestureEnd();return;}
     dragMode=DragMode::None;
     if(onGestureEnd)onGestureEnd();
     // The empty box is the "drop a picture" guide; a plain click opens the
@@ -798,6 +817,8 @@ public:
     // Called when Print is refused because no real audio is loaded. Emphasise
     // the on-canvas guidance instead of silently doing nothing.
     void flashAudioHint(){audioHintFlashUntil=juce::Time::getMillisecondCounter()+2200;repaint(audioBannerBounds());}
+    // 退回未打印态：这次打印马上由图片接替，绘制时只挖它自己那条频带。
+    void markPrintRevealed(const juce::String& id){imageRevealId=id;}
     void refreshDeletedPrint(){
         // An in-flight raster may still refer to the deleted edit. Retire that
         // request now; paint masks the obsolete footprint until the new audio
@@ -807,7 +828,7 @@ public:
     void clearDisplay(){
         rasterEpoch=renderer.invalidate();requestedRaster=appliedRaster=0;
         waterfall={};waterfallSource.reset();waterfallStart=waterfallEnd=0;overviewImage={};overviewSource.reset();
-        preview.reset();previewImage={};selected={};dragEdit.reset();movingPrint=false;
+        preview.reset();previewImage={};selected={};dragEdit.reset();movingPrint=false;imageRevealId={};
         panActive=false;fitAfterCapture=false;recorded.reset();recordMode=processor.recording().isEnabled();
         lastClearSerial=processor.getSpectrumClearSerial();view.reset(now());fit=false;
         getProperties().set("previewActive",false);resized();dirty=true;repaint();
@@ -827,7 +848,7 @@ public:
         fit=false;panActive=false;updateImageBounds();dirty=true;repaint();
     }
     std::function<void(const juce::String&)> onSelected;
-    std::function<void()> onDelete,onNavigation,onMoveBegin,onRequestAudio,onImagePrint,onRevertFocused;
+    std::function<void()> onDelete,onNavigation,onMoveBegin,onRequestAudio,onImagePrint,onRevertFocused,onRevertEnd;
     std::function<void(float)> onWheelSpeed;
     std::function<void(const spectrumtag::PrintEdit&)> onMoveEnd;
     void setPrintButtonTooltip(const juce::String& text){printImageButton.setTooltip(text);}
@@ -961,6 +982,7 @@ public:
             &&result->palette==palette&&result->scale==scaleMode&&result->top==top
             &&((!recorded&&!result->source)||(recorded&&result->source==recorded))){
             waterfall=result->image;waterfallSource=result->source;waterfallStart=result->start;waterfallEnd=result->end;appliedRaster=result->generation;
+            imageRevealId={};  // 新栅格已不再含这次打印，不再需要为它保留旧频谱
             getProperties().set("rasterRevision",result->source?result->source->revision:-1);
             getProperties().set("rasterApplied",(juce::int64)appliedRaster);getProperties().set("rasterMs",result->milliseconds);
             repaint();
@@ -1053,7 +1075,7 @@ public:
             ?juce::MouseCursor::BottomRightCornerResizeCursor:juce::MouseCursor::NormalCursor);
     }
     void mouseDown(const juce::MouseEvent& event) override {
-        panActive=false;dragEdit.reset();movingPrint=false;resizingPrint=false;overviewHandle=OverviewHandle::None;
+        panActive=false;dragEdit.reset();movingPrint=false;resizingPrint=false;overviewHandle=OverviewHandle::None;draggingImage=false;revertGesture=false;
         const auto point=event.getEventRelativeTo(this).position;
         // 未加载音频时的引导条：点击等同"加载音频"按钮。
         if(event.mods.isLeftButtonDown()&&audioBannerBounds().toFloat().contains(point)){if(onRequestAudio)onRequestAudio();return;}
@@ -1095,12 +1117,29 @@ public:
             else overviewResizeTo(x);
             return;
         }
+        if(draggingImage){
+            if(!event.mods.isLeftButtonDown())return;
+            imageBox->continueExternalDrag(imageBoxPoint(event.getEventRelativeTo(this).position));
+            return;
+        }
         if(!dragEdit||!event.mods.isLeftButtonDown()||!recorded)return;
         const auto delta=event.getEventRelativeTo(this).position-dragPoint;
         if(!movingPrint&&delta.getDistanceFromOrigin()<3.f)return;
-        // 聚焦态（只画框）下开始拖动或缩放：这次操作让对象退回未打印态，
-        // 图片重新出现，由用户接着拖动图片本身，而不是就地重排打印。
-        if(!movingPrint&&dragEdit->id==selected&&onRevertFocused){onRevertFocused();dragEdit.reset();resizingPrint=false;return;}
+        // 已打印对象被直接拖动（状态2/状态3）：这一手势立即退回未打印态，
+        // 图片按打印范围摆回，并把剩下的位移继续交给图片框，用户不必再点一次。
+        if(!movingPrint&&dragEdit->id==selected&&onRevertFocused){
+            const auto point=event.getEventRelativeTo(this).position;
+            const bool resize=resizingPrint;
+            revertGesture=true;
+            onRevertFocused();
+            dragEdit.reset();resizingPrint=false;
+            if(imageBox->hasImage()&&imageBox->isVisible()){
+                draggingImage=true;
+                imageBox->beginExternalDrag(imageBoxPoint(dragPoint),resize);
+                imageBox->continueExternalDrag(imageBoxPoint(point));
+            }
+            return;
+        }
         if(!movingPrint){
             if(onMoveBegin)onMoveBegin();movingPrint=true;
             // Build the lightweight image once; geometry gestures stretch this
@@ -1130,13 +1169,21 @@ public:
         preview=e;previewReleased=false;getProperties().set("previewActive",true);repaint();
     }
     void mouseUp(const juce::MouseEvent&) override {
+        if(draggingImage){
+            // 退回未打印态的这次手势结束：图片框收尾，编辑器提交同一个撤销步。
+            draggingImage=false;imageBox->endExternalDrag();
+        }else if(revertGesture&&onRevertEnd){
+            // 图片缺失等没能接着拖动的情况：同样要结束这次撤销步。
+            onRevertEnd();
+        }
+        revertGesture=false;
         if(movingPrint&&preview&&onMoveEnd){
             auto e=*preview;
             if(resizingPrint)e.cols=juce::jlimit(4,4096,juce::roundToInt(editBounds(e).getWidth()));
             onMoveEnd(e);
         }
         overviewHandle=OverviewHandle::None;
-        dragEdit.reset();movingPrint=false;resizingPrint=false;
+        dragEdit.reset();movingPrint=false;resizingPrint=false;draggingImage=false;
     }
     void paint(juce::Graphics& g) override {
         ++paintCount;paintedRaster=appliedRaster;lastPaintTime=juce::Time::getMillisecondCounterHiRes();
@@ -1145,13 +1192,22 @@ public:
         if(waterfall.isValid()){
             juce::Graphics::ScopedSaveState clipped(g);g.reduceClipRegion(contentBounds);
             const auto desired=processor.recording().edits();
+            const auto imageArea=imageBox->isVisible()&&imageBox->hasImage()
+                ?imageBox->getBounds().translated(contentBounds.getX(),contentBounds.getY()).expanded(2)
+                :juce::Rectangle<int>();
             if(waterfallSource&&desired)for(const auto& e:waterfallSource->edits)
                 if(std::none_of(desired->begin(),desired->end(),[&](const auto& current){return current.id==e.id;})){
                     const float padding=(float)(e.fftSize/waterfallSource->sampleRate/timeSpan()*contentBounds.getWidth());
                     // FFT window leakage can reach beyond the image's band.
                     // Hide the obsolete time slice, including that leakage.
                     const auto obsolete=editBounds(e).expanded(padding+2,0);
-                    g.excludeClipRegion(juce::Rectangle<float>(obsolete.getX(),(float)contentBounds.getY(),obsolete.getWidth(),(float)contentBounds.getHeight()).getSmallestIntegerContainer());
+                    // 已打印对象退回未打印态时，这块位置马上由图片本身接替（或者
+                    // 图片正在原位盖着它）。这时只挖掉它自己那条频带：把整列都挖空
+                    // 会让图片上下的频谱在新栅格到达之前闪黑一下。
+                    const bool bandOnly=e.id==imageRevealId
+                        ||(imageArea.getWidth()>0&&imageArea.contains(editBounds(e).getSmallestIntegerContainer()));
+                    g.excludeClipRegion(bandOnly?obsolete.getSmallestIntegerContainer()
+                        :juce::Rectangle<float>(obsolete.getX(),(float)contentBounds.getY(),obsolete.getWidth(),(float)contentBounds.getHeight()).getSmallestIntegerContainer());
                 }
             if(waterfallEnd>waterfallStart)g.drawImage(waterfall,juce::Rectangle<float>(timeX(waterfallStart),(float)contentBounds.getY(),timeX(waterfallEnd)-timeX(waterfallStart),(float)contentBounds.getHeight()),juce::RectanglePlacement::stretchToFit);
             else g.drawImageAt(waterfall,contentBounds.getX(),contentBounds.getY());
@@ -1260,15 +1316,19 @@ private:
         if(printImageButton.isVisible())layoutPrintImageButton();
     }
     void layoutPrintImageButton(){
-        const int d=54,gap=8;
+        const int w=78,h=36,gap=8;
         const auto b=imageBox->getBounds().translated(contentBounds.getX(),contentBounds.getY());
-        int x=b.getCentreX()-d/2,y=b.getBottom()+gap;
+        int x=b.getCentreX()-w/2,y=b.getBottom()+gap;
         // 下方放不下就放到图片上方，始终不压住图片。
-        if(y+d>contentBounds.getBottom())y=b.getY()-gap-d;
-        x=juce::jlimit(contentBounds.getX()+2,contentBounds.getRight()-d-2,x);
-        y=juce::jlimit(contentBounds.getY()+2,contentBounds.getBottom()-d-2,y);
-        printImageButton.setBounds(x,y,d,d);
+        if(y+h>contentBounds.getBottom())y=b.getY()-gap-h;
+        x=juce::jlimit(contentBounds.getX()+2,contentBounds.getRight()-w-2,x);
+        y=juce::jlimit(contentBounds.getY()+2,contentBounds.getBottom()-h-2,y);
+        printImageButton.setBounds(x,y,w,h);
         printImageButton.toFront(false);
+    }
+    // 频谱视图坐标 → 图片框父组件（图片裁剪层）坐标。
+    juce::Point<int> imageBoxPoint(juce::Point<float> point) const {
+        return (point-juce::Point<float>((float)contentBounds.getX(),(float)contentBounds.getY())).roundToInt();
     }
     juce::Rectangle<int> audioBannerBounds() const {
         if(!processor.isLoadMode()||processor.hasLoadedAudio()||contentBounds.isEmpty())return {};
@@ -1464,7 +1524,10 @@ private:
     std::shared_ptr<const spectrumtag::RecordingSnapshot> recorded;
     std::shared_ptr<const std::vector<spectrumtag::PrintEdit>> observedEdits;
     juce::String selected;
+    juce::String imageRevealId;  // 正被图片接替的打印：绘制时只挖它的频带
     std::optional<spectrumtag::PrintEdit> preview,dragEdit;bool previewReleased=false,movingPrint=false,resizingPrint=false;
+    bool draggingImage=false;   // 已退回未打印态的图片正跟随当前拖动
+    bool revertGesture=false;   // 本次手势由“撤掉打印”开启，松手时必须收尾
     juce::Image previewImage;juce::Point<float> dragPoint;juce::Rectangle<float> dragBounds;
     bool recordMode=false,chinese=true,fit=false,restored=false,wasPlaying=false,wasArmed=false,fitAfterCapture=false;
     bool lastHasImage=false,lastAudioLoaded=false,audioAvailableSeen=false;
@@ -1575,8 +1638,10 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
         p->beginChangeGesture();p->setValueNotifyingHost(p->convertTo0to1(value));p->endChangeGesture();wheelChange=false;changed();
     };
     spectrumView->onMoveBegin=[this]{beginChange();gestureActive=true;};
-    // 聚焦态（状态3，只有框和 Delete 提示）开始拖动/缩放：撤掉打印、显示图片。
-    spectrumView->onRevertFocused=[this]{finishChange(true);beginChange();unprintFocused();finishChange(true);};
+    // 直接拖动已打印对象（状态2/状态3）：撤掉这次打印、图片按打印范围摆回，
+    // 剩下的位移由同一手势继续作用在图片上；松手时整体提交，算一个撤销步。
+    spectrumView->onRevertFocused=[this]{finishChange(true);beginChange();gestureActive=true;unprintFocused();};
+    spectrumView->onRevertEnd=[this]{gestureActive=false;finishChange(true);};
     spectrumView->onMoveEnd=[this](const spectrumtag::PrintEdit&){
         // 聚焦对象被拖动/缩放：撤掉打印、退回未打印态。
         spectrumView->setPreview({});
@@ -2215,6 +2280,8 @@ void SpectrumTagAudioProcessorEditor::unprintFocused(){
     auto& box=spectrumView->getImageBox();
     if(!box.hasImage()&&!edit->imagePath.isEmpty()&&juce::File(edit->imagePath).existsAsFile())box.loadImageFromFile(juce::File(edit->imagePath));
     spectrumView->alignImageToPrint(*edit);
+    // 绘制层：这次打印正被退回的图片接替，不要在图片上下的频谱里挖出黑柱。
+    spectrumView->markPrintRevealed(id);
     processor.recording().remove(id);
     spectrumView->setPreview({});
     spectrumView->selectEdit({});

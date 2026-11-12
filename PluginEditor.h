@@ -185,6 +185,13 @@ public:
     // 用户选好/拖入图片后先问编辑器：是否允许导入、是否需要先打印上一张。
     std::function<void(const juce::File&)> onImageRequested;
 
+    // 已打印对象在拖动时退回“未打印”态，频谱视图把这次手势直接交给图片框：
+    // parentPoint 是图片框父组件（图片裁剪层）坐标中的指针位置，松手时必须
+    // 调用 endExternalDrag()，否则撤销步不会被提交。
+    void beginExternalDrag (juce::Point<int> parentPoint, bool resizeAtHandle);
+    void continueExternalDrag (juce::Point<int> parentPoint);
+    void endExternalDrag();
+
     void paint (juce::Graphics&) override;
     void mouseDown  (const juce::MouseEvent&) override;
     void mouseDrag  (const juce::MouseEvent&) override;
@@ -197,6 +204,7 @@ private:
 
     static juce::Rectangle<float> clampNormRect (juce::Rectangle<float> r);
     void resizedFromNorm();
+    void dragToParentPoint (juce::Point<int> parentPoint);
     void preprocessImage();   // 生成二值化预览
     void openFileChooser();
     // 加载新图后/contentBounds 改变后：把 normRect 调整为图片宽高比
@@ -224,6 +232,7 @@ private:
     DragMode dragMode = DragMode::None;
     juce::Point<int>       dragStartPos;
     juce::Rectangle<float> dragStartNormRect;
+    bool                   externalDrag = false;  // 手势由 SpectrumView 接手
 
     juce::Typeface::Ptr typeface;
     std::unique_ptr<juce::FileChooser> fileChooser;

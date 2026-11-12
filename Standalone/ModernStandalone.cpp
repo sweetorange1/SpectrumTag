@@ -284,7 +284,47 @@ int filelessUiTest(const juce::File& folder){try{
     auto* cancel=dynamic_cast<juce::Button*>(revision1416::find(progress,"cancelVideoExport"));need(cancel&&cancel->isEnabled(),"popup Cancel is enabled");cancel->onClick();progress.requestClose();need(cancels==1&&!cancel->isEnabled()&&closes==0,"Cancel and title-bar close issue only one cancellation");
     progress.update(SpectrumVideoExport::cancelled,.42f,"C:/Example/movie.mp4",{});cancel->onClick();need(closes==1,"cancelled dialog may close");progress.update(SpectrumVideoExport::complete,1,"C:/Example/movie.mp4",{});need(progress.getProperties()["percent"].toString()=="100%","completed popup reaches 100 percent");
     need(defaultExportFolder()==juce::File::getSpecialLocation(juce::File::userDesktopDirectory),"exports default to the actual desktop folder");
-    folder.getChildFile("ui-checks.log").replaceWithText("PASS empty-image guide, audio-required Print gating, overview scrub/resize, loaded-audio Print, Ctrl+Z/Shift+Ctrl+Z, Clear/undo, immediate/stopped Delete pixels, Desktop exports, progress popup/percentage/cancel/close\n");return 0;
+    // 直接拖动已打印对象：一次手势就退回状态1，图片跟着指针走，不必先点一次聚焦。
+    uiEditor->filesDropped({path.getFullPathName()},200,200);
+    wait([&]{return image->hasImage()&&image->conversionReady()&&imagePrint->isVisible();});
+    need(imagePrint->getWidth()>imagePrint->getHeight(),"the print button is a rounded rectangle, not a circle");
+    {auto out=folder.getChildFile("print-button.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(panel.createComponentSnapshot(panel.getLocalArea(imagePrint,imagePrint->getLocalBounds()).expanded(12)),*out),"print button screenshot");}
+    imagePrint->onClick();
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy()&&(int)view->getProperties()["rasterRevision"]==s->revision;});
+    const auto printedCentre=view->getLocalPoint(image,image->getLocalBounds().getCentre()).toFloat();
+    const auto printedX=image->getNormalisedBounds().getX();
+    const auto dragged=printedCentre.translated(36.f,0.f);
+    view->mouseDown(mouse(printedCentre));
+    view->mouseDrag(mouse(dragged));
+    view->mouseUp(mouse(dragged));
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.empty()&&!processor.recording().isBusy();});
+    need(image->isVisible()&&image->hasImage()&&imagePrint->isVisible(),"dragging a printed object returns it to the image state in one gesture");
+    need(image->getNormalisedBounds().getX()>printedX,"the returned image follows the drag instead of stopping at the printed place");
+    // 退回未打印态的那一刻，图片上下的同一列频谱不能先被挖黑等新栅格。
+    // 用噪声音频让整幅频谱都有颜色，再对比退回前后该列的亮度。
+    const auto noise=folder.getChildFile("noise-10s.wav");
+    {auto stream=noise.createOutputStream();juce::WavAudioFormat format;std::unique_ptr<juce::AudioFormatWriter> writer(format.createWriterFor(stream.get(),48000,2,16,{},0));need(writer!=nullptr,"noise WAV fixture");stream.release();juce::AudioBuffer<float> audio(2,480000);juce::Random random(1234);for(int c=0;c<2;++c)for(int n=0;n<480000;++n)audio.setSample(c,n,.25f*(random.nextFloat()*2.f-1.f));writer->writeFromAudioSampleBuffer(audio,0,480000);}
+    processor.onDropAudioFile(noise);
+    wait([&]{auto s=processor.recording().snapshot();return s&&!processor.recording().isBusy()&&(bool)view->getProperties()["audioLoaded"]&&(int)view->getProperties()["rasterRevision"]==s->revision;});
+    wait([&]{return imagePrint->isVisible();});
+    imagePrint->onClick();
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy()&&(int)view->getProperties()["rasterRevision"]==s->revision;});
+    const auto reprintCentre=view->getLocalPoint(image,image->getLocalBounds().getCentre()).toFloat();
+    const auto boxArea=view->getLocalArea(image,image->getLocalBounds());
+    juce::Rectangle<int> column(boxArea.getX()+4,0,boxArea.getWidth()-8,30);
+    column.setY(boxArea.getY()>40?boxArea.getY()-34:boxArea.getBottom()+4);
+    column=column.getIntersection(view->getLocalBounds());
+    auto columnPixels=[&](const juce::Image& shot){int bright=0;for(int y=column.getY();y<column.getBottom();y+=2)for(int x=column.getX();x<column.getRight();x+=2)bright+=shot.getPixelAt(x,y).getBrightness()>.08f;return bright;};
+    const int beforeRevert=columnPixels(view->createComponentSnapshot(view->getLocalBounds()));
+    const auto reprintDrag=reprintCentre.translated(40.f,0.f);
+    view->mouseDown(mouse(reprintCentre));
+    view->mouseDrag(mouse(reprintDrag));
+    view->mouseUp(mouse(reprintDrag));
+    // 这一刻新栅格一定还没到：退回的绘制必须保住旧频谱，而不是把整列挖黑。
+    const int afterRevert=columnPixels(view->createComponentSnapshot(view->getLocalBounds()));
+    need(beforeRevert>20,"noise spectrum fills the column above the print");
+    need(afterRevert*2>=beforeRevert,"reverting a Print must not blank the whole column above the image");
+    folder.getChildFile("ui-checks.log").replaceWithText("PASS empty-image guide, audio-required Print gating, overview scrub/resize, loaded-audio Print, rounded print button, drag-printed-to-image, no-black-column when reverting, Ctrl+Z/Shift+Ctrl+Z, Clear/undo, immediate/stopped Delete pixels, Desktop exports, progress popup/percentage/cancel/close\n");return 0;
 }catch(const std::exception& e){folder.getChildFile("ui-failure.txt").replaceWithText(e.what());return 1;}}
 int viewTest(const juce::File& folder){try{
     folder.createDirectory();auto report=folder.getChildFile("view-checks.log").createOutputStream();
