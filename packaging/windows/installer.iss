@@ -1,5 +1,5 @@
 #ifndef Version
-#define Version "2.0.0"
+#define Version "2.0.1"
 #endif
 #ifndef Payload
   #error Define Payload as the staged Windows component directory

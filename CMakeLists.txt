@@ -24,7 +24,7 @@ if(APPLE)
     message(STATUS "[SpectrumTag] macOS deployment    : ${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif()
 
-project(SpectrumTag VERSION 2.0.0 LANGUAGES C CXX)
+project(SpectrumTag VERSION 2.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -204,7 +204,7 @@ option(SPECTRUMTAG_ENABLE_NETWORK "Enable upstream telemetry and update checks" 
 target_compile_definitions(SpectrumTag PUBLIC SPECTRUMTAG_ENABLE_NETWORK=$<BOOL:${SPECTRUMTAG_ENABLE_NETWORK}>)
 option(SPECTRUMTAG_BUILD_TESTS "Build offline processor verification" OFF)
 if(SPECTRUMTAG_BUILD_TESTS)
-    juce_add_console_app(SpectrumTagVerify PRODUCT_NAME "SpectrumTagVerify")
+    juce_add_console_app(SpectrumTagVerify PRODUCT_NAME "SpectrumTagVerify" VERSION ${PROJECT_VERSION})
     juce_generate_juce_header(SpectrumTagVerify)
     target_sources(SpectrumTagVerify PRIVATE tests/Verify.cpp)
     target_include_directories(SpectrumTagVerify PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

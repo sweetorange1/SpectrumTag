@@ -3,7 +3,7 @@
 ; build_installer.bat 解析后用 /DMyAppVersion=<x.y.z> 传入。下面的默认值
 ; 只在手动执行 ISCC、没有传 /D 时兜底，平时不要手改这里。
 #ifndef MyAppVersion
-  #define MyAppVersion "2.0.0"
+  #define MyAppVersion "2.0.1"
 #endif
 #define MyAppPublisher "iisaacbeats.cn"
 #define MyAppURL "https://iisaacbeats.cn"

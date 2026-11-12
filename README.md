@@ -24,7 +24,7 @@ SpectrumTag 将图片转换成黑白掩模，并通过处理音频的频率成�
 
 | 项目 | 当前状态 |
 | --- | --- |
-| 当前源码版本 | **2.0.0**（2026-11-10），界面与字体重做；安装包尚未重新构建 |
+| 当前源码版本 | **2.0.1**（2026-11-12），三态图片对象交互与工具栏细节定稿；安装包尚未重新构建 |
 | 最近交付 | **1.4.28 Stable**，Windows Setup 与 macOS Universal PKG，附中文文件名的安装说明和英文 TXT |
 | 贡献者指定 Stable | **1.4.28**（2026-11-09），新 Plan B 已完成并冻结；见 [Stable / Plan B 记录](docs/STABLE_1.4.28.md) |
 | Windows 安装包 | 实时 VST3、ARA 专用 VST3、独立程序；适用于 Windows 10/11 x64 |
@@ -116,7 +116,7 @@ SpectrumTag converts an image to a monochrome mask and processes audio frequenci
 
 | Item | Status |
 | --- | --- |
-| Current source version | **2.0.0** (2026-11-10), rebuilt UI and typography; installers not rebuilt yet |
+| Current source version | **2.0.1** (2026-11-12), three-state image object interaction and toolbar details finalised; installers not rebuilt yet |
 | Latest delivery | **1.4.28 Stable**, Windows Setup and macOS Universal PKG with Chinese/English TXT installation guides |
 | Contributor-designated Stable | **1.4.28** (2026-11-09); the new Plan B snapshot is complete and frozen. See the [Stable / Plan B record](docs/STABLE_1.4.28.md). |
 | Windows installer | Realtime VST3, dedicated ARA VST3 and standalone; Windows 10/11 x64 |
