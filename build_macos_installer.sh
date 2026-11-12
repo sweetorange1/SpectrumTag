@@ -240,6 +240,24 @@ if [[ "${UNIVERSAL_OK}" -eq 1 ]]; then
   log "  - Universal binary OK (arm64 + x86_64)"
 fi
 
+# ---- 内嵌编码器校验：独立 App 必须自带每个架构的 Helpers/<arch>/ffmpeg ----
+# 缺少 helper 的 app 仍能启动，但任何导入/导出都会提示编码器缺失；
+# 这种包不能发布，因此在这里直接失败而不是生成一个坏安装包。
+CODEC_MISSING_ARCHS=""
+for arch in ${ARCH_TEXT}; do
+  if [[ ! -f "${STANDALONE_APP}/Contents/Helpers/${arch}/ffmpeg" ]]; then
+    CODEC_MISSING_ARCHS="${CODEC_MISSING_ARCHS} ${arch}"
+  fi
+done
+if [[ -n "${CODEC_MISSING_ARCHS}" ]]; then
+  echo "[ERROR] Standalone app has no bundled codec for:${CODEC_MISSING_ARCHS}" >&2
+  echo "[HINT] Fetch the codec, then rebuild the standalone target:" >&2
+  echo "       ./packaging/macos/fetch-codec.sh --arch all" >&2
+  echo "       cmake --build build --config Release --target SpectrumTagStandalone" >&2
+  exit 1
+fi
+log "  - Codec helper OK (${ARCH_TEXT})"
+
 # ----------------------------------------------------------------------------
 # Step 3/7  复制产物到暂存区
 #   注意：签名一律只作用于这里的副本，绝不改动 cmake 构建目录里的原始产物。
@@ -445,9 +463,16 @@ mkdir -p "${DMG_STAGE_DIR}"
 } > "${DMG_STAGE_DIR}/README.txt"
 
 rm -f "${DMG_PATH}"
+# hdiutil 的自动容量估算会少算几 MB：在 macOS 15 上，65–70MB 的负载会稳定报
+# "No space left on device"，与磁盘剩余空间无关（可用空间充足时同样失败）。
+# 显式给出带余量的容量，避免交付流程被这个估算缺陷打断。
+STAGE_KB="$(/usr/bin/du -sk "${DMG_STAGE_DIR}" | /usr/bin/awk '{print $1}')"
+IMAGE_MB=$(( STAGE_KB / 1024 + 64 ))
+log "  - Payload $((STAGE_KB / 1024))MB, temporary image ${IMAGE_MB}MB"
 hdiutil create \
   -volname "${PRODUCT_NAME} ${VERSION}" \
   -srcfolder "${DMG_STAGE_DIR}" \
+  -size "${IMAGE_MB}m" \
   -ov \
   -format UDZO \
   -imagekey zlib-level=9 \

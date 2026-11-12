@@ -15,7 +15,7 @@
 
 ## 优先处理
 
-1. **独立版编码器封装**：当前嵌入资源使用 Windows PE / Win32 API。非 Windows 的 `resolveEncoder()` 除显式 `SPECTRUMTAG_FFMPEG` 覆盖外会返回无内置编码器错误。需要 macOS app bundle 中的 helper 查找、执行权限、架构、签名与相关许可处理；仅编译 app 并不足以得到可用的媒体导入导出。Windows FFmpeg EXE 不能带到 Mac 使用。
+1. **独立版编码器封装（2026-11-12 已实现）**：macOS 由 resolveEncoder() 从 Contents/Helpers/<当前运行架构>/ffmpeg 启动编码器，CMake 在链接后自动写入双架构 helper、许可与构建信息；本地输入用 packaging/macos/fetch-codec.sh（或 -DSPECTRUMTAG_MACOS_CODEC=/path/to/ffmpeg）。仍存边界：arm64 helper 未在 M 芯片实机执行验证，也未做 Developer ID 签名/公证；Windows FFmpeg EXE 仍不能带到 Mac 使用。
 2. **平台路径**：媒体工作目录在非 Windows 分支使用用户应用数据目录，但窗口文件选择器、测试与其他默认路径仍应逐项检查。不要把 Windows D: 路径照搬到 macOS，也不要依赖可写 app bundle。检查 `AudioFileSession.h`、`ModernStandalone.cpp`、`EmbeddedCodec.cpp`、共享录音缓存和测试目录参数。
 3. **测试可移植性**：Windows harness 存在 `_putenv_s` 等 Windows 写法；为 Apple Clang 处理环境变量、控制台/UI 初始化与链接差异。不要为让测试编译而改变产品的时间轴/回放语义。
 4. **安装器**：现有 `build_macos_installer.sh` 是上游旧入口，未为现代独立版与单独 ARA 交付重新验收。更新目标清单、版本、bundle 资源、rpath/dependencies、签名与 notarization 后再发布。

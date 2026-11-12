@@ -174,6 +174,122 @@ if(WIN32 AND spectrumtag_runtime_dir)
     target_include_directories(SpectrumTagStandalone PRIVATE "${codec_generated}")
     target_compile_definitions(SpectrumTagStandalone PRIVATE SPECTRUMTAG_EMBEDDED_CODEC=1)
 endif()
+# ============================================================================
+#  macOS：编码器以 app bundle 内的真实可执行文件随包分发
+# ----------------------------------------------------------------------------
+#  Windows 把 ffmpeg.exe 压进 PE 资源；macOS 需要
+#  SpectrumTag.app/Contents/Helpers/<arch>/ffmpeg（含依赖闭包），运行时由
+#  EmbeddedCodec.cpp 按当前运行架构（含 Rosetta）选择对应目录。查找顺序：
+#    1. SPECTRUMTAG_MACOS_CODEC 显式指定的 ffmpeg
+#    2. packaging/macos/runtime/<arch>/ffmpeg（packaging/macos/fetch-codec.sh 生成）
+#    3. Homebrew ffmpeg-full / ffmpeg
+#  找不到时不阻塞编译，但导出会提示编码器缺失，因此配置阶段给出警告。
+# ============================================================================
+if(APPLE)
+    set(SPECTRUMTAG_MACOS_CODEC "" CACHE FILEPATH
+        "ffmpeg executable to relocate into SpectrumTag.app/Contents/Helpers/<arch> (empty: auto-detect in-tree runtime or Homebrew)")
+    set(spectrumtag_app_archs "${CMAKE_OSX_ARCHITECTURES}")
+    if(NOT spectrumtag_app_archs)
+        execute_process(COMMAND uname -m
+            OUTPUT_VARIABLE spectrumtag_app_archs OUTPUT_STRIP_TRAILING_WHITESPACE)
+    endif()
+
+    find_program(spectrumtag_lipo lipo)
+    find_program(spectrumtag_brew brew)
+    set(spectrumtag_brew_codec "")
+    if(spectrumtag_brew)
+        foreach(spectrumtag_codec_formula ffmpeg-full ffmpeg)
+            execute_process(COMMAND "${spectrumtag_brew}" --prefix "${spectrumtag_codec_formula}"
+                RESULT_VARIABLE spectrumtag_brew_result
+                OUTPUT_VARIABLE spectrumtag_brew_prefix
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            if(spectrumtag_brew_result EQUAL 0 AND EXISTS "${spectrumtag_brew_prefix}/bin/ffmpeg")
+                set(spectrumtag_brew_codec "${spectrumtag_brew_prefix}/bin/ffmpeg")
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    if(SPECTRUMTAG_MACOS_CODEC AND NOT EXISTS "${SPECTRUMTAG_MACOS_CODEC}")
+        message(FATAL_ERROR
+            "[SpectrumTag] SPECTRUMTAG_MACOS_CODEC does not exist: ${SPECTRUMTAG_MACOS_CODEC}")
+    endif()
+
+    # 一个 ffmpeg 可能同时包含多个架构；只有与该 app 架构匹配时才能放进对应目录。
+    function(spectrumtag_codec_archs binary out_var)
+        set(archs "")
+        if(spectrumtag_lipo AND EXISTS "${binary}")
+            execute_process(COMMAND "${spectrumtag_lipo}" -archs "${binary}"
+                RESULT_VARIABLE lipo_result OUTPUT_VARIABLE lipo_output
+                OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            if(lipo_result EQUAL 0)
+                string(REPLACE " " ";" archs "${lipo_output}")
+            endif()
+        endif()
+        set(${out_var} "${archs}" PARENT_SCOPE)
+    endfunction()
+
+    set(spectrumtag_codec_archs_missing "")
+    set(spectrumtag_codec_archs_bundled "")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    foreach(spectrumtag_arch IN LISTS spectrumtag_app_archs)
+        set(spectrumtag_codec_candidates "")
+        if(SPECTRUMTAG_MACOS_CODEC)
+            list(APPEND spectrumtag_codec_candidates "${SPECTRUMTAG_MACOS_CODEC}")
+        endif()
+        list(APPEND spectrumtag_codec_candidates
+            "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/runtime/${spectrumtag_arch}/ffmpeg")
+        if(spectrumtag_brew_codec)
+            list(APPEND spectrumtag_codec_candidates "${spectrumtag_brew_codec}")
+        endif()
+
+        set(spectrumtag_arch_codec "")
+        foreach(spectrumtag_candidate IN LISTS spectrumtag_codec_candidates)
+            if(NOT EXISTS "${spectrumtag_candidate}")
+                continue()
+            endif()
+            spectrumtag_codec_archs("${spectrumtag_candidate}" spectrumtag_candidate_archs)
+            if(spectrumtag_arch IN_LIST spectrumtag_candidate_archs)
+                set(spectrumtag_arch_codec "${spectrumtag_candidate}")
+                break()
+            endif()
+        endforeach()
+
+        if(NOT spectrumtag_arch_codec)
+            list(APPEND spectrumtag_codec_archs_missing "${spectrumtag_arch}")
+        elseif(NOT Python3_Interpreter_FOUND)
+            list(APPEND spectrumtag_codec_archs_missing "${spectrumtag_arch}")
+        else()
+            # 依赖闭包改写、许可与构建信息记录由该脚本完成；每次重新链接后
+            # 重新执行，保证 app 内的 helper 与磁盘上的编码器一致。
+            add_custom_command(TARGET SpectrumTagStandalone POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E env HOMEBREW_NO_AUTO_UPDATE=1
+                        "${Python3_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/bundle_codec.py"
+                        "${spectrumtag_arch_codec}"
+                        "$<TARGET_BUNDLE_DIR:SpectrumTagStandalone>"
+                        "${spectrumtag_arch}"
+                COMMENT "Bundling ${spectrumtag_arch} audio/video codec: ${spectrumtag_arch_codec}"
+                VERBATIM)
+            list(APPEND spectrumtag_codec_archs_bundled "${spectrumtag_arch}")
+        endif()
+    endforeach()
+
+    if(spectrumtag_codec_archs_bundled)
+        message(STATUS "[SpectrumTag] macOS codec helper: ${spectrumtag_codec_archs_bundled}")
+    endif()
+    if(spectrumtag_codec_archs_missing)
+        if(NOT Python3_Interpreter_FOUND)
+            message(WARNING "[SpectrumTag] Python 3 is required to bundle the macOS codec.")
+        endif()
+        message(WARNING
+            "[SpectrumTag] No audio/video codec for macOS architecture(s): ${spectrumtag_codec_archs_missing}. "
+            "Run packaging/macos/fetch-codec.sh (or install Homebrew ffmpeg-full, or pass "
+            "-DSPECTRUMTAG_MACOS_CODEC=/path/to/ffmpeg) and rebuild; until then SpectrumTag.app "
+            "reports a missing codec when importing or exporting media.")
+    endif()
+endif()
+
 target_sources(SpectrumTagStandalone PRIVATE Standalone/EmbeddedCodec.cpp)
 target_link_libraries(SpectrumTagStandalone PRIVATE juce::juce_cryptography)
 

@@ -5,6 +5,12 @@ import argparse, hashlib, json, os, pathlib, re, shutil, subprocess
 def run(*args):
     return subprocess.check_output(args, text=True).strip()
 
+def try_run(*args):
+    try:
+        return run(*args)
+    except (OSError, subprocess.CalledProcessError):
+        return ''
+
 def dependencies(path):
     return [line.strip().split(' (compatibility version')[0]
             for line in run('otool', '-L', str(path)).splitlines()[1:]]
@@ -26,7 +32,10 @@ def main():
     source = pathlib.Path(a.encoder).resolve()
     dest = pathlib.Path(a.app) / 'Contents' / 'Helpers' / a.arch
     libs = dest / 'lib'; libs.mkdir(parents=True, exist_ok=True)
-    prefix = pathlib.Path(run('brew', '--prefix'))
+    # A static build (packaging/macos/fetch-codec.sh) needs no package manager;
+    # Homebrew formulae are only recorded when the encoder actually came from it.
+    prefix_name = try_run('brew', '--prefix')
+    prefix = pathlib.Path(prefix_name) if prefix_name else None
     mapped = {source: dest / 'ffmpeg'}; pending = [source]; edges = {}; names = {}; formulas = set()
     while pending:
         current = pending.pop(); edges[current] = []
@@ -68,16 +77,31 @@ def main():
             formulas.add(original.parts[original.parts.index('Cellar') + 1])
     notices = pathlib.Path(a.app) / 'Contents' / 'Resources' / 'ThirdParty' / a.arch
     notices.mkdir(parents=True, exist_ok=True)
-    metadata = json.loads(run('brew', 'info', '--json=v2', *sorted(formulas)))
-    (notices / 'homebrew-sources.json').write_text(json.dumps(metadata, indent=2) + '\n')
-    for formula in metadata['formulae']:
-        formula_dir = prefix / 'opt' / formula['name']
-        for root in [formula_dir, formula_dir / 'share' / 'licenses', formula_dir / '.brew']:
-            if not root.exists(): continue
-            for item in root.iterdir():
-                if item.is_file() and (re.match(r'(?i)(copying|license|notice|copyright)', item.name) or item.suffix == '.rb'):
-                    target = notices / formula['name']; target.mkdir(exist_ok=True); shutil.copy2(item, target / item.name)
-    (notices / 'FFmpeg-build.txt').write_text(run(str(dest / 'ffmpeg'), '-version') + '\n\n' + run(str(dest / 'ffmpeg'), '-buildconf') + '\n')
+    for name in ('COPYING.GPLv3', 'FFmpeg-NOTICE.txt'):
+        sidecar = source.parent / name
+        if sidecar.is_file(): shutil.copy2(sidecar, notices / name)
+    if formulas and prefix:
+        metadata = json.loads(run('brew', 'info', '--json=v2', *sorted(formulas)))
+        (notices / 'homebrew-sources.json').write_text(json.dumps(metadata, indent=2) + '\n')
+        for formula in metadata['formulae']:
+            formula_dir = prefix / 'opt' / formula['name']
+            for root in [formula_dir, formula_dir / 'share' / 'licenses', formula_dir / '.brew']:
+                if not root.exists(): continue
+                for item in root.iterdir():
+                    if item.is_file() and (re.match(r'(?i)(copying|license|notice|copyright)', item.name) or item.suffix == '.rb'):
+                        target = notices / formula['name']; target.mkdir(exist_ok=True); shutil.copy2(item, target / item.name)
+    else:
+        (notices / 'codec-sources.json').write_text(json.dumps({
+            'encoder': str(source),
+            'sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+            'note': 'Single static executable; no external libraries were relocated.'}, indent=2) + '\n')
+    # A cross-architecture helper cannot run on the packaging machine; record
+    # whatever the host can read instead of failing the build.
+    version = try_run(str(dest / 'ffmpeg'), '-version')
+    buildconf = try_run(str(dest / 'ffmpeg'), '-buildconf')
+    (notices / 'FFmpeg-build.txt').write_text(
+        (version or 'Version unavailable: this architecture cannot run on the packaging machine.') + '\n\n'
+        + (buildconf or '') + '\n')
     (notices / 'README.txt').write_text('FFmpeg and its libraries are separate open-source programs.\nExact source URLs, versions, checksums and build formulae are recorded alongside this notice.\nFFmpeg: https://ffmpeg.org/ ; Homebrew formulae: https://github.com/Homebrew/homebrew-core\nThe application invokes FFmpeg as a child process. No Homebrew installation is needed by the end user.\n')
     manifest = {str(v.relative_to(dest)): {'source': str(k), 'sha256': hashlib.sha256(v.read_bytes()).hexdigest()} for k, v in mapped.items()}
     (notices / 'runtime-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')

@@ -2,6 +2,42 @@
 
 维护日期：2026-11-12。当前源码版本 **2.0.1**。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
 
+## 2.0.1 macOS 独立版：编码器随包与安装包修复（2026-11-12）
+
+本轮只改 macOS 本地构建与打包链，产品功能、参数和 Windows 侧不变。触发问题：本机编译出的 `SpectrumTag.app` 一导入或导出媒体就提示 “The bundled audio/video codec is missing. Reinstall the complete SpectrumTag application.”。
+
+### 原因
+
+- 运行时按 `Contents/Helpers/<当前运行架构>/ffmpeg` 查找编码器（`Standalone/EmbeddedCodec.cpp`）。该路径此前只有 CI 填充：`.github/workflows/cross-platform.yml` 在构建后手工调用 `packaging/macos/bundle_codec.py`。
+- CMake 本地构建（Ninja / Unix Makefiles / CLion）没有对应步骤，也不给任何提示，因此本地产物必然缺少编码器。
+- 本机同样没有可用 FFmpeg：Homebrew 的 `ffmpeg` / `ffmpeg-full` 在 Intel macOS 上没有 bottle，安装等于从源码编译整套依赖。
+
+### 实现
+
+- `CMakeLists.txt`：`SpectrumTagStandalone` 链接后按 app 架构逐个执行 `bundle_codec.py`，把 helper 写入 `Contents/Helpers/<arch>/`，许可与构建信息写入 `Contents/Resources/ThirdParty/<arch>/`。编码器查找顺序：`-DSPECTRUMTAG_MACOS_CODEC=...` → `packaging/macos/runtime/<arch>/ffmpeg` → Homebrew `ffmpeg-full` / `ffmpeg`；找不到时只在配置阶段告警并点名缺失架构，不阻塞编译。
+- 新增 `packaging/macos/fetch-codec.sh`：下载官方 GPL 静态 FFmpeg（amd64 / arm64），用发布方 SHA-256 校验压缩包，校验 Mach-O 架构，保存 `COPYING.GPLv3` 与 `FFmpeg-NOTICE.txt`，并确认导出所需的 libx264/libx265/libvpx-vp9/libmp3lame/libvorbis/libopus/prores_ks/flac/pcm_s24le 齐全。`packaging/macos/runtime/` 已加入 `.gitignore`。
+- `packaging/macos/bundle_codec.py`：静态构建不再要求 Homebrew，改为记录编码器自身来源；复制同级许可与声明；本机不能执行的跨架构 helper 不再让构建失败，构建信息明确写“无法在打包机上运行”。
+- `build_macos_installer.sh`：打包前校验每个架构都有 `Contents/Helpers/<arch>/ffmpeg`，缺失直接失败并给出取码命令；第 7 步给 `hdiutil create` 显式传 `-size`（负载 + 64MB 余量）。
+- `README.md`：macOS 构建输入说明与 Windows 侧对齐。
+
+### 验证（2026-11-12，Intel macOS 15.2）
+
+- `build/` 与 `cmake-build-release/` 重新配置后都产出 `Helpers/arm64/ffmpeg`、`Helpers/x86_64/ffmpeg`；helper 的 `codesign --verify --strict` 通过。
+- 两个目录的 app 运行 `--codec-check` 均返回 `ok: true`。
+- `--video-test` 在这两个产物上通过：WAV、MP4（720p30、9:16）、MOV、MKV、WebM 导出、取消保护与像素一致性断言全绿。
+- `build_macos_installer.sh --skip-plugins` 完整跑通，产出 `dist/SpectrumTag-2.0.1-macOS.pkg`（68MB）与 `.dmg`（70MB）；`pkgutil --payload-files` 可见双架构 helper，DMG 已挂载核对。
+
+### 仍存边界
+
+- arm64 helper 在 Intel 上无法执行，只做了架构、签名、下载包 SHA-256 与该构建官方编码器清单的静态核对；M 芯片实机首次使用应先跑 `--codec-check` 或导出一段短视频。
+- 两个 helper 来自构建源各自的当前候选（x86_64 为 N-122320，arm64 为 N-128220），编码器覆盖一致但非同一修订；需要严格一致时用 `-DSPECTRUMTAG_MACOS_CODEC` 指定同一份编码器。
+- App 最低系统 11.0、编码器最低 12.0，实际要求 macOS 12+；官方安装包基线仍是 macOS 15。
+- 仍未做 Developer ID 签名与公证，跨机器安装可能被 Gatekeeper 拦截。
+
+### DMG “无剩余空间”的真实原因
+
+`hdiutil: create failed - 设备上无剩余空间` 与磁盘容量无关（当时可用约 250GB）。`hdiutil create -srcfolder` 的自动容量估算会少算几 MB：本机用普通随机文件复现，64MB 成功、65–70MB 稳定失败、72MB 及以上恢复成功。新 pkg 为 68MB，正好落在失败区间，1.4.3 时代的 24MB pkg 不会触发；改用显式 `-size` 后一次通过。
+
 ## 2.0.1 版本提升与本轮开发汇总（2026-11-12）
 
 源码版本由 **2.0.0 提升到 2.0.1**：`CMakeLists.txt` 的 `project(SpectrumTag VERSION)` 仍是唯一来源，`juce_add_plugin` 的 `VERSION`、独立版标题栏与关于信息里的 `JucePlugin_VersionString` 都跟着它走；`SpectrumTag_installer.iss` 与 `packaging/windows/installer.iss` 的兜底值同步改为 2.0.1，`build_installer.bat` 照旧从 CMakeLists 解析版本并校验产物。仍是源码基线：**未重新生成安装包**。
@@ -663,7 +699,7 @@ Noise Fill 的轻量预览使用原始频谱功率、掩模、反转、保留音
 完整平台交接见 [MAC_AU_HANDOFF.md](docs/MAC_AU_HANDOFF.md)。以下事项在本轮没有完成：
 
 1. **目标与身份**：实时 `SpectrumTag_VST3/AU` 使用 `Iisa/SpTg`；ARA `SpectrumTagARA_VST3/AU` 使用 `Iisa/SpAr`、独立 factory/archive ID 和 AU export prefix。不要为复用安装器把两个身份合并。配置中的 arm64+x86_64/macOS 11 不是实际 Universal 2 验证结果。
-2. **编码器**：Windows PE 内嵌资源不可用于 Mac。非 Windows `resolveEncoder()` 当前除显式 SPECTRUMTAG_FFMPEG 覆盖外会报无内置编码器；需 app bundle helper、架构、执行权限、签名和 notice/对应许可来源处理。
+2. **编码器（2026-11-12 已实现）**：Windows 用 PE 内嵌资源，macOS 用 `Contents/Helpers/<arch>/ffmpeg`，由 CMake 在链接后自动写入；输入用 `packaging/macos/fetch-codec.sh`（或 `-DSPECTRUMTAG_MACOS_CODEC=/path/to/ffmpeg`）。仍缺 arm64 helper 的 M 芯片实机执行验证，也未做 Developer ID 签名/公证。
 3. **路径和测试**：检查媒体临时目录、选择器默认路径、录音缓存、测试 `_putenv_s` 和 UI 初始化/链接，改为对应平台的可写位置。不要假定 macOS 有 D:，也不要依赖 app bundle 可写。
 4. **字体/窗口**：中文优先 PingFang SC，其次 Hiragino Sans GB/Heiti SC/Songti SC，保留 UTF-8 和原嵌入标题字体；不复制 Windows 系统字体。验证 Retina、初次/再次打开、停靠/浮动、宿主尺寸改变和中文裁切，保持有上限的尺寸同步。
 5. **宿主行为**：分开验证 AU 扫描注册、ARA document/source 生命周期、同轨选择、源变更、播放/离线无 UI 输出、保存重开/filtered restore/native Undo，以及 Apple Silicon 原生和需支持的 Rosetta 情形。不要用禁用 SIP 代替兼容修复。

@@ -97,7 +97,7 @@ Print 可以超出原始文件的开始或结尾，导出时长会相应延长�
 .\build-standalone-windows.ps1 -BuildDir D:\Codex\Temp\SpectrumTag-Standalone -RuntimeDir D:\Dependencies\SpectrumTagRuntime
 ```
 
-Windows 独立版的 RuntimeDir 需要 `ffmpeg.exe`、`COPYING.GPLv3` 和 `FFmpeg-NOTICE.txt`，构建时嵌入 EXE。Mac 的 [Cross-platform installers](.github/workflows/cross-platform.yml) 工作流分别构建两个架构，再合并并制作 PKG。当前安装入口位于 [packaging](packaging)，旧安装脚本和旧 Standalone 实现仅作历史参考。
+Windows 独立版的 RuntimeDir 需要 `ffmpeg.exe`、`COPYING.GPLv3` 和 `FFmpeg-NOTICE.txt`，构建时嵌入 EXE。Mac 独立版需要先运行 `./packaging/macos/fetch-codec.sh [--arch all]`（或 `-DSPECTRUMTAG_MACOS_CODEC=/path/to/ffmpeg`），构建时自动把编码器写入 `SpectrumTag.app/Contents/Helpers/<arch>/`；缺少时配置阶段会警告，导出会提示编码器缺失。Mac 的 [Cross-platform installers](.github/workflows/cross-platform.yml) 工作流分别构建两个架构，再合并并制作 PKG。当前安装入口位于 [packaging](packaging)，旧安装脚本和旧 Standalone 实现仅作历史参考。
 
 - [项目总览与完整开发过程](PROJECT_OVERVIEW.md)
 - [逐版更新](CHANGELOG.md)
@@ -179,7 +179,7 @@ Read [English TXT instructions](docs/INSTALL-EN.txt) or [安装说明（中文 T
 - There is no Windows publisher signature or Apple Developer ID signing/notarization. Mac bundles are ad-hoc signed. The guides cover system prompts, rescanning, duplicate versions, Logic ARA/Rosetta and fonts.
 - ARA requires a compatible host and the correct extension entry point. OnlyARA metadata cannot guarantee hiding from every host's ordinary insert menu. Automated validation is distinct from testing real projects in every DAW.
 
-Build with CMake 3.22+, C++17 and JUCE 8.0.15, using Visual Studio 2022 on Windows or Xcode command-line tools on Mac. See the Windows commands above. The standalone Windows codec input contains `ffmpeg.exe`, `COPYING.GPLv3` and `FFmpeg-NOTICE.txt`; it is embedded at build time. [Cross-platform installers](.github/workflows/cross-platform.yml) builds both Mac architectures and merges them into a PKG. Current packaging scripts are in [packaging](packaging).
+Build with CMake 3.22+, C++17 and JUCE 8.0.15, using Visual Studio 2022 on Windows or Xcode command-line tools on Mac. See the Windows commands above. The standalone Windows codec input contains `ffmpeg.exe`, `COPYING.GPLv3` and `FFmpeg-NOTICE.txt`; it is embedded at build time. The Mac standalone requires `./packaging/macos/fetch-codec.sh [--arch all]` (or `-DSPECTRUMTAG_MACOS_CODEC=/path/to/ffmpeg`); the build writes the codec to `SpectrumTag.app/Contents/Helpers/<arch>/`. Without it, configuration warns and exports report a missing codec. [Cross-platform installers](.github/workflows/cross-platform.yml) builds both Mac architectures and merges them into a PKG. Current packaging scripts are in [packaging](packaging).
 
 See the [development overview](PROJECT_OVERVIEW.md), [changelog](CHANGELOG.md), [Windows handoff](docs/WINDOWS_HANDOFF.md) and [Mac/AU handoff](docs/MAC_AU_HANDOFF.md) for implementation details and historical validation boundaries.
 
