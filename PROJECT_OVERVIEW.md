@@ -34,6 +34,15 @@
 - 记账：`echo` 文本里出现裸的 `)` 会提前闭合外层 `if (...)` 块，`REM` 里的 `<`/`>` 会被当成重定向；两处都已改掉（排错时踩过）。
 - 验证：`dist\SpectrumTag_Setup_2.0.0_x64.exe` 生成成功，Setup 的 `FileVersion`/`ProductVersion` 均为 2.0.0；把 `CMakeLists.txt` 临时改成 2.0.1 再执行，脚本按预期报“产物版本 2.0.0 与源码版本 2.0.1 不一致”并中止，恢复后再次打包正常。
 
+## 开发辅助：恢复首次打开状态（2026-11-12）
+
+`reset_first_run.bat`（仓库根目录）用于测试前把软件还原到“第一次打开”的状态。路径规则与 `shared/Presentation.h` 保持一致：`SPECTRUMTAG_PREFS_DIR` 优先，其次是存在 D 盘时的 `D:\Codex\PluginData\SpectrumTag`，否则 `%APPDATA%\SpectrumTag`（`Recordings`、`Standalone`、`Images`、`RenderCache` 都在该目录下）。
+
+- 删除 `preferences.xml`、`Standalone\`（上次会话与视频导出设置）、`Images\`（打印回填用的图片缓存）、`RenderCache\`、`Recordings\*.sptrec`，以及遥测文件 `%APPDATA%\iisaacbeats\Telemetry\spectrumtag.xml`（匿名 client_id）。只删这些子项，不删数据目录本身，也不碰音乐、图片和导出目录。
+- 参数：`/y` 不再确认、结束后不停顿（供脚本调用）；`/keep-recordings` 保留 `.sptrec`，已有 DAW 工程仍能打开；`/run` 重置后启动独立版。默认交互确认，并先显示数据目录大小与将要删除的内容。
+- 先 `taskkill` 正在运行的 `SpectrumTag.exe`，避免它退出时把 `preferences.xml` / `last-session.xml` 写回；拒绝盘符根目录等过短路径，防止误删。
+- 验证：在隔离目录（`SPECTRUMTAG_PREFS_DIR`）依次验证了全量重置（子项清空、目录保留、遥测删除）、`/keep-recordings`（只留 `Recordings`）、交互 Y（执行）与交互 N（取消且 0 删除）；不带环境变量时正确定位到 `D:\Codex\PluginData\SpectrumTag`（1513.2 MB）。
+
 ## 2.0.0 重构：图片对象的三种状态（2026-11-11）
 
 用户提出重新梳理“图片放进软件后”的整套交互，旧模型（原图/隐藏 + 点击频谱即打印 + 选中打印就地重渲染）被整体替换。
