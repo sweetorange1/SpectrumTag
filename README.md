@@ -73,7 +73,8 @@ Print 可以超出原始文件的开始或结尾，导出时长会相应延长�
 | 频谱右上角全览图标 | 适应已录制/加载的范围 |
 | Delete | 删除选中的 Print |
 | Ctrl + 拖动图片 | 原对象留在原位打印，拖走同样的副本 |
-| Ctrl+C / Ctrl+V | 记录当前对象 / 在播放位置新建副本（未聚焦任何对象时） |
+| Ctrl+C / Ctrl+V | 记录当前对象 / 在播放位置新建副本；正被聚焦的对象会保留为打印并自动取消聚焦 |
+| 「删除」右侧的复制按钮 | 等同 Ctrl+C，记录后按钮变为「粘贴」，再按等同 Ctrl+V |
 | Ctrl+Z / Ctrl+Shift+Z | 撤销 / 重做 |
 | Shift 拖动参数 / Alt+左键 | 微调 / 恢复默认值 |
 
@@ -164,7 +165,8 @@ Prints may extend before or after the source. Export duration expands accordingl
 | Top-right overview icon | Fit the recorded/loaded range |
 | Delete | Remove the selected Print |
 | Ctrl-drag the image | Leave a Print in place and drag a copy |
-| Ctrl+C / Ctrl+V | Copy the current object / create a copy at the playhead when nothing is focused |
+| Ctrl+C / Ctrl+V | Copy the current object / create a copy at the playhead; a focused object stays printed and unfocuses |
+| Copy button right of Delete | Same as Ctrl+C; it turns into Paste, which then acts as Ctrl+V |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
 | Shift-drag a parameter / Alt-click | Fine adjustment / reset to default |
 

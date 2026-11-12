@@ -167,6 +167,8 @@ int filelessUiTest(const juce::File& folder){try{
     need(processor.recording().snapshot()->sourceId.startsWith("generated:"),"blank canvas is still the generated placeholder");
     {auto ui=panel.createComponentSnapshot(panel.getLocalBounds());auto out=folder.getChildFile("standalone-empty.png").createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(ui,*out),"empty workspace screenshot");}
     need((int)view->getProperties()["audioBannerY"]>view->getHeight()/3,"the no-audio banner sits in the middle of the spectrum area");
+    auto* copyButton=dynamic_cast<juce::Button*>(revision1416::find(panel,"copyImage"));
+    need(copyButton!=nullptr&&!copyButton->isEnabled(),"the copy button exists next to Delete and stays dark without an object");
     juce::Image picture(juce::Image::RGB,96,128,true);{juce::Graphics g(picture);g.fillAll(juce::Colours::white);g.setColour(juce::Colours::black);g.fillRect(15,16,66,24);g.fillRect(36,30,24,78);}const auto path=folder.getChildFile("letter-T.png");{auto out=path.createOutputStream();juce::PNGImageFormat png;need(out&&png.writeImageToStream(picture,*out),"UI image fixture");}
     uiEditor->filesDropped({path.getFullPathName()},200,200);
     for(int i=0;i<4;++i){juce::MessageManager::getInstance()->runDispatchLoopUntil(5);juce::Timer::callPendingTimersSynchronously();}
@@ -347,14 +349,39 @@ int filelessUiTest(const juce::File& folder){try{
     wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==1&&!processor.recording().isBusy();});
     need(image->isVisible()&&image->hasImage(),"Ctrl-drag leaves a copy as the new image object");
     need(image->getNormalisedBounds().getX()>beforeCopy+.01f,"the Ctrl-drag copy follows the pointer");
-    // Ctrl+C 记录当前对象，Ctrl+V 在没有聚焦对象时于播放位置新建副本。
+    // Ctrl+C 记录当前对象，Ctrl+V 在播放位置新建副本。
     processor.auditionAt(2.0);
     panel.keyPressed(juce::KeyPress('c',juce::ModifierKeys::ctrlModifier,0));
     panel.keyPressed(juce::KeyPress('v',juce::ModifierKeys::ctrlModifier,0));
     wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==2&&!processor.recording().isBusy();});
     need(image->isVisible()&&image->hasImage(),"Ctrl+V creates a new image object");
     need(std::abs((double)view->getProperties()["imageStart"]-2.0)<.08,"Ctrl+V starts the new object at the playhead");
-    folder.getChildFile("ui-checks.log").replaceWithText("PASS empty-image guide with centred banner, audio-required Print gating, overview scrub/resize, loaded-audio Print, rounded print button, drag-printed-to-image, no-black-column when reverting, outline tool buttons, hidden Range with 22.05 kHz default, Ctrl-drag copy, Ctrl+C/Ctrl+V, Ctrl+Z/Shift+Ctrl+Z, Clear/undo, immediate/stopped Delete pixels, Desktop exports, progress popup/percentage/cancel/close\n");return 0;
+    // 聚焦态也能粘贴：选中的 Print 保持打印（自动打印），副本落在播放位置。
+    imagePrint->onClick();
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==3&&!processor.recording().isBusy();});
+    const auto focusCentre=view->getLocalPoint(image,image->getLocalBounds().getCentre()).toFloat();
+    view->mouseDown(mouse(focusCentre));view->mouseUp(mouse(focusCentre));
+    need(!image->isVisible(),"clicking a Print focuses it");
+    processor.auditionAt(3.0);
+    panel.keyPressed(juce::KeyPress('v',juce::ModifierKeys::ctrlModifier,0));
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==3&&!processor.recording().isBusy()&&image->hasImage()&&image->conversionReady()
+        &&std::abs((double)view->getProperties()["imageStart"]-3.0)<.08;});
+    need(image->isVisible(),"Ctrl+V unfocuses the selected Print and shows the new copy");
+    need(std::abs((double)view->getProperties()["imageStart"]-3.0)<.08,"pasting while focused still starts at the playhead");
+    // 删除按钮右侧的复制按钮：有对象才亮，先复制再粘贴，文案随状态切换。
+    need(copyButton->isEnabled(),"the copy button lights up with a selected object");
+    need(copyButton->getButtonText()==juce::String::fromUTF8("复制"),"the copy button starts as 复制");
+    {auto out=folder.getChildFile("copy-button.png").createOutputStream();juce::PNGImageFormat png;
+     need(out&&png.writeImageToStream(panel.createComponentSnapshot(panel.getLocalArea(copyButton,copyButton->getLocalBounds()).expanded(76)),*out),"copy button screenshot");}
+    copyButton->onClick();
+    need(copyButton->getButtonText()==juce::String::fromUTF8("粘贴"),"the copy button becomes 粘贴 after copying");
+    processor.auditionAt(4.0);
+    copyButton->onClick();
+    wait([&]{auto s=processor.recording().snapshot();return s&&s->edits.size()==4&&!processor.recording().isBusy()
+        &&std::abs((double)view->getProperties()["imageStart"]-4.0)<.08;});
+    need(std::abs((double)view->getProperties()["imageStart"]-4.0)<.08,"the paste button creates a copy at the playhead");
+    need(copyButton->getButtonText()==juce::String::fromUTF8("复制"),"the copy button returns to 复制 after pasting");
+    folder.getChildFile("ui-checks.log").replaceWithText("PASS empty-image guide with centred banner, audio-required Print gating, overview scrub/resize, loaded-audio Print, rounded print button, drag-printed-to-image, no-black-column when reverting, outline tool buttons, hidden Range with 22.05 kHz default, Ctrl-drag copy, Ctrl+C/Ctrl+V, paste while focused, copy/paste button, Ctrl+Z/Shift+Ctrl+Z, Clear/undo, immediate/stopped Delete pixels, Desktop exports, progress popup/percentage/cancel/close\n");return 0;
 }catch(const std::exception& e){folder.getChildFile("ui-failure.txt").replaceWithText(e.what());return 1;}}
 int viewTest(const juce::File& folder){try{
     folder.createDirectory();auto report=folder.getChildFile("view-checks.log").createOutputStream();

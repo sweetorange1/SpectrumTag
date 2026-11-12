@@ -1745,6 +1745,7 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     printButton.setComponentID("printButton");
     printButton.setTypeface (basementTypeface);
     recordButton.setComponentID("recordButton");removePrintButton.setComponentID("removePrint");clearRecordButton.setComponentID("clearRecord");
+    copyImageButton.setComponentID("copyImage");copyImageButton.onClick=[this]{if(copyButtonPaste)pasteImageObject();else copyImageObject();refreshCopyButton();};
     previousPrintButton.setComponentID("previousPrint");nextPrintButton.setComponentID("nextPrint");
     recordButton.onClick=[this]{
         if(processor.filePlayerMode){finishChange(true);if(processor.onLoadAudioFile)processor.onLoadAudioFile();return;}
@@ -1773,7 +1774,7 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
         persistEditorStateToProcessor();stableState=processor.captureUserState();
     };
     removePrintButton.onClick=[this]{removeSelected();};previousPrintButton.onClick=[this]{navigatePrint(false);};nextPrintButton.onClick=[this]{navigatePrint(true);};
-    for(auto* b:std::initializer_list<juce::Button*>{&recordButton,&removePrintButton,&clearRecordButton,&previousPrintButton,&nextPrintButton})addAndMakeVisible(b);
+    for(auto* b:std::initializer_list<juce::Button*>{&recordButton,&removePrintButton,&copyImageButton,&clearRecordButton,&previousPrintButton,&nextPrintButton})addAndMakeVisible(b);
     if(processor.isLoadMode()){recordButton.setComponentID("loadButton");clearRecordButton.setComponentID("clearLoad");}
     frequencyRangeLabel.setComponentID("frequencyRangeLabel");fftSizeLabel.setComponentID("fftSizeLabel");frequencyRangeCombo.setComponentID("frequencyRange");frequencyRangeCombo.addItemList({"20 kHz","24 kHz","22.05 kHz","48 kHz"},1);
     addAndMakeVisible(frequencyRangeCombo);addAndMakeVisible(frequencyRangeLabel);
@@ -2006,8 +2007,10 @@ void SpectrumTagAudioProcessorEditor::resized()
     const int recordX=459-toolbarOffset;
     recordButton.setBounds(recordX,52,recordW,28);
     removePrintButton.setBounds(recordX+recordW+8,52,75,28);
-    previousPrintButton.setBounds(recordX+recordW+91,52,70,28);
-    nextPrintButton.setBounds(recordX+recordW+167,52,70,28);
+    // 复制/粘贴按钮紧贴删除按钮右侧，导航箭头顺势右移。
+    copyImageButton.setBounds(recordX+recordW+91,52,68,28);
+    previousPrintButton.setBounds(recordX+recordW+167,52,70,28);
+    nextPrintButton.setBounds(recordX+recordW+243,52,70,28);
     clearRecordButton.setBounds(canvasWidth-300-46,52,34,28);
     frequencyRangeLabel.setBounds(canvasWidth-300,52,142,28);frequencyRangeCombo.setBounds(canvasWidth-158,52,138,28);
 
@@ -2222,7 +2225,11 @@ void SpectrumTagAudioProcessorEditor::timerCallback()
     recordButton.setButtonText(juce::String::fromUTF8(processor.isLoadMode()?(chineseTips?"加载音频":"Load audio"):processor.recording().isArmed()?(chineseTips?"停止录音":"Stop Rec"):(chineseTips?"录音":"Record")));
     recordButton.setColour(juce::TextButton::buttonColourId,processor.recording().isArmed()?juce::Colour(0xff983e56):kButtonBg);
     // 图片对象存在（未打印或聚焦）即可删除；清空按钮同时清除音频与全部图片。
-    removePrintButton.setEnabled(spectrumView->getImageBox().hasImage()||spectrumView->selectedPrint().has_value());
+    const bool objectSelected=spectrumView->getImageBox().hasImage()||spectrumView->selectedPrint().has_value();
+    removePrintButton.setEnabled(objectSelected);
+    // 复制按钮与删除按钮同样只在有对象时亮起；已经复制、等待粘贴时保持可用，
+    // 否则复制后一旦取消聚焦就按不到粘贴。
+    copyImageButton.setEnabled(objectSelected||(copyButtonPaste&&clipboardImagePath.isNotEmpty()));
     clearRecordButton.setEnabled(processor.recording().isEnabled()&&!processor.isClearPending());recordButton.setEnabled(!processor.isClearPending());
     previousPrintButton.setEnabled(!processor.isClearPending()&&adjacentPrint(false).isNotEmpty());nextPrintButton.setEnabled(!processor.isClearPending()&&adjacentPrint(true).isNotEmpty());
 #if SPECTRUMTAG_ARA
@@ -2517,23 +2524,46 @@ void SpectrumTagAudioProcessorEditor::duplicateImageObject(){
     syncImagePreview();spectrumView->refreshCanvas();changed();
 }
 // Ctrl+C：记录当前对象的图片。聚焦的 Print 用它记录的原图，未打印对象用图片框里的图。
-void SpectrumTagAudioProcessorEditor::copyImageObject(){
+bool SpectrumTagAudioProcessorEditor::copyImageObject(){
     juce::String path;
     if(const auto edit=spectrumView->selectedPrint())path=edit->imagePath;
     else if(spectrumView->getImageBox().hasImage())path=spectrumView->getImageBox().getImagePath();
-    if(path.isEmpty()||!juce::File(path).existsAsFile())return;
+    if(path.isEmpty()||!juce::File(path).existsAsFile())return false;
     clipboardImagePath=path;
+    copyButtonPaste=true;refreshCopyButton();
+    return true;
 }
-// Ctrl+V：没有聚焦对象时，以当前播放位置为左边缘新建一份副本。
-void SpectrumTagAudioProcessorEditor::pasteImageObject(){
-    if(clipboardImagePath.isEmpty())return;
+// Ctrl+V：以当前播放位置为左边缘新建一份副本。正在聚焦的对象先取消聚焦，
+// 它本身已经打印在频谱里（等于自动打印），图片框腾出来放新对象；
+// 若还有未打印的图片对象，loadImageObject 会先把它打印掉。
+bool SpectrumTagAudioProcessorEditor::pasteImageObject(){
+    if(clipboardImagePath.isEmpty())return false;
     const juce::File file(clipboardImagePath);
-    if(!file.existsAsFile()||spectrumView->selectedPrint())return;
+    if(!file.existsAsFile())return false;
     const double at=processor.audition().position();
     finishChange(true);beginChange();
-    if(!loadImageObject(file)){finishChange(true);return;}
+    if(spectrumView->selectedPrint()){
+        // 与“点空白处取消聚焦”一致：打印留在频谱里，图片框腾空准备接新对象。
+        spectrumView->selectEdit({});placementId={};
+        spectrumView->getImageBox().clearImage();
+        spectrumView->refreshCanvas();
+    }
+    if(!loadImageObject(file)){finishChange(true);refreshCopyButton();return false;}
     spectrumView->placeImageStartAt(at);
+    copyButtonPaste=false;
     changed();finishChange(true);
+    refreshCopyButton();
+    return true;
+}
+// 复制按钮：平时是「复制」（等同 Ctrl+C），记录好之后变成「粘贴」（等同 Ctrl+V）。
+void SpectrumTagAudioProcessorEditor::refreshCopyButton(){
+    const bool paste=copyButtonPaste&&clipboardImagePath.isNotEmpty();
+    copyImageButton.setButtonText(juce::String::fromUTF8(paste?(chineseTips?"粘贴":"Paste"):(chineseTips?"复制":"Copy")));
+    copyImageButton.setTooltip(juce::String::fromUTF8(paste
+        ?(chineseTips?"粘贴：结束当前聚焦，并在播放位置新建一份副本。快捷键 Ctrl+V。"
+                     :"Paste: end the current focus and create a copy at the playhead. Shortcut: Ctrl+V.")
+        :(chineseTips?"复制当前图片对象，随后可在播放位置粘贴副本。快捷键 Ctrl+C。"
+                     :"Copy the current image object, then paste a copy at the playhead. Shortcut: Ctrl+C.")));
 }
 void SpectrumTagAudioProcessorEditor::refreshLanguage(){
     auto tr=[this](const char* zh,const char* en){return juce::String::fromUTF8(chineseTips?zh:en);};lookAndFeel.setChinese(chineseTips);
@@ -2550,6 +2580,7 @@ void SpectrumTagAudioProcessorEditor::refreshLanguage(){
     fftScaleCombo.setSelectedId(1+processor.getFrequencyScale(),juce::dontSendNotification);
     imageModeCombo.sendLookAndFeelChange();fftScaleCombo.sendLookAndFeelChange();
     removePrintButton.setButtonText(tr("删除","Delete"));previousPrintButton.setButtonText(tr("上一个打印","Previous Print"));nextPrintButton.setButtonText(tr("下一个打印","Next Print"));
+    refreshCopyButton();
     recordButton.setButtonText(processor.isLoadMode()?tr("加载音频","Load audio"):tr("录音","Record"));printButton.setButtonText(tr("打印","Print"));printButton.setTypeface(chineseTips?spectrumtag::ui::chineseTypeface():basementTypeface);printButton.setTypeScale(chineseTips?spectrumtag::ui::chineseScale:1.0f);
     spectrumView->setChinese(chineseTips);tooltipLanguageButton.setButtonText(juce::String::fromUTF8(chineseTips?"中文":"EN"));updateTooltips();resized();repaint();
 }
@@ -2577,7 +2608,7 @@ void SpectrumTagAudioProcessorEditor::updateTooltips(){
     const auto fineTip=tr(" 按住 Shift 拖动或滚轮可微调（1/10 速度）。"," Hold Shift while dragging or scrolling for fine adjustment (1/10 speed).");
     for(auto* slider:{&speedSlider,&amplitudeSlider,&imageAmountSlider,&noiseFillSlider})slider->setTooltip(slider->getTooltip()+fineTip);
     printButton.setTooltip(tr("未录音时仅在播放期间实时试听；停止时点击不执行，也不排队。录音后隐藏原图，在图片位置显示模拟图形和渲染进度，完成后显示真实频谱。同一位置重复打印不会叠加。","Before recording, Print auditions only while playing; stopped clicks do nothing and are not queued. Recorded mode hides the source image and shows a simulation with render progress at its position, then the actual spectrum. Repeating Print replaces without stacking."));
-    auto navigation=tr("滚轮左右浏览；Shift 或 Ctrl+滚轮只缩放时间视图。单击已打印的图形会聚焦它并显示原图与边框；点击非打印区域定位并取消聚焦。图片下方按钮把图片打印进频谱；聚焦后任何拖动或参数修改都会撤掉这次打印、回到未打印状态，需要重新打印。Ctrl+拖动图片＝原位留一份打印、拖走同样的副本；Ctrl+C 记录当前对象，Ctrl+V 在没有聚焦对象时于播放位置新建副本。Ctrl+Z 撤销。下方波形可按住拖动连续定位；拖动白框左右两端可缩放时间视图（等同 Speed / Ctrl+滚轮）。","Wheel pans time; Shift or Ctrl-wheel scales the time view only. Click a Print to focus it and reveal the source image with its frame; clicking elsewhere seeks and unfocuses. The button under the image prints it into the spectrum; once focused, any drag or parameter change removes that Print and returns to the unprinted state, so print again afterwards. Ctrl-drag the image leaves a Print in place and drags a copy; Ctrl+C copies the current object, Ctrl+V creates a copy starting at the playhead when nothing is focused. Ctrl+Z undoes. Drag the overview waveform to scrub; drag either edge of its white view box to zoom the time view (same as Speed / Ctrl-wheel).");
+    auto navigation=tr("滚轮左右浏览；Shift 或 Ctrl+滚轮只缩放时间视图。单击已打印的图形会聚焦它并显示原图与边框；点击非打印区域定位并取消聚焦。图片下方按钮把图片打印进频谱；聚焦后任何拖动或参数修改都会撤掉这次打印、回到未打印状态，需要重新打印。Ctrl+拖动图片＝原位留一份打印、拖走同样的副本；Ctrl+C 记录当前对象，Ctrl+V 随时可在播放位置新建副本，正在聚焦的对象会保留为打印并取消聚焦。Ctrl+Z 撤销。下方波形可按住拖动连续定位；拖动白框左右两端可缩放时间视图（等同 Speed / Ctrl+滚轮）。","Wheel pans time; Shift or Ctrl-wheel scales the time view only. Click a Print to focus it and reveal the source image with its frame; clicking elsewhere seeks and unfocuses. The button under the image prints it into the spectrum; once focused, any drag or parameter change removes that Print and returns to the unprinted state, so print again afterwards. Ctrl-drag the image leaves a Print in place and drags a copy; Ctrl+C copies the current object, Ctrl+V creates a copy at the playhead at any time, keeping a focused Print printed and unfocusing it. Ctrl+Z undoes. Drag the overview waveform to scrub; drag either edge of its white view box to zoom the time view (same as Speed / Ctrl-wheel).");
     spectrumView->setTooltip(navigation);spectrumView->getImageBox().setTooltip(tr("拖动移动，右下角等比缩放，Ctrl+拖动留下一份副本，单击或双击换图。","Drag to move; lower-right corner resizes proportionally; Ctrl-drag leaves a copy behind; click or double-click to load an image.")+"\n"+navigation);
     spectrumView->setPrintButtonTooltip(tr("把这张图片打印进频谱。打印后图片隐藏，点击频谱里的位置可以重新聚焦并查看边框。","Print this picture into the spectrum. The image is hidden afterwards; click its position in the spectrum to focus it again."));
     if(processor.filePlayerMode){

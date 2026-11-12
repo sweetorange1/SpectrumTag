@@ -354,7 +354,7 @@ private:
     private:
         const bool pointsRight;
     };
-    juce::TextButton recordButton {"Record"},removePrintButton {"Delete"};
+    juce::TextButton recordButton {"Record"},removePrintButton {"Delete"},copyImageButton {"Copy"};
     TrashButton clearRecordButton;
     PrintNavigationButton previousPrintButton {false},nextPrintButton {true};
     juce::ComboBox frequencyRangeCombo;
@@ -384,9 +384,11 @@ private:
     // 图片对象的新建/复制：loadImageObject 只负责载入并落位，撤销步由调用者提交。
     bool loadImageObject(const juce::File& file);
     void duplicateImageObject();   // Ctrl+拖动：原位留一份 Print，拖走副本
-    void copyImageObject();        // Ctrl+C：记录当前对象的图片
-    void pasteImageObject();       // Ctrl+V：在播放位置新建一份副本
+    bool copyImageObject();        // Ctrl+C：记录当前对象的图片
+    bool pasteImageObject();       // Ctrl+V：在播放位置新建一份副本
+    void refreshCopyButton();      // 复制/粘贴按钮的文案与提示
     juce::String clipboardImagePath;
+    bool copyButtonPaste=false;    // 复制按钮已记录对象，下一步是粘贴
     void updateTooltips();
     juce::LookAndFeel_V4 tooltipLookAndFeel;
     juce::TooltipWindow tooltipWindow {this,600};
