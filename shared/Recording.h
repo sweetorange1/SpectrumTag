@@ -21,6 +21,9 @@ struct PrintEdit {
     float speed=1, amount=.5f, displayTop=22000, imageAspect=1;
     double viewZoom=1;
     int imageMode=0, scaleMode=0, fillVersion=1;
+    // 灰度模式：0=黑白二值，1=连续灰度；对比/亮度 0..1，0.5 中性。
+    int imageStyle=0;
+    float grayContrast=.5f, grayBrightness=.5f;
     std::shared_ptr<const std::vector<float>> mask;
     bool valid() const;
 };
@@ -32,7 +35,8 @@ inline bool sameAudioEdit(const PrintEdit& a,const PrintEdit& b) {
 inline bool sameEdit(const PrintEdit& a,const PrintEdit& b) {
     return sameAudioEdit(a,b)&&a.imagePath==b.imagePath&&a.speed==b.speed&&a.amount==b.amount
         &&a.displayTop==b.displayTop&&a.imageAspect==b.imageAspect&&a.viewZoom==b.viewZoom
-        &&a.imageMode==b.imageMode&&a.scaleMode==b.scaleMode;
+        &&a.imageMode==b.imageMode&&a.scaleMode==b.scaleMode
+        &&a.imageStyle==b.imageStyle&&a.grayContrast==b.grayContrast&&a.grayBrightness==b.grayBrightness;
 }
 inline bool sameEdits(const std::shared_ptr<const std::vector<PrintEdit>>& a,const std::shared_ptr<const std::vector<PrintEdit>>& b) {
     if(a==b)return true;if(!a||!b)return (!a||a->empty())&&(!b||b->empty());

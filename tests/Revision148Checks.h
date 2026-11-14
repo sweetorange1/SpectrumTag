@@ -7,11 +7,10 @@ static void revision148Checks(const juce::File& dir){
     std::unique_ptr<juce::AudioProcessorEditor> editor(p.createEditor());tickUI();
     auto* view=componentWithID(*editor,"spectrumView");auto* box=imageBox(*editor);
     auto* clear=dynamic_cast<juce::Button*>(componentWithID(*editor,"clearRecord"));
-    // 图片可见性由三态决定：右键不再能显示/隐藏原图。
+    // 图片可见性由三态决定，没有眼睛按钮；右键的新语义（打印 / 退回图片 /
+    // 聚焦最近的打印）由 2.0.1 的右键用例覆盖。
     if(!box->hasImage()){dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();}
-    const bool shown=box->isVisible();const double beforeRight=(double)view->getProperties()["displayEnd"];
-    view->mouseDown(mouseAt(*view,{400,200},true));require(box->isVisible()==shown,"148 right-click no longer toggles the source image");
-    require((double)view->getProperties()["displayEnd"]==beforeRight,"148 right-click does not fit or move the timeline");
+    require(box->isVisible(),"148 a dropped image is visible without a toggle");
     auto* fit=componentWithID(*view,"fitSpectrum");require(fit&&fit->getRight()>view->getWidth()-12&&fit->getY()<12,"148 Fit icon sits in spectrum top right");
     juce::MidiBuffer midi;juce::AudioBuffer<float> block(2,256);std::mt19937 rng(148);std::uniform_real_distribution<float> noise(-.15f,.15f);
     auto play=[&]{for(int c=0;c<2;++c)for(int i=0;i<256;++i)block.setSample(c,i,noise(rng));p.processBlock(block,midi);host.sample+=256;};
@@ -73,5 +72,5 @@ static void revision148Checks(const juce::File& dir){
     for(size_t i=0;i<unprinted->spectrum.size();++i)require(unprinted->spectrum[i]==preDelete->originalSpectrum[i],"148 Delete reuses pre-Print spectrum without recomputing FFT");
     for(int64_t i=0;i<8*48000;i+=19)require(unprinted->sample(0,i)==unprinted->sample(0,i,false),"148 Delete removes all noise and restores original audio");
     std::cout<<"148_SUPERSEDE total_ms="<<deletion-began<<" delete_restore_ms="<<juce::Time::getMillisecondCounterHiRes()-deletion<<"\n";
-    std::cout<<"1.4.8 CHECKS PASSED; Clear/live/history/tail/Undo, smooth wheel, image toggle, Fit icon, 20 kHz default and renderer progress\n";
+    std::cout<<"1.4.8 CHECKS PASSED; Clear/live/history/tail/Undo, smooth wheel, three image states, Fit icon, 20 kHz default and renderer progress\n";
 }

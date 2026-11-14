@@ -153,15 +153,20 @@ public:
     // 设置当前图片（从文件加载并预处理）
     bool loadImageFromFile (const juce::File& file);
     bool hasImage() const { return sourceImage.isValid(); }
-    void clearImage(){sourceImage={};binaryMask={};binaryPreview={};imagePath={};requestedConversion=converter.request({},conversionMode,conversionAmount);appliedConversion=0;repaint();}
+    void clearImage(){sourceImage={};binaryMask={};binaryPreview={};inkOverlay={};inkOverlayValid=false;imagePath={};requestedConversion=converter.request({},conversionMode,conversionAmount);appliedConversion=0;repaint();}
     juce::String getImagePath() const { return imagePath; }
     void setImagePathForRecall(const juce::String& path){imagePath=path;}
 
     // 把当前图片渲染成 mask（rows = numFreqBins, cols 根据 contentBounds 宽度）
     // 1.0 = 形状内, 0.0 = 形状外
     std::vector<float> generateMask (int numFreqBins, int numCols, int scale=0, float low=0, float high=1, bool completedPreview=false) const;
-    void setConversion(int mode, float amount, bool inverted, float ratio=0.0f);
-    juce::Image getPreviewImage() const {return spectrumtag::image::preview(conversionReady()?binaryMask:spectrumtag::image::binarize(sourceImage,{conversionMode,conversionAmount}),previewInverted,previewRatio);}
+    void setConversion(int mode, float amount, bool inverted, float ratio=0.0f,
+                       bool grayscale=false, float contrast=0.5f, float brightness=0.5f);
+    // 彩色图片（照片、插画）自动切灰度；线稿/黑白图保持二值。
+    bool sourceHasColour() const {return spectrumtag::image::hasColour(sourceImage);}
+    // 当前图片的自动灰度参数（对比/亮度）。
+    spectrumtag::image::GrayTone grayTone() const {return spectrumtag::image::autoGrayTone(sourceImage);}
+    juce::Image getPreviewImage() const {return spectrumtag::image::preview(conversionReady()?binaryMask:spectrumtag::image::binarize(sourceImage,conversion()),previewInverted,previewRatio,grayscaleMode);}
     float aspect() const {return sourceImage.isValid()?(float)sourceImage.getWidth()/sourceImage.getHeight():1.0f;}
     bool conversionReady() const {return requestedConversion==appliedConversion;}
     bool refreshConversion();
@@ -208,6 +213,9 @@ private:
     void resizedFromNorm();
     void dragToParentPoint (juce::Point<int> parentPoint);
     void preprocessImage();   // 生成二值化预览
+    // 未打印对象的“打印后”外观：透明底 + 墨迹（黑色、逐像素 alpha），
+    // 让下面的频谱直接透出来，而不是盖一张白底卡。
+    void rebuildInkOverlay();
     void openFileChooser();
     // 加载新图后/contentBounds 改变后：把 normRect 调整为图片宽高比
     // （以当前 normRect.height 为基准反推 width；若超界则反过来）
@@ -227,7 +235,12 @@ private:
     float conversionAmount=0.5f;
     bool previewInverted=false;
     float previewRatio=0;
+    bool grayscaleMode=false;           // true=连续灰度（照片），false=二值阈值
+    float grayContrast=0.5f, grayBrightness=0.5f;
+    spectrumtag::image::Settings conversion() const {return {conversionMode,conversionAmount,grayscaleMode,grayContrast,grayBrightness};}
     juce::Image  binaryPreview;         // 二值化预览（灰度）
+    juce::Image  inkOverlay;            // 打印墨迹覆盖层（黑，逐像素 alpha）
+    bool         inkOverlayValid=false;
     juce::String imagePath;
     float        binaryThreshold = 0.5f;
 
@@ -326,6 +339,12 @@ private:
     juce::Label    amplitudeLabel  { {}, "Amplitude Ratio:" };
     juce::Label    invertLabel     { {}, "Invert:" };
 
+    juce::Label imageStyleLabel {{}, "Image style:"};
+    juce::ComboBox imageStyleCombo;
+    juce::Label imageGrayContrastLabel {{}, "Gray contrast:"};
+    juce::Label imageGrayBrightnessLabel {{}, "Gray brightness:"};
+    spectrumtag::FineSlider imageGrayContrastSlider;
+    spectrumtag::FineSlider imageGrayBrightnessSlider;
     juce::Label imageModeLabel {{}, "Image B/W:"};
     juce::Label imageAmountLabel {{}, "B/W amount:"};
     juce::ComboBox imageModeCombo;
@@ -424,8 +443,9 @@ private:
     std::unique_ptr<SliderAttachment> speedAttachment;
     std::unique_ptr<SliderAttachment> amplitudeAttachment;
     std::unique_ptr<ButtonAttachment> invertAttachment;
-    std::unique_ptr<ComboAttachment> imageModeAttachment;
-    std::unique_ptr<SliderAttachment> imageAmountAttachment;
+    std::unique_ptr<ComboAttachment> imageStyleAttachment,imageModeAttachment;
+    std::unique_ptr<SliderAttachment> imageAmountAttachment,imageGrayContrastAttachment,imageGrayBrightnessAttachment;
+    void updateImageStyleControls();
 
     // ---- 等比缩放约束 ----
     juce::ComponentBoundsConstrainer resizeConstrainer;

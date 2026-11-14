@@ -1,6 +1,58 @@
 # SpectrumTag 项目总览与开发过程
 
-维护日期：2026-11-12。当前源码版本 **2.0.1**。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
+维护日期：2026-11-14。当前源码版本 **2.0.1**。本文件是后续维护的统一入口：记录当前架构、需求演变、开发过程、问题诊断、验证边界与平台交接。面向用户的操作说明见 [README](README.md)。
+
+## 2.0.1 频谱右键：打印 / 退回图片 / 聚焦最近的打印（2026-11-14）
+
+右键不弹菜单，按图片对象的三态决定动作（`SpectrumView::contextClick()`）：
+
+| 当前状态 | 右键 |
+|---|---|
+| 状态1 未打印（有源图） | 等同图片下方的打印按钮，走 `onPrintClicked()`（没有真实音频时照常高亮“先加载音频”） |
+| 状态3 已打印且聚焦 | `unprintFocused()`：撤掉这次打印、按 `imagePath` 把源图摆回原打印范围，回到状态1；一次右键是一个撤销步 |
+| 无聚焦对象（状态2 / 空） | 聚焦离点击位置最近的已打印图形：距离取点击点到该 Print 矩形的二维最近距离；没有 Print 时什么也不做 |
+
+- 入口：`SpectrumView::mouseDown` 在 `contentBounds` 内拦下 `isRightButtonDown()`；图片框上的右键经 `imageBox->addMouseListener(this,true)` 转到同一入口（`ImageBoxComponent` 自身仍只处理左键）。用 `isRightButtonDown()` 而不是 `isPopupMenu()`，把 macOS 的 Ctrl+左键留给 Ctrl+拖动复制。
+- 新增 `onContextRevert` 回调，编辑器里用 `beginChange() → unprintFocused() → finishChange(true)` 合并成一个撤销步。
+- 状态栏提示随三态变化：右键打印 / 右键退回图片 / 右键聚焦最近的打印。
+
+### 验证（2026-11-14）
+
+- `SpectrumTagVerify --checks201` 通过（新增 `tests/Revision201Checks.h`，产物 `201-right-click-focus.png`）：空工作区右键无操作、状态1右键打印、两个对象时按点击位置聚焦较近者、状态3右键退回图片且另一个 Print 保留、退回后再右键重新打印、再点较早对象时聚焦的是光标下的那个。
+- `--checks` 完整跑到并打印 `1.4.8 CHECKS PASSED` 与 `2.0.1 RIGHT-CLICK CHECKS PASSED`；随后仍停在既有问题（1.4.9 尾部 `149-preset-5.png` 之后 0xC0000005），原始代码用同样的跑法也停在同一点，不是本轮引入。
+- `Revision148Checks` 里“右键不再切换原图 / 不移动时间轴”的旧断言同步为三态可见性断言。
+
+## 2.0.1 状态1 图片预览：透明底 + 打印墨迹（2026-11-14）
+
+未打印对象不再盖一张“白底黑图”的卡片，改为按打印后的样子铺在频谱上：
+
+- **白底移除**：图片框内部不再填白/灰，原频谱直接透出来；空的投放引导仍保留原来的灰底和文案。
+- **墨迹**：`ImageBoxComponent::rebuildInkOverlay()` 把掩模转成一层黑色 ARGB 覆盖层，受影响像素按 `1 - sqrt(保留音量)` 取 alpha（0% 时完全黑，不再保留透视；灰度模式下强度 1 的纯黑像素必扣净），非墨迹像素完全透明；反转时取掩模补集。
+- **可读性**：整框叠 8% 白色底衬。深色频谱上墨迹仍能看成一个更暗的图形，亮频谱上几乎察觉不到；覆盖层按长边 384 采样并缓存，拖动/缩放不重建，只在掩模、保留音量或反转变化时失效。
+- 虚线框、右下角缩放标记、打印按钮不变。
+
+### 验证（2026-11-14）
+
+- `SpectrumTagVerify --checks201` 通过，并输出三张产物：`201-placing.png`（深色频谱）、`201-placing-bright.png`（压在亮频谱带上）、`201-placing-invert.png`（反转），确认白底消失、墨迹压暗频谱、反转取的是形状之外。
+- `--checks` 到 1.4.8 / 2.0.1 全绿（停点与既有问题相同）；独立版 `--fileless-ui-test` 通过。
+
+## 2.0.1 灰度模式：照片式连续衰减（2026-11-14）
+
+拖入彩色图片时自动切到灰度；线稿/黑白图继续走二值。右侧新增「图像风格」（黑白/灰度）以及「灰度对比」「灰度亮度」两个滑杆；灰度模式下二值阈值方法/强度自动变暗禁用，反之灰度滑杆在黑白模式下禁用。
+
+### 实现
+
+- `image::Settings` 增加 `grayscale/contrast/brightness`；`binarize()` 在灰度模式下按亮度与对比/亮度参数计算每个像素的 ink（0=不衰减，1=全衰减）写入掩模 alpha，二值模式逻辑不变。
+- `image::rasterize(..., continuous)` 与 `image::preview(..., continuous)` 保留连续 alpha。`PrintEdit.mask` 原本就是 `float`，渲染端（`RecordingEngine::apply` 的 `difference`、实时 `jmap(m,1,ratioGain)`、`OfflineRenderer`、`TargetFill`、`printPreview`）一直按 0..1 连续插值，因此 DSP 无需改动，灰度值越大的频段/时间格衰减越多。
+- `image::hasColour()` 用 256 px 缩略图统计色度：可见像素（alpha≥0.25）中 ≥25% 的色度 >0.12 判为彩色；`loadImageObject()` 据此把 `imageStyle` 设置为灰度或黑白（自动判断可被手动覆盖，下一次拖图重新判断）。
+- `image::autoGrayTone()` 按当前图片可见像素亮度的 10%/90% 分位拟合灰度端点：暗部起点上移 0.08、亮部终点下降 0.02，再换算成对比/亮度（对比下限 0.55、亮度限制 0.35–0.65）；每次拖入彩色图都重算并直接写入参数，**不继承上一张图**。`binarize()` 对亮度 <0.02 的像素强制 ink=1，保证纯黑始终扣净。
+- 新参数 `imageStyle`、`imageGrayContrast`、`imageGrayBrightness` 追加在参数表末尾，保持旧工程自动化索引；`PrintEdit` 新增 `imageStyle/grayContrast/grayBrightness`，记录格式升到 **SPT6**（SPT5 及更早按黑白 + 0.5 默认读取），ARA 状态树同步读写；`sameEdit` 比较灰度参数。
+- 左侧预览墨迹按灰度强度逐像素取 alpha；图像相关五行改为「标签 + 控件同排」，保证独立版右下角导出圆钮不遮挡面板。
+
+### 验证（2026-11-14）
+
+- `SpectrumTagVerify --checks202` 通过（产物 `202-colour.png`、`202-flat.png`、`202-grayscale-auto.png`、`202-grayscale-placing.png`、`202-grayscale-print.png`）：线稿保持二值、彩色图自动灰度且掩模出现连续值、对比/亮度改变掩模、打印记录保存灰度参数、工程保存/恢复后 `sameEdit` 一致；另外验证换图后自动参数重新拟合（不继承手改的 0.05）、两张不同图片得到不同参数（梯度图 0.816/0.462，黑+橙图 0.735/0.65）、纯黑区域掩模值必为 1.0。
+- `--checks201`、`--checks1410/1412/1421` 通过；独立版 `--fileless-ui-test` 通过；`--checks` 到 1.4.8/2.0.1 全绿（停点仍是既有 1.4.9 问题）。
 
 ## 2.0.1 macOS 独立版：编码器随包与安装包修复（2026-11-12）
 

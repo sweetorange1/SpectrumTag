@@ -25,7 +25,7 @@ static void revision1411Checks(const juce::File& dir) {
     auto a=image::binarize(gray,{2,.5f}),b=image::binarize(gray,{2,.501f}),c=image::binarize(gray,{2,.503f});
     require(a.getPixelAt(128,0).getAlpha()==0&&b.getPixelAt(128,0).getAlpha()==0&&c.getPixelAt(128,0).getAlpha()==255,"1411 tiny amount steps do not invent grayscale detail");
     PreviewWorker worker;auto big=gray.rescaled(2048,2048);uint64_t wanted=0;bool duringDrag=false;const auto deadline=juce::Time::getMillisecondCounter()+5000;
-    while(juce::Time::getMillisecondCounter()<deadline){wanted=worker.request(big,1,.3f+(wanted%300)*.001f);juce::Thread::sleep(1);if(auto result=worker.result()){duringDrag=true;require(result->generation<=wanted&&result->source==big&&result->mode==1,"1411 intermediate frame belongs to the current image");break;}}
+    while(juce::Time::getMillisecondCounter()<deadline){wanted=worker.request(big,1,.3f+(wanted%300)*.001f);juce::Thread::sleep(1);if(auto result=worker.result()){duringDrag=true;require(result->generation<=wanted&&result->source==big&&result->settings.mode==1,"1411 intermediate frame belongs to the current image");break;}}
     require(duringDrag,"1411 completed conversion is published while requests continue");
     wanted=worker.request(gray,2,.503f);std::shared_ptr<const PreviewWorker::Result> final;
     for(int i=0;i<1000;++i){final=worker.result();if(final&&final->generation==wanted)break;juce::Thread::sleep(2);}

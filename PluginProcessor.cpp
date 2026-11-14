@@ -1681,9 +1681,12 @@ bool SpectrumTagAudioProcessor::triggerPrintFromAutomationInternal()
     juce::Image src = juce::ImageFileFormat::loadFrom (imgFile);
     if (! src.isValid()) return false;
 
-    const spectrumtag::image::Settings conversion {
-        (int)*apvts.getRawParameterValue(ParameterIDs::imageMode),
-        *apvts.getRawParameterValue(ParameterIDs::imageAmount) };
+    spectrumtag::image::Settings conversion;
+    conversion.mode = (int)*apvts.getRawParameterValue(ParameterIDs::imageMode);
+    conversion.amount = *apvts.getRawParameterValue(ParameterIDs::imageAmount);
+    conversion.grayscale = *apvts.getRawParameterValue(ParameterIDs::imageStyle) > 0.5f;
+    conversion.contrast = *apvts.getRawParameterValue(ParameterIDs::imageGrayContrast);
+    conversion.brightness = *apvts.getRawParameterValue(ParameterIDs::imageGrayBrightness);
     auto binary = spectrumtag::image::binarize(src, conversion);
 
     // 3) 计算 rows / cols / 频率范围 / duration
@@ -1721,7 +1724,7 @@ bool SpectrumTagAudioProcessor::triggerPrintFromAutomationInternal()
     const float lowNorm  = juce::jlimit (0.0f, 1.0f, fLow  / juce::jmax (1.0f, maxHz));
     const float highNorm = juce::jlimit (0.0f, 1.0f, fHigh / juce::jmax (1.0f, maxHz));
 
-    auto mask = spectrumtag::image::rasterize(binary, rows, cols, scale, fLow, fHigh);
+    auto mask = spectrumtag::image::rasterize(binary, rows, cols, scale, fLow, fHigh, conversion.grayscale);
 
     startPrint (std::move (mask), rows, cols, lowNorm, highNorm, seconds);
     return true;
@@ -1778,6 +1781,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumTagAudioProcessor::c
     // Appended parameter preserves every existing parameter index and the old
     // fftScale 0/1 host automation. Retired slot 2 resolves to Log; the editor shows six modes.
     layout.add(std::make_unique<juce::AudioParameterChoice>(ParameterIDs::frequencyPreset,"Frequency scale preset",juce::StringArray{"Linear / Log","insight","Log","Mel (RX)","Bark","Extended Log"},3));
+    // 新增参数一律追加在末尾，保持旧工程的自动化索引不变。
+    layout.add(std::make_unique<juce::AudioParameterChoice>(ParameterIDs::imageStyle,"Image style",
+        juce::StringArray{"B/W","Grayscale"},0));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(ParameterIDs::imageGrayContrast,"Gray contrast",
+        juce::NormalisableRange<float>(0.0f,1.0f,0.001f),0.5f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(ParameterIDs::imageGrayBrightness,"Gray brightness",
+        juce::NormalisableRange<float>(0.0f,1.0f,0.001f),0.5f));
     return layout;
 }
 

@@ -40,6 +40,10 @@ namespace ParameterIDs
     static const juce::String imageAmount = "imageAmount";
     static const juce::String invert         = "invert";         // Bool
     static const juce::String printTrigger   = "printTrigger";   // Bool（自动化触发 Print，按上升沿）
+    // 灰度模式：0=黑白二值，1=连续灰度。彩色图片拖入时自动选 1。
+    static const juce::String imageStyle     = "imageStyle";
+    static const juce::String imageGrayContrast   = "imageGrayContrast";
+    static const juce::String imageGrayBrightness = "imageGrayBrightness";
 }
 
 class SpectrumTagAudioProcessor : public juce::AudioProcessor,

@@ -69,7 +69,8 @@ Print 可以超出原始文件的开始或结尾，导出时长会相应延长�
 | 单击已打印图形 | 选中并恢复其参数和正常显示比例，不移动播放指针 |
 | 拖动已选 Print / 右下角 | 移动位置 / 等比例缩放 |
 | 双击原图 | 选择新图片 |
-| 频谱右键 / 眼睛图标 | 显示或隐藏原图 |
+| 右侧「图像风格」 | 黑白：按阈值取形状；灰度：按每个像素的明暗连续衰减，效果像黑白照片。拖入彩色图片自动选灰度，并按这张图的亮度分布重新拟合灰度对比 / 亮度（默认偏重、纯黑必扣净），可手动调整 |
+| 频谱右键 | 状态1（未打印）时打印；状态3（聚焦）时退回图片模式；没有聚焦对象时聚焦离点击处最近的已打印图形 |
 | 频谱右上角全览图标 | 适应已录制/加载的范围 |
 | Delete | 删除选中的 Print |
 | Ctrl + 拖动图片 | 原对象留在原位打印，拖走同样的副本 |
@@ -161,7 +162,8 @@ Prints may extend before or after the source. Export duration expands accordingl
 | Click a printed shape | Select it and recall its parameters and normal display proportions without seeking |
 | Drag a selected Print / its lower-right corner | Move / resize proportionally |
 | Double-click the original image | Choose another image |
-| Right-click the spectrum / eye icon | Toggle the original image |
+| Image style (right panel) | B/W: threshold artwork; Grayscale: continuous per-pixel attenuation like a black-and-white photo. Colour images switch to Grayscale automatically and re-fit Gray contrast / brightness from that image's tonal range (biased darker, pure black always fully cut); both remain adjustable |
+| Right-click the spectrum | Print in state 1 (unprinted); return to image mode in state 3 (focused); with nothing focused, focus the printed shape nearest the click |
 | Top-right overview icon | Fit the recorded/loaded range |
 | Delete | Remove the selected Print |
 | Ctrl-drag the image | Leave a Print in place and drag a copy |

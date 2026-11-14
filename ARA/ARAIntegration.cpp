@@ -403,10 +403,12 @@ juce::ValueTree encode(const PrintEdit& e){
     v.setProperty("low",e.low,nullptr);v.setProperty("high",e.high,nullptr);v.setProperty("ratio",e.ratio,nullptr);v.setProperty("noise",e.compensation,nullptr);
     v.setProperty("fft",e.fftSize,nullptr);v.setProperty("rows",e.rows,nullptr);v.setProperty("cols",e.cols,nullptr);v.setProperty("invert",e.invert,nullptr);
     v.setProperty("speed",e.speed,nullptr);v.setProperty("amount",e.amount,nullptr);v.setProperty("top",e.displayTop,nullptr);v.setProperty("aspect",e.imageAspect,nullptr);v.setProperty("zoom",e.viewZoom,nullptr);v.setProperty("mode",e.imageMode,nullptr);v.setProperty("scale",e.scaleMode,nullptr);v.setProperty("fillVersion",e.fillVersion,nullptr);
+    v.setProperty("style",e.imageStyle,nullptr);v.setProperty("grayContrast",e.grayContrast,nullptr);v.setProperty("grayBrightness",e.grayBrightness,nullptr);
     juce::MemoryOutputStream mask;for(float f:*e.mask)mask.writeFloat(f);v.setProperty("mask",mask.getMemoryBlock(),nullptr);return v;
 }
 std::optional<PrintEdit> decode(const juce::ValueTree& v){
     if(!v.hasType("Print"))return {};PrintEdit e;e.id=v["id"].toString();e.imagePath=v["image"].toString();e.start=v["start"];e.duration=v["duration"];e.low=v["low"];e.high=v["high"];e.ratio=v["ratio"];e.compensation=v["noise"];e.fftSize=v["fft"];e.rows=v["rows"];e.cols=v["cols"];e.invert=v["invert"];e.speed=v["speed"];e.amount=v["amount"];e.displayTop=v["top"];e.imageAspect=v["aspect"];e.viewZoom=v["zoom"];e.imageMode=v["mode"];e.scaleMode=v["scale"];e.fillVersion=(int)v.getProperty("fillVersion",0);
+    e.imageStyle=(int)v.getProperty("style",0);e.grayContrast=(float)v.getProperty("grayContrast",.5f);e.grayBrightness=(float)v.getProperty("grayBrightness",.5f);
     const auto maskValue=v["mask"];auto* bytes=maskValue.getBinaryData();if(!bytes||e.id.isEmpty()||e.rows<1||e.rows>2049||e.cols<1||e.cols>4096||bytes->getSize()!=(size_t)e.rows*e.cols*4)return {};
     auto mask=std::make_shared<std::vector<float>>();mask->reserve((size_t)e.rows*e.cols);juce::MemoryInputStream stream(*bytes,false);
     for(int i=0;i<e.rows*e.cols;++i){float f=stream.readFloat();if(!std::isfinite(f)||f<0||f>1)return {};mask->push_back(f);}e.mask=mask;
