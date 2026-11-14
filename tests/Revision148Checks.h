@@ -8,7 +8,7 @@ static void revision148Checks(const juce::File& dir){
     auto* view=componentWithID(*editor,"spectrumView");auto* box=imageBox(*editor);
     auto* clear=dynamic_cast<juce::Button*>(componentWithID(*editor,"clearRecord"));
     // 图片可见性由三态决定，没有眼睛按钮；右键的新语义（打印 / 退回图片 /
-    // 聚焦最近的打印）由 2.0.1 的右键用例覆盖。
+    // 聚焦最近的打印）由 2.0.2 的右键用例覆盖。
     if(!box->hasImage()){dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({dir.getChildFile("transparent-detail.png").getFullPathName()},0,0);tickUI();}
     require(box->isVisible(),"148 a dropped image is visible without a toggle");
     auto* fit=componentWithID(*view,"fitSpectrum");require(fit&&fit->getRight()>view->getWidth()-12&&fit->getY()<12,"148 Fit icon sits in spectrum top right");

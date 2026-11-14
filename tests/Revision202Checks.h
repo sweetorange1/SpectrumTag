@@ -1,5 +1,5 @@
 #pragma once
-// 2.0.1 灰度模式：彩色图片自动切连续灰度，线稿保持二值；
+// 2.0.2 灰度模式：彩色图片自动切连续灰度，线稿保持二值；
 // 手动可切换，灰度对比/亮度参与掩模，参数随工程保存。
 static void revision202Checks(const juce::File& dir){
     using namespace spectrumtag;
@@ -87,5 +87,5 @@ static void revision202Checks(const juce::File& dir){
     require(recalled.recording().edits()&&!recalled.recording().edits()->empty(),"202 recalled edit exists");
     require(sameEdit(printed,recalled.recording().edits()->back()),"202 grayscale settings survive save/load");
     png(dir.getChildFile("202-grayscale-print.png"),editor->createComponentSnapshot(editor->getLocalBounds()));
-    std::cout<<"2.0.1 GRAYSCALE CHECKS PASSED; auto style, continuous mask, contrast/brightness and save/load\n"<<std::flush;
+    std::cout<<"2.0.2 GRAYSCALE CHECKS PASSED; auto style, continuous mask, contrast/brightness and save/load\n"<<std::flush;
 }

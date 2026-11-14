@@ -1,5 +1,5 @@
 #pragma once
-// 2.0.1：右键是没有菜单的上下文操作。
+// 2.0.2：右键是没有菜单的上下文操作。
 // 状态1（未打印，有源图）→ 打印；状态3（聚焦）→ 退回图片模式；
 // 没有聚焦对象时 → 聚焦离点击位置最近的已打印图形。
 static void revision201Checks(const juce::File& dir){
@@ -76,5 +76,5 @@ static void revision201Checks(const juce::File& dir){
     require(p.getEditorState().placementId==idAt(false),"201 right-click focuses the object under the cursor");
     require(!box->hasImage()&&!box->isVisible(),"201 focusing hides the unprinted guide");
     png(dir.getChildFile("201-right-click-focus.png"),editor->createComponentSnapshot(editor->getLocalBounds()));
-    std::cout<<"2.0.1 RIGHT-CLICK CHECKS PASSED; print / focus nearest / revert to image mode\n"<<std::flush;
+    std::cout<<"2.0.2 RIGHT-CLICK CHECKS PASSED; print / focus nearest / revert to image mode\n"<<std::flush;
 }
