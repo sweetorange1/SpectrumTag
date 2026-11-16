@@ -12,6 +12,7 @@ static void revision202Checks(const juce::File& dir){
     auto* view=componentWithID(*editor,"spectrumView");auto* box=imageBox(*editor);
     require(view&&box,"202 editor parts");
     auto style=[&]{return (int)*p.getAPVTS().getRawParameterValue(ParameterIDs::imageStyle);};
+    auto shown=[&](const char* id){auto* component=componentWithID(*editor,id);require(component!=nullptr,"202 control exists");return component->isVisible();};
     auto drop=[&](const juce::File& file){
         dynamic_cast<juce::FileDragAndDropTarget*>(editor.get())->filesDropped({file.getFullPathName()},0,0);tickUI();
     };
@@ -22,12 +23,20 @@ static void revision202Checks(const juce::File& dir){
     drop(dir.getChildFile("transparent-detail.png"));
     require(style()==0,"202 line art stays B/W");
     for(float v:box->generateMask(129,96))require(v==0.0f||v==1.0f,"202 B/W mask stays binary");
+    auto* styleCombo=dynamic_cast<juce::ComboBox*>(componentWithID(*editor,"imageStyle"));
+    const bool zh=p.getEditorState().chinese;
+    require(styleCombo&&styleCombo->getNumItems()==2
+        &&styleCombo->getItemText(0)==(zh?juce::String::fromUTF8("Logo 模式"):juce::String("Logo mode"))
+        &&styleCombo->getItemText(1)==(zh?juce::String::fromUTF8("复杂图像模式"):juce::String("Complex image")),"202 style menu uses the new mode names");
+    require(shown("imageMode")&&shown("imageAmount")&&!shown("imageGrayContrast")&&!shown("imageGrayBrightness"),"202 logo mode only shows threshold controls");
+    png(dir.getChildFile("202-logo-mode.png"),editor->createComponentSnapshot(editor->getLocalBounds()));
     // 彩色图片：自动切到灰度，掩模出现连续值。
     drop(dir.getChildFile("202-colour.png"));
     require(style()==1,"202 colour image switches to grayscale automatically");
     const auto grayMask=box->generateMask(257,160);
     int fractions=0;for(float v:grayMask){require(v>=0.0f&&v<=1.0f,"202 mask value in range");if(v>0.02f&&v<0.98f)++fractions;}
     require(fractions>(int)grayMask.size()/20,"202 grayscale mask keeps continuous values");
+    require(!shown("imageMode")&&!shown("imageAmount")&&shown("imageGrayContrast")&&shown("imageGrayBrightness"),"202 complex mode only shows gray controls");
     // 自动参数按当前图片拟合：换一张色调完全不同的图，参数重算而不是继承。
     const auto toneA=box->grayTone();
     require(std::abs((float)*p.getAPVTS().getRawParameterValue(ParameterIDs::imageGrayContrast)-toneA.contrast)<1e-3f,"202 auto contrast comes from the image");
@@ -55,6 +64,7 @@ static void revision202Checks(const juce::File& dir){
     // 手动切回黑白：同一张彩色图重新按阈值取形状。
     set(p,ParameterIDs::imageStyle,0);tickUI();
     for(float v:box->generateMask(129,96))require(v==0.0f||v==1.0f,"202 manual switch returns to binary");
+    require(shown("imageMode")&&shown("imageAmount")&&!shown("imageGrayContrast"),"202 switching back restores threshold controls");
     // 灰度参数参与掩模：对比改变分布，亮度整体提亮。
     set(p,ParameterIDs::imageStyle,1);set(p,ParameterIDs::imageGrayContrast,0.9f);tickUI();
     const auto highContrast=box->generateMask(257,160);

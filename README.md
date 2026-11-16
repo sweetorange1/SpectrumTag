@@ -24,7 +24,7 @@ SpectrumTag 将图片转换成黑白掩模，并通过处理音频的频率成�
 
 | 项目 | 当前状态 |
 | --- | --- |
-| 当前源码版本 | **2.0.2**（2026-11-14），右键上下文操作、打印式透明预览与灰度模式；安装包尚未重新构建 |
+| 当前源码版本 | **2.0.3**（2026-11-16），图像风格改为 Logo 模式 / 复杂图像模式并只显示当前模式可用的控件；含右键上下文操作、打印式透明预览与灰度衰减；安装包尚未重新构建 |
 | 最近交付 | **1.4.28 Stable**，Windows Setup 与 macOS Universal PKG，附中文文件名的安装说明和英文 TXT |
 | 贡献者指定 Stable | **1.4.28**（2026-11-09），新 Plan B 已完成并冻结；见 [Stable / Plan B 记录](docs/STABLE_1.4.28.md) |
 | Windows 安装包 | 实时 VST3、ARA 专用 VST3、独立程序；适用于 Windows 10/11 x64 |
@@ -69,7 +69,7 @@ Print 可以超出原始文件的开始或结尾，导出时长会相应延长�
 | 单击已打印图形 | 选中并恢复其参数和正常显示比例，不移动播放指针 |
 | 拖动已选 Print / 右下角 | 移动位置 / 等比例缩放 |
 | 双击原图 | 选择新图片 |
-| 右侧「图像风格」 | 黑白：按阈值取形状；灰度：按每个像素的明暗连续衰减，效果像黑白照片。拖入彩色图片自动选灰度，并按这张图的亮度分布重新拟合灰度对比 / 亮度（默认偏重、纯黑必扣净），可手动调整 |
+| 右侧「图像风格」 | Logo 模式：按阈值把图片取成实心形状；复杂图像模式：按每个像素的明暗连续衰减，效果像黑白照片。拖入彩色图片自动选复杂图像模式，并按这张图的亮度分布重新拟合对比 / 亮度（默认偏重、纯黑必扣净）。切换模式后只显示当前模式可调的控件 |
 | 频谱右键 | 状态1（未打印）时打印；状态3（聚焦）时退回图片模式；没有聚焦对象时聚焦离点击处最近的已打印图形 |
 | 频谱右上角全览图标 | 适应已录制/加载的范围 |
 | Delete | 删除选中的 Print |
@@ -117,7 +117,7 @@ SpectrumTag converts an image to a monochrome mask and processes audio frequenci
 
 | Item | Status |
 | --- | --- |
-| Current source version | **2.0.2** (2026-11-14), right-click context actions, print-like transparent preview and grayscale mode; installers not rebuilt yet |
+| Current source version | **2.0.3** (2026-11-16), image styles renamed to Logo mode / Complex image with only the active mode's controls shown; includes the right-click context actions, print-like transparent preview and grayscale attenuation; installers not rebuilt yet |
 | Latest delivery | **1.4.28 Stable**, Windows Setup and macOS Universal PKG with Chinese/English TXT installation guides |
 | Contributor-designated Stable | **1.4.28** (2026-11-09); the new Plan B snapshot is complete and frozen. See the [Stable / Plan B record](docs/STABLE_1.4.28.md). |
 | Windows installer | Realtime VST3, dedicated ARA VST3 and standalone; Windows 10/11 x64 |
@@ -162,7 +162,7 @@ Prints may extend before or after the source. Export duration expands accordingl
 | Click a printed shape | Select it and recall its parameters and normal display proportions without seeking |
 | Drag a selected Print / its lower-right corner | Move / resize proportionally |
 | Double-click the original image | Choose another image |
-| Image style (right panel) | B/W: threshold artwork; Grayscale: continuous per-pixel attenuation like a black-and-white photo. Colour images switch to Grayscale automatically and re-fit Gray contrast / brightness from that image's tonal range (biased darker, pure black always fully cut); both remain adjustable |
+| Image style (right panel) | Logo mode: threshold the artwork into a solid shape; Complex image: continuous per-pixel attenuation like a black-and-white photo. Colour images switch to Complex image automatically and re-fit contrast / brightness from that image's tonal range (biased darker, pure black always fully cut). Only the controls for the active mode are shown |
 | Right-click the spectrum | Print in state 1 (unprinted); return to image mode in state 3 (focused); with nothing focused, focus the printed shape nearest the click |
 | Top-right overview icon | Fit the recorded/loaded range |
 | Delete | Remove the selected Print |

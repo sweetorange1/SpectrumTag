@@ -1783,7 +1783,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpectrumTagAudioProcessor::c
     layout.add(std::make_unique<juce::AudioParameterChoice>(ParameterIDs::frequencyPreset,"Frequency scale preset",juce::StringArray{"Linear / Log","insight","Log","Mel (RX)","Bark","Extended Log"},3));
     // 新增参数一律追加在末尾，保持旧工程的自动化索引不变。
     layout.add(std::make_unique<juce::AudioParameterChoice>(ParameterIDs::imageStyle,"Image style",
-        juce::StringArray{"B/W","Grayscale"},0));
+        juce::StringArray{"Logo","Complex image"},0));
     layout.add(std::make_unique<juce::AudioParameterFloat>(ParameterIDs::imageGrayContrast,"Gray contrast",
         juce::NormalisableRange<float>(0.0f,1.0f,0.001f),0.5f));
     layout.add(std::make_unique<juce::AudioParameterFloat>(ParameterIDs::imageGrayBrightness,"Gray brightness",

@@ -1867,7 +1867,7 @@ SpectrumTagAudioProcessorEditor::SpectrumTagAudioProcessorEditor (SpectrumTagAud
     styleControlLabel(imageStyleLabel); styleControlLabel(imageGrayContrastLabel); styleControlLabel(imageGrayBrightnessLabel);
     addAndMakeVisible(imageStyleLabel); addAndMakeVisible(imageGrayContrastLabel); addAndMakeVisible(imageGrayBrightnessLabel);
     imageStyleCombo.setComponentID("imageStyle");
-    imageStyleCombo.addItemList({"B/W","Grayscale"},1);
+    imageStyleCombo.addItemList({"Logo mode","Complex image"},1);
     addAndMakeVisible(imageStyleCombo);
     imageStyleCombo.onChange=[this]{syncImagePreview();updateImageStyleControls();changed(true);};
     for(auto* slider:{&imageGrayContrastSlider,&imageGrayBrightnessSlider}){
@@ -2175,10 +2175,14 @@ void SpectrumTagAudioProcessorEditor::resized()
         rightPanel.removeFromTop(px(4));
     };
     layoutLabelRow(imageStyleLabel,imageStyleCombo,138,comboH);
-    layoutLabelRow(imageModeLabel,imageModeCombo,138,comboH);
-    layoutLabelRow(imageAmountLabel,imageAmountSlider,180,24);
-    layoutLabelRow(imageGrayContrastLabel,imageGrayContrastSlider,186,18);
-    layoutLabelRow(imageGrayBrightnessLabel,imageGrayBrightnessSlider,186,18);
+    if(imageModeCombo.isVisible()){
+        layoutLabelRow(imageModeLabel,imageModeCombo,138,comboH);
+        layoutLabelRow(imageAmountLabel,imageAmountSlider,180,24);
+    }
+    if(imageGrayContrastSlider.isVisible()){
+        layoutLabelRow(imageGrayContrastLabel,imageGrayContrastSlider,186,18);
+        layoutLabelRow(imageGrayBrightnessLabel,imageGrayBrightnessSlider,186,18);
+    }
 
     {
         auto row = rightPanel.removeFromTop (px (28));
@@ -2244,16 +2248,24 @@ void SpectrumTagAudioProcessorEditor::syncImagePreview()
         *state.getRawParameterValue(ParameterIDs::imageGrayBrightness));
     updateImageStyleControls();
 }
-// 灰度模式下二值阈值参数不参与运算，反之灰度参数也不参与；把无效的一组变暗禁用。
+// 两种模式各有一组专属参数：不适用的一组直接隐藏（并让面板收起空行），
+// 只保留当前模式真正能调的控件。
 void SpectrumTagAudioProcessorEditor::updateImageStyleControls()
 {
-    const bool grayscale=*processor.getAPVTS().getRawParameterValue(ParameterIDs::imageStyle)>0.5f;
-    const float dim=grayscale?0.45f:1.0f;
-    imageModeLabel.setAlpha(dim);imageModeCombo.setAlpha(dim);imageModeCombo.setEnabled(!grayscale);
-    imageAmountLabel.setAlpha(dim);imageAmountSlider.setAlpha(dim);imageAmountSlider.setEnabled(!grayscale);
-    const float gray=grayscale?1.0f:0.45f;
-    imageGrayContrastLabel.setAlpha(gray);imageGrayContrastSlider.setAlpha(gray);imageGrayContrastSlider.setEnabled(grayscale);
-    imageGrayBrightnessLabel.setAlpha(gray);imageGrayBrightnessSlider.setAlpha(gray);imageGrayBrightnessSlider.setEnabled(grayscale);
+    const bool complexImage=*processor.getAPVTS().getRawParameterValue(ParameterIDs::imageStyle)>0.5f;
+    auto show=[&](juce::Component& control,bool visible){
+        control.setEnabled(visible);control.setAlpha(1.0f);
+        if(control.isVisible()==visible)return false;
+        control.setVisible(visible);return true;
+    };
+    bool changed=false;
+    // Logo 模式：阈值方式 + 阈值强度。
+    changed|=show(imageModeLabel,!complexImage);changed|=show(imageModeCombo,!complexImage);
+    changed|=show(imageAmountLabel,!complexImage);changed|=show(imageAmountSlider,!complexImage);
+    // 复杂图像模式：灰度对比 + 灰度亮度。
+    changed|=show(imageGrayContrastLabel,complexImage);changed|=show(imageGrayContrastSlider,complexImage);
+    changed|=show(imageGrayBrightnessLabel,complexImage);changed|=show(imageGrayBrightnessSlider,complexImage);
+    if(changed)resized();
 }
 #if SPECTRUMTAG_ARA
 void SpectrumTagAudioProcessorEditor::parentHierarchyChanged()
@@ -2710,11 +2722,11 @@ void SpectrumTagAudioProcessorEditor::refreshLanguage(){
     fftSizeLabel.setText(tr("FFT 大小：","FFT Size:"),juce::dontSendNotification);fftScaleLabel.setText(tr("频率刻度：","FFT scale:"),juce::dontSendNotification);
     speedLabel.setText(tr("速度：","Speed:"),juce::dontSendNotification);amplitudeLabel.setText(tr("保留音量：","Amplitude Ratio:"),juce::dontSendNotification);
     imageStyleLabel.setText(tr("图像风格：","Image style:"),juce::dontSendNotification);
-    imageStyleCombo.changeItemText(1,tr("黑白","B/W"));imageStyleCombo.changeItemText(2,tr("灰度","Grayscale"));
+    imageStyleCombo.changeItemText(1,tr("Logo 模式","Logo mode"));imageStyleCombo.changeItemText(2,tr("复杂图像模式","Complex image"));
     imageStyleCombo.setSelectedId(1+(int)*processor.getAPVTS().getRawParameterValue(ParameterIDs::imageStyle),juce::dontSendNotification);
     imageGrayContrastLabel.setText(tr("灰度对比：","Gray contrast:"),juce::dontSendNotification);
     imageGrayBrightnessLabel.setText(tr("灰度亮度：","Gray brightness:"),juce::dontSendNotification);
-    imageModeLabel.setText(tr("图像黑白转换：","Image B/W:"),juce::dontSendNotification);imageAmountLabel.setText(tr("黑白强度：","B/W amount:"),juce::dontSendNotification);
+    imageModeLabel.setText(tr("阈值方式：","Threshold:"),juce::dontSendNotification);imageAmountLabel.setText(tr("阈值强度：","Strength:"),juce::dontSendNotification);
     invertLabel.setText(tr("反转：","Invert:"),juce::dontSendNotification);noiseFillLabel.setText(tr("噪声补偿：","Noise Fill:"),juce::dontSendNotification);frequencyRangeLabel.setText(tr("显示上限：","Range:"),juce::dontSendNotification);
     imageModeCombo.changeItemText(1,tr("自动阈值","Auto (Otsu)"));imageModeCombo.changeItemText(2,tr("保留细节","Detail (Adaptive)"));imageModeCombo.changeItemText(3,tr("手动阈值","Manual"));imageModeCombo.changeItemText(4,tr("透明度轮廓","Alpha silhouette"));
     fftScaleCombo.changeItemText(1,tr("线性","Linear"));fftScaleCombo.changeItemText(2,tr("对数","Log"));fftScaleCombo.changeItemText(7,tr("扩展对数","Extended Log"));
@@ -2743,11 +2755,11 @@ void SpectrumTagAudioProcessorEditor::updateTooltips(){
     fftScaleCombo.setTooltip(tr("线性、Mel、Bark、对数、扩展对数，以及 insight。insight 保持当前显示上限，按参考截图匹配频率和时间（约 18 秒视窗），Speed 使用统一单位，自动填入匹配值后可手动调整。通用刻度只改频率、不改当前时间速度；扩展对数下限为 10 Hz。选中 Print 时重新渲染；未选中时只改变视图。","Linear, Mel, Bark, Log, Extended Log or insight. insight keeps the current Range and fills in a matched Speed value using the same time unit as every other mode; adjust Speed afterwards. Reference insight window: about 18 s from the screenshot. Generic scales retain the current time speed; Extended Log starts at 10 Hz. Rerenders a selected Print; otherwise only changes the view."));
     speedSlider.setTooltip(tr("统一时间缩放，所有频率刻度下相同数值代表相同速度。2x 覆盖的时长为 1x 的一半；右侧显示当前视窗覆盖的秒数。选中打印后会调整其时长；拖动结束后合并渲染最终结果。图片始终保持原比例。","Unified time scale: the same value means the same speed in every frequency mode. 2x covers half as much time as 1x. Window shows the actual visible duration in seconds. A selected Print changes duration; final rendering follows after dragging ends. Image preview keeps its original aspect ratio."));
     amplitudeSlider.setTooltip(tr("打印区域保留音量 0–33%。数值越大，图案越淡。拖动结束后更新渲染。","Remaining gain, 0–33%. Higher values soften the image. Final rendering follows after dragging ends."));
-    imageStyleCombo.setTooltip(tr("黑白：按阈值取形状；灰度：按每个像素的明暗连续衰减，效果像黑白照片。拖入彩色图片会自动选择灰度。","B/W: threshold artwork; Grayscale: continuous per-pixel attenuation, like a black-and-white photo. Colour images switch to Grayscale automatically."));
+    imageStyleCombo.setTooltip(tr("Logo 模式：按阈值把图片取成实心形状，适合标志和线稿；复杂图像模式：按每个像素的明暗连续衰减，效果像黑白照片，适合照片和插画。拖入彩色图片会自动选择复杂图像模式。","Logo mode: threshold the artwork into a solid shape for logos and line art; Complex image: continuous per-pixel attenuation like a black-and-white photo, for photos and illustrations. Colour images select Complex image automatically."));
     imageGrayContrastSlider.setTooltip(tr("灰度对比：0.5 为中性，越大暗部更暗、亮部更亮。Alt+左键或双击恢复默认。","Gray contrast: 0.5 is neutral; higher values deepen shadows and lift highlights. Alt-click or double-click resets."));
     imageGrayBrightnessSlider.setTooltip(tr("灰度亮度：整体提亮或压暗灰度映射，0.5 为中性。","Gray brightness: lifts or lowers the grayscale mapping; 0.5 is neutral."));
-    imageModeCombo.setTooltip(tr("自动、局部细节、手动阈值，或透明度轮廓。透明度轮廓适合透明背景图标。","Automatic, adaptive detail, manual threshold, or alpha silhouette for transparent artwork."));
-    imageAmountSlider.setTooltip(tr("黑白强度，默认 0.5。Alt+左键或双击恢复默认。","B/W amount; default 0.5. Alt-left-click or double-click resets."));
+    imageModeCombo.setTooltip(tr("Logo 模式的形状提取方式：自动、局部细节、手动阈值，或透明度轮廓。透明度轮廓适合透明背景图标。","Shape extraction for Logo mode: automatic, adaptive detail, manual threshold, or alpha silhouette for transparent artwork."));
+    imageAmountSlider.setTooltip(tr("Logo 模式的阈值强度，默认 0.5。Alt+左键或双击恢复默认。","Threshold strength for Logo mode; default 0.5. Alt-left-click or double-click resets."));
     invertToggle.setTooltip(tr("同步反转预览和打印。","Invert both preview and Print."));
     noiseFillSlider.setTooltip(tr("仅录音模式可用。只在图片范围内能量不足的亮区补充白噪声。删除打印时一起删除。","Recorded mode only. Add white noise to weak bright areas inside the image. Deleting the Print removes its noise."));
     const auto fineTip=tr(" 按住 Shift 拖动或滚轮可微调（1/10 速度）。"," Hold Shift while dragging or scrolling for fine adjustment (1/10 speed).");
